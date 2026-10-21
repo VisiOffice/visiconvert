@@ -1,3 +1,4 @@
+pub mod hosted;
 use convert_domain::*;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use uuid::Uuid;

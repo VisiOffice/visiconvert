@@ -24,5 +24,18 @@ jobs:
         run: python3 scripts/package-self-host.py --release
       - name: Build production application and run Rust tests
         run: docker build --target app -t visiconvert-selfhost:ci .
+      - name: Verify browser, database, and optional hosted authentication
+        run: |
+          docker build --target verify -t visiconvert-verify:ci .
+          mkdir -p artifacts/browser
+          chmod 777 artifacts/browser
+          docker run --rm -v "$PWD/artifacts/browser:/src/artifacts" visiconvert-verify:ci
+      - name: Save verification diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-verification
+          path: artifacts/browser/
+          retention-days: 7
       - name: Verify installation, persistence, backup, and restore
         run: python3 scripts/verify-self-host.py --image visiconvert-selfhost:ci

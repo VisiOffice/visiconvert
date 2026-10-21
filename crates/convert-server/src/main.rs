@@ -1,5 +1,6 @@
+mod hosted;
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, Path, Request, State},
     http::{HeaderMap, StatusCode},
@@ -34,6 +35,7 @@ struct App {
     public_url: String,
     twilio_account: Option<String>,
     twilio_token: Option<String>,
+    cloud: Option<hosted::Config>,
 }
 type Shared = Arc<App>;
 
@@ -95,12 +97,14 @@ async fn main() -> anyhow::Result<()> {
             "Live Twilio requires a valid account SID and HTTPS PUBLIC_URL"
         );
     }
+    let cloud = hosted::configuration(&public_url, &api_key)?;
     let app = Arc::new(App {
         store,
         api_key,
         public_url,
         twilio_account: account,
         twilio_token: token,
+        cloud,
     });
     let address: SocketAddr = std::env::var("LISTEN_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3100".into())
@@ -122,8 +126,10 @@ fn router(app: Shared) -> Router {
         .route("/leads/{id}/outcomes", get(outcomes).put(put_outcome))
         .route("/numbers", get(numbers).post(add_number))
         .route("/summary", get(summary))
+        .route("/session", axum::routing::delete(hosted::logout))
         .route_layer(middleware::from_fn_with_state(app.clone(), authenticate));
     Router::new()
+        .merge(hosted::routes(app.clone()))
         .nest("/api", api)
         .route("/health", get(|| async { Json(json!({"status":"ok"})) }))
         .route("/webhooks/twilio/voice", post(voice))
@@ -153,6 +159,9 @@ fn router(app: Shared) -> Router {
                 let mut response = next.run(request).await;
                 response
                     .headers_mut()
+                    .insert("referrer-policy", "no-referrer".parse().unwrap());
+                response
+                    .headers_mut()
                     .insert("cache-control", "no-store".parse().unwrap());
                 response
                     .headers_mut()
@@ -163,23 +172,49 @@ fn router(app: Shared) -> Router {
         .with_state(app)
 }
 
-async fn authenticate(State(app): State<Shared>, request: Request, next: Next) -> Response {
+async fn authenticate(State(app): State<Shared>, mut request: Request, next: Next) -> Response {
     let supplied = request
         .headers()
         .get("authorization")
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .unwrap_or("");
-    if supplied.as_bytes().ct_eq(app.api_key.as_bytes()).into() {
+        .unwrap_or("")
+        .to_owned();
+    let access = if supplied.as_bytes().ct_eq(app.api_key.as_bytes()).into() {
+        Some(hosted::Access {
+            store: app.store.clone(),
+            name: "My workspace".into(),
+            session_hash: None,
+        })
+    } else if app.cloud.is_some()
+        && supplied
+            .strip_prefix("vc_session_")
+            .is_some_and(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()))
+    {
+        let hash = hosted::digest(&supplied);
+        match app.store.hosted_session(&hash).await {
+            Ok(value) => value.map(|(store, name)| hosted::Access {
+                store,
+                name,
+                session_hash: Some(hash),
+            }),
+            Err(e) => return ApiError::from(e).into_response(),
+        }
+    } else {
+        None
+    };
+    if let Some(access) = access {
+        request.extensions_mut().insert(access);
         next.run(request).await
     } else {
         (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"Enter the workspace API key"})),
+            Json(json!({"error":"Sign in again or enter the workspace API key"})),
         )
             .into_response()
     }
 }
+
 struct ApiError(StatusCode, String);
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -204,44 +239,66 @@ impl From<convert_store::Error> for ApiError {
     }
 }
 type Api<T> = Result<Json<T>, ApiError>;
-async fn bootstrap(State(a): State<Shared>) -> Json<Value> {
+async fn bootstrap(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+) -> Json<Value> {
+    let hosted = access.session_hash.is_some();
     Json(
-        json!({"name":"My workspace","id":a.store.workspace,"mode":"single-workspace pilot","twilio_configured":a.twilio_token.is_some(),"voice_url":format!("{}/webhooks/twilio/voice",a.public_url),"status_url":format!("{}/webhooks/twilio/status",a.public_url),"currency":"USD"}),
+        json!({"name":access.name,"id":access.store.workspace,"mode":if hosted {"hosted workspace"} else {"single-workspace pilot"},
+        "twilio_configured":!hosted && a.twilio_token.is_some(),
+        "voice_url":if hosted {String::new()} else {format!("{}/webhooks/twilio/voice",a.public_url)},
+        "status_url":if hosted {String::new()} else {format!("{}/webhooks/twilio/status",a.public_url)},"currency":"USD","hosted":hosted}),
     )
 }
-async fn leads(State(a): State<Shared>) -> Api<Vec<Lead>> {
-    Ok(Json(a.store.leads().await?))
+async fn leads(Extension(access): Extension<hosted::Access>) -> Api<Vec<Lead>> {
+    Ok(Json(access.store.leads().await?))
 }
-async fn numbers(State(a): State<Shared>) -> Api<Vec<TrackingNumber>> {
-    Ok(Json(a.store.numbers().await?))
+async fn numbers(Extension(access): Extension<hosted::Access>) -> Api<Vec<TrackingNumber>> {
+    Ok(Json(access.store.numbers().await?))
 }
-async fn summary(State(a): State<Shared>) -> Api<Vec<SourceSummary>> {
-    Ok(Json(a.store.summary().await?))
+async fn summary(Extension(access): Extension<hosted::Access>) -> Api<Vec<SourceSummary>> {
+    Ok(Json(access.store.summary().await?))
 }
-async fn add_number(State(a): State<Shared>, Json(n): Json<NewNumber>) -> Api<Value> {
-    a.store.add_number(&n).await?;
+async fn add_number(
+    Extension(access): Extension<hosted::Access>,
+    Json(n): Json<NewNumber>,
+) -> Api<Value> {
+    if access.session_hash.is_some() {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "Hosted carrier setup is not available yet".into(),
+        ));
+    }
+    access.store.add_number(&n).await?;
     Ok(Json(json!({"ok":true})))
 }
-async fn add_lead(State(a): State<Shared>, Json(n): Json<NewLead>) -> Api<Value> {
-    Ok(Json(json!({"id":a.store.add_lead(&n).await?})))
+async fn add_lead(
+    Extension(access): Extension<hosted::Access>,
+    Json(n): Json<NewLead>,
+) -> Api<Value> {
+    Ok(Json(json!({"id":access.store.add_lead(&n).await?})))
 }
 async fn update_lead(
-    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
     Path(id): Path<Uuid>,
     Json(n): Json<LeadUpdate>,
 ) -> Api<Value> {
-    a.store.update_lead(id, &n).await?;
+    access.store.update_lead(id, &n).await?;
     Ok(Json(json!({"ok":true})))
 }
-async fn outcomes(State(a): State<Shared>, Path(id): Path<Uuid>) -> Api<Vec<Outcome>> {
-    Ok(Json(a.store.outcomes(id).await?))
+async fn outcomes(
+    Extension(access): Extension<hosted::Access>,
+    Path(id): Path<Uuid>,
+) -> Api<Vec<Outcome>> {
+    Ok(Json(access.store.outcomes(id).await?))
 }
 async fn put_outcome(
-    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
     Path(id): Path<Uuid>,
     Json(n): Json<OutcomeInput>,
 ) -> Api<Value> {
-    a.store.put_outcome(id, &n).await?;
+    access.store.put_outcome(id, &n).await?;
     Ok(Json(json!({"ok":true})))
 }
 async fn voice(
@@ -403,6 +460,7 @@ mod tests {
                 workspace: Uuid::nil(),
             },
             api_key: "test-workspace-key-at-least-32-characters".into(),
+            cloud: None,
             public_url: "https://convert.example.com".into(),
             twilio_account: configured.then(|| format!("AC{}", "1".repeat(32))),
             twilio_token: configured.then(|| "test-token".into()),
@@ -516,3 +574,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod hosted_tests;

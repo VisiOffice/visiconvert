@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Optional hosted workspace provisioning and browser-bound single-use login.
+- Tenant-scoped short-lived sessions, membership checks, and session revocation.
+- Hosted form-lead access while carrier setup remains restricted to the local operator workspace.
+- Database/HTTP coverage for tenant isolation, concurrent exchange, expiry, and replay protection.
+- Separate Rails account service; no Rails or cloud dependency in the self-hosted package.
+
 ## 0.1.0-beta.1 — release candidate
 
 Initial self-hosted beta for a single workspace.

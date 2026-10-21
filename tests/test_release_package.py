@@ -34,7 +34,8 @@ class ReleasePackageTest(unittest.TestCase):
 
     def test_reproducible_archive_excludes_private_files_and_normalizes_headers(self):
         private_marker = uuid.uuid4().hex
-        for name in ['.env', '.local/config.env', 'artifacts/private.dump', 'deploy/pilot.env']:
+        for name in ['.env', '.local/config.env', 'artifacts/private.dump', 'deploy/pilot.env',
+                     'cloud/.env', 'cloud/app/models/user.rb', 'cloud/config/master.key']:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(private_marker)

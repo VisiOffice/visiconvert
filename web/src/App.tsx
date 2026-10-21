@@ -55,6 +55,29 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const api = useMemo(() => client(key), [key]);
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.hash.slice(1)).get("launch");
+    if (!code) return;
+    // Remove the one-use credential from browser history before any asynchronous work.
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    setLoading(true);
+    setError("");
+    void (async () => {
+      try {
+        const response = await fetch("/auth/exchange", {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Unable to open this workspace");
+        await refresh(client(result.token));
+        setKey(result.token);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Unable to open this workspace");
+      } finally { setLoading(false); }
+    })();
+  }, []);
+
   async function refresh(request = api) {
     const [b, l, n, s] = await Promise.all([
       request<Bootstrap>("/bootstrap"),
@@ -182,8 +205,8 @@ export default function App() {
         <div className="workspace">
           <span className="workspace-avatar">W</span>
           <div>
-            <strong>My workspace</strong>
-            <small>Self-hosted pilot</small>
+            <strong>{boot?.name || "My workspace"}</strong>
+            <small>{boot?.hosted ? "Hosted workspace" : "Self-hosted pilot"}</small>
           </div>
         </div>
         <span className="nav-label">WORKSPACE</span>
@@ -210,13 +233,20 @@ export default function App() {
             <ShieldCheck size={19} />
             <strong>Your stack, connected.</strong>
             <p>
-              Track with Twilio. Answer calls in the phone system you already
-              use.
+              {boot?.hosted
+                ? "Add inquiries, qualify opportunities, and connect bookings to their source."
+                : "Track with Twilio. Answer calls in the phone system you already use."}
             </p>
           </div>
           <button
             className="signout"
-            onClick={() => {
+            onClick={async () => {
+              if (key.startsWith("vc_session_")) {
+                try {
+                  const response = await fetch("/api/session", { method: "DELETE", headers: { Authorization: `Bearer ${key}` } });
+                  if (!response.ok && response.status !== 401) throw new Error("Unable to sign out. Please try again.");
+                } catch (error) { setError(error instanceof Error ? error.message : "Unable to sign out"); return; }
+              }
               setKey("");
               setBoot(null);
               setSelected(null);
@@ -224,7 +254,7 @@ export default function App() {
               setError("");
             }}
           >
-            <LogOut size={16} /> Lock workspace
+            <LogOut size={16} /> {key.startsWith("vc_session_") ? "Sign out" : "Lock workspace"}
           </button>
         </div>
       </aside>
@@ -234,7 +264,7 @@ export default function App() {
             Workspace <ChevronRight size={13} /> {page}
           </span>
           <span className="status">
-            <i /> Local pilot
+            <i /> {boot?.hosted ? "Hosted pilot" : "Local pilot"}
           </span>
         </header>
         <div className="content">
@@ -254,6 +284,7 @@ export default function App() {
             </div>
             <button
               className="primary"
+              disabled={boot?.hosted && page === "Tracking numbers"}
               onClick={() =>
                 setModal(page === "Tracking numbers" ? "number" : "lead")
               }
@@ -264,6 +295,7 @@ export default function App() {
                 : "Add form lead"}
             </button>
           </div>
+          {boot?.hosted && page === "Tracking numbers" && <p className="notice">Phone-number setup is not available in hosted workspaces yet. You can add form leads, qualify inquiries, and record bookings.</p>}
           {error && (
             <p className="error" role="alert">
               {error}
@@ -990,7 +1022,7 @@ function Connections({ boot }: { boot: Bootstrap }) {
   }, []);
   return (
     <div className="connections">
-      <section className="card connection">
+      {boot.hosted ? <section className="card connection"><div className="connection-body"><h2>Phone connections</h2><p>Phone-number setup is not available in hosted workspaces yet. Start with form leads, qualification, and bookings.</p></div></section> : <section className="card connection">
         <div className="card-header">
           <div>
             <h2>Twilio → your business phone</h2>
@@ -1033,7 +1065,7 @@ function Connections({ boot }: { boot: Bootstrap }) {
             Recording is off. Voice forwarding does not forward SMS.
           </p>
         </div>
-      </section>
+      </section>}
       <section className="card connection">
         <div className="card-header">
           <div>

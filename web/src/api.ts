@@ -33,6 +33,7 @@ export type Summary = {
   booked_minor: number;
 };
 export type Bootstrap = {
+  hosted: boolean;
   name: string;
   twilio_configured: boolean;
   voice_url: string;

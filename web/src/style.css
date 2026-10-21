@@ -986,10 +986,16 @@ footer button {
   .sidebar .brand strong {
     font-size: 21px;
   }
-  .workspace,
   .nav-label,
-  .sidebar-bottom {
+  .sidebar-bottom .pilot-note {
     display: none;
+  }
+  .workspace {
+    margin: 14px 0 0;
+    padding: 8px;
+  }
+  .sidebar-bottom {
+    margin-top: 10px;
   }
   .sidebar nav {
     flex-direction: row;

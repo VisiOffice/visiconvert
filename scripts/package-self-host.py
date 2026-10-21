@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = ['Cargo.toml', 'Cargo.lock', 'Dockerfile', '.dockerignore', '.gitignore',
          '.github/workflows/self-host.yml',
          'CONTRIBUTING.md', 'CHANGELOG.md', 'docs/PUBLIC_README.md',
-         'compose.yaml', 'docs/SELF_HOSTING.md', 'scripts/self-host.sh', 'scripts/self_host.py',
+         'compose.yaml', 'docs/SELF_HOSTING.md', 'docs/HOSTED_PROTOCOL.md', 'scripts/self-host.sh', 'scripts/self_host.py',
          'scripts/verify-self-host.py', 'scripts/package-self-host.py', 'scripts/sync-brand.py',
          'tests/test_self_host.py', 'tests/test_release_package.py',
          'web/package.json', 'web/pnpm-lock.yaml', 'web/tsconfig.json', 'web/vite.config.ts',

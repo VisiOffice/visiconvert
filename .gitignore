@@ -15,3 +15,5 @@ pkg/
 /website/.wrangler/
 __pycache__/
 
+
+/cloud/

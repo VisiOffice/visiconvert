@@ -42,11 +42,15 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 ## Beta limitations
 
-Authentication uses one operator key per workspace. Individual accounts,
+Self-hosted authentication uses one operator key per workspace. Local individual accounts,
 roles, session-based dynamic number insertion, automatic website form capture,
 Google conversion delivery, recordings, SMS, and hosted billing are not yet
 implemented. The application does not buy numbers or configure Twilio for you.
 Booking totals represent recorded business outcomes, not settled payments.
+
+An optional [hosted account protocol](docs/HOSTED_PROTOCOL.md) supports separate
+account services with tenant-scoped sessions and browser-bound access. It is
+disabled by default and does not add a Cloud dependency to self-hosting.
 
 Use for controlled evaluation while these capabilities mature. There is no
 claim of full CallRail or WhatConverts feature parity.
