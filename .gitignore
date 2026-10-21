@@ -1,0 +1,17 @@
+/target/
+node_modules/
+dist/
+pkg/
+.astro/
+.env
+.env.*
+!.env.example
+*.log
+/artifacts/
+/web/src/generated/
+*.tsbuildinfo
+.local/
+/deploy/pilot.env
+/website/.wrangler/
+__pycache__/
+

@@ -1,0 +1,1092 @@
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  ArrowDownLeft,
+  ArrowRight,
+  BarChart3,
+  Check,
+  ChevronRight,
+  Filter,
+  Layers3,
+  Link2,
+  Loader2,
+  LogOut,
+  Phone,
+  Plus,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  X,
+} from "./icons";
+import {
+  client,
+  money,
+  label,
+  type Lead,
+  type TrackingNumber,
+  type Summary,
+  type Bootstrap,
+  type Client,
+  type Outcome,
+} from "./api";
+import initWasm, {
+  preview_attribution,
+} from "./generated/attribution/convert_wasm";
+
+type Page = "Overview" | "Lead inbox" | "Tracking numbers" | "Connections";
+const pages = [
+  { name: "Overview" as Page, icon: BarChart3 },
+  { name: "Lead inbox" as Page, icon: Users },
+  { name: "Tracking numbers" as Page, icon: Phone },
+  { name: "Connections" as Page, icon: Link2 },
+];
+export default function App() {
+  const [key, setKey] = useState("");
+  const [entry, setEntry] = useState("");
+  const [page, setPage] = useState<Page>("Overview");
+  const [boot, setBoot] = useState<Bootstrap | null>(null);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [numbers, setNumbers] = useState<TrackingNumber[]>([]);
+  const [summary, setSummary] = useState<Summary[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState<Lead | null>(null);
+  const [modal, setModal] = useState<"number" | "lead" | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const api = useMemo(() => client(key), [key]);
+  async function refresh(request = api) {
+    const [b, l, n, s] = await Promise.all([
+      request<Bootstrap>("/bootstrap"),
+      request<Lead[]>("/leads"),
+      request<TrackingNumber[]>("/numbers"),
+      request<Summary[]>("/summary"),
+    ]);
+    setBoot(b);
+    setLeads(l);
+    setNumbers(n);
+    setSummary(s);
+    setSelected((current) =>
+      current ? l.find((item) => item.id === current.id) || null : null,
+    );
+  }
+  async function login(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      await refresh(client(entry));
+      setKey(entry);
+      setEntry("");
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setLoading(false);
+    }
+  }
+  const totals = summary.reduce(
+    (a, s) => ({
+      leads: a.leads + s.leads,
+      qualified: a.qualified + s.qualified,
+      bookings: a.bookings + s.bookings,
+      booked_minor: a.booked_minor + s.booked_minor,
+    }),
+    { leads: 0, qualified: 0, bookings: 0, booked_minor: 0 },
+  );
+  const filtered = leads.filter(
+    (l) =>
+      (filter === "all" || l.qualification === filter) &&
+      `${l.name} ${l.contact} ${l.source} ${l.campaign}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+  );
+  if (!key)
+    return (
+      <main className="login">
+        <section className="login-story">
+          <Brand />
+          <div>
+            <span className="eyebrow">FROM FIRST CALL TO BOOKED REVENUE</span>
+            <h1>
+              Know what
+              <br />
+              brings them in.
+            </h1>
+            <p>
+              One clear view of your inquiries, marketing sources, and the
+              business they become.
+            </p>
+            <div className="flow">
+              <span>
+                <Phone size={16} /> Inquiry
+              </span>
+              <ArrowRight size={16} />
+              <span>
+                <Check size={16} /> Qualified
+              </span>
+              <ArrowRight size={16} />
+              <span>Booked</span>
+            </div>
+          </div>
+          <small>
+            Open source. Your numbers. Your data. ·{" "}
+            <a href="https://github.com/VisiOffice/visiconvert">Source</a> ·{" "}
+            <a href="/LICENSE.txt">AGPL-3.0-only</a>
+          </small>
+        </section>
+        <section className="login-form">
+          <div className="pilot-label">EARLY ACCESS</div>
+          <h2>Open your workspace</h2>
+          <p>
+            Use the workspace key provided by your administrator. It stays in
+            memory for this session.
+          </p>
+          <form onSubmit={login}>
+            <label>
+              Workspace API key
+              <input
+                type="password"
+                autoComplete="off"
+                value={entry}
+                onChange={(e) => setEntry(e.target.value)}
+                required
+                minLength={32}
+                autoFocus
+              />
+            </label>
+            <button className="primary" disabled={loading}>
+              {loading ? (
+                <Loader2 className="spin" size={18} />
+              ) : (
+                <>
+                  Open workspace <ArrowRight size={16} />
+                </>
+              )}
+            </button>
+          </form>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <p className="muted small">
+            Self-hosting? Find your workspace key in your installation’s config.env.
+          </p>
+        </section>
+      </main>
+    );
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <Brand />
+        <div className="workspace">
+          <span className="workspace-avatar">W</span>
+          <div>
+            <strong>My workspace</strong>
+            <small>Self-hosted pilot</small>
+          </div>
+        </div>
+        <span className="nav-label">WORKSPACE</span>
+        <nav>
+          {pages.map((p) => (
+            <button
+              key={p.name}
+              className={page === p.name ? "active" : ""}
+              onClick={() => {
+                setPage(p.name);
+                setError("");
+              }}
+            >
+              <p.icon size={18} />
+              {p.name}
+              {p.name === "Lead inbox" && (
+                <span className="count">{totals.leads}</span>
+              )}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="pilot-note">
+            <ShieldCheck size={19} />
+            <strong>Your stack, connected.</strong>
+            <p>
+              Track with Twilio. Answer calls in the phone system you already
+              use.
+            </p>
+          </div>
+          <button
+            className="signout"
+            onClick={() => {
+              setKey("");
+              setBoot(null);
+              setSelected(null);
+              setModal(null);
+              setError("");
+            }}
+          >
+            <LogOut size={16} /> Lock workspace
+          </button>
+        </div>
+      </aside>
+      <main className="main">
+        <header className="topbar">
+          <span>
+            Workspace <ChevronRight size={13} /> {page}
+          </span>
+          <span className="status">
+            <i /> Local pilot
+          </span>
+        </header>
+        <div className="content">
+          <div className="page-title">
+            <div>
+              <span className="eyebrow">ATTRIBUTION, WITH CONTEXT</span>
+              <h1>{page === "Overview" ? "See what’s working." : page}</h1>
+              <p>
+                {page === "Overview"
+                  ? "Connect every inquiry to the source that started it."
+                  : page === "Lead inbox"
+                    ? "Review inquiries, qualify opportunities, and record bookings."
+                    : page === "Tracking numbers"
+                      ? "Give each campaign a number. Keep your existing phone system."
+                      : "Start with your numbers and the tools you already use."}
+              </p>
+            </div>
+            <button
+              className="primary"
+              onClick={() =>
+                setModal(page === "Tracking numbers" ? "number" : "lead")
+              }
+            >
+              <Plus size={16} />
+              {page === "Tracking numbers"
+                ? "Add tracking number"
+                : "Add form lead"}
+            </button>
+          </div>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          {leads.some((l) => l.is_demo) && (
+            <div className="demo-banner">
+              <Sparkles size={15} />
+              <span>
+                Sample data is included in this workspace. Demo leads are
+                labeled throughout.
+              </span>
+            </div>
+          )}
+          {page === "Overview" && (
+            <>
+              <div className="section-heading">
+                <h2>Performance at a glance</h2>
+                <span>All time · USD</span>
+              </div>
+              <div className="metrics">
+                {[
+                  {
+                    title: "Total inquiries",
+                    value: totals.leads,
+                    sub: "Calls and submitted forms",
+                    icon: ArrowDownLeft,
+                  },
+                  {
+                    title: "Qualified leads",
+                    value: totals.qualified,
+                    sub: totals.leads
+                      ? `${Math.round((totals.qualified / totals.leads) * 100)}% of all inquiries`
+                      : "Review leads to get started",
+                    icon: Users,
+                  },
+                  {
+                    title: "Bookings",
+                    value: totals.bookings,
+                    sub: "Distinct booked outcomes",
+                    icon: Check,
+                  },
+                  {
+                    title: "Booked revenue",
+                    value: money(totals.booked_minor),
+                    sub: "Recorded bookings · not payments",
+                    icon: BarChart3,
+                  },
+                ].map((m) => (
+                  <article className="metric" key={m.title}>
+                    <div>
+                      {m.title}
+                      <m.icon size={18} />
+                    </div>
+                    <strong>{m.value}</strong>
+                    <small>{m.sub}</small>
+                  </article>
+                ))}
+              </div>
+              <section className="card sources">
+                <div className="card-header">
+                  <div>
+                    <h2>Where your leads come from</h2>
+                    <p>
+                      Compare source volume with qualified leads and booked
+                      revenue.
+                    </p>
+                  </div>
+                  <span className="chip">All sources</span>
+                </div>
+                {summary.length ? (
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Marketing source</th>
+                          <th>Inquiries</th>
+                          <th>Qualified</th>
+                          <th>Bookings</th>
+                          <th>Booked revenue</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summary.map((s) => (
+                          <tr key={s.source}>
+                            <td>
+                              <strong>{s.source}</strong>
+                              <div className="source-bar">
+                                <i
+                                  style={{
+                                    width: `${(s.leads / Math.max(...summary.map((x) => x.leads))) * 100}%`,
+                                  }}
+                                />
+                              </div>
+                            </td>
+                            <td>{s.leads}</td>
+                            <td>{s.qualified}</td>
+                            <td>{s.bookings}</td>
+                            <td className="revenue">{money(s.booked_minor)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <Empty
+                    title="Your sources will appear here"
+                    text="Register a campaign number or add your first form lead."
+                  />
+                )}
+              </section>
+            </>
+          )}
+          {(page === "Overview" || page === "Lead inbox") && (
+            <section className="card">
+              <div className="card-header">
+                <div>
+                  <h2>
+                    {page === "Overview" ? "Recent inquiries" : "All inquiries"}
+                  </h2>
+                  <p>
+                    {page === "Overview"
+                      ? "The latest conversations and opportunities."
+                      : "Showing up to the latest 500 inquiries."}
+                  </p>
+                </div>
+                {page === "Overview" && (
+                  <button
+                    className="text-button"
+                    onClick={() => setPage("Lead inbox")}
+                  >
+                    View inbox <ArrowRight size={15} />
+                  </button>
+                )}
+              </div>
+              {page === "Lead inbox" && (
+                <div className="toolbar">
+                  <label className="search">
+                    <Search size={16} />
+                    <input
+                      aria-label="Search leads"
+                      placeholder="Search names, sources, campaigns…"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                  </label>
+                  <label className="filter">
+                    <Filter size={15} />
+                    <select
+                      aria-label="Qualification filter"
+                      value={filter}
+                      onChange={(e) => setFilter(e.target.value)}
+                    >
+                      <option value="all">All qualifications</option>
+                      {["unreviewed", "qualified", "unqualified", "spam"].map(
+                        (v) => (
+                          <option key={v} value={v}>
+                            {label(v)}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                </div>
+              )}
+              <LeadTable
+                leads={page === "Overview" ? leads.slice(0, 5) : filtered}
+                select={setSelected}
+              />
+            </section>
+          )}
+          {page === "Tracking numbers" && (
+            <>
+              <div className="routing-diagram">
+                <span>
+                  <Phone size={18} /> Twilio tracking number
+                </span>
+                <ArrowRight size={19} />
+                <span>
+                  <Layers3 size={18} /> VisiConvert attribution
+                </span>
+                <ArrowRight size={19} />
+                <span>
+                  <Users size={18} /> Your business phone
+                </span>
+              </div>
+              <section className="card">
+                <div className="card-header">
+                  <div>
+                    <h2>Campaign numbers</h2>
+                    <p>
+                      Register numbers you already own in Twilio. This does not
+                      purchase a number.
+                    </p>
+                  </div>
+                  <span className="chip">{numbers.length} registered</span>
+                </div>
+                {numbers.length ? (
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Tracking number</th>
+                          <th>Source / campaign</th>
+                          <th>Forwards to</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {numbers.map((n) => (
+                          <tr key={n.id}>
+                            <td>
+                              <strong>{n.label}</strong>
+                              <small>{n.phone_number}</small>
+                            </td>
+                            <td>
+                              {n.source}
+                              <small>{n.campaign}</small>
+                            </td>
+                            <td>
+                              {n.destination}
+                              <small>
+                                {n.is_demo
+                                  ? "Demo only"
+                                  : "Configure webhook in Twilio"}
+                              </small>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <Empty
+                    title="Your first campaign starts here"
+                    text="Add a Twilio number and the Quo, RingCentral, or business number that should receive its calls."
+                  />
+                )}
+              </section>
+              <p className="footnote">
+                Pilot accepts +1 (NANP) number format. SMS, number purchasing,
+                and session number pools are not enabled.
+              </p>
+            </>
+          )}
+          {page === "Connections" && boot && <Connections boot={boot} />}
+          <footer>
+            VisiConvert <span>Make the connection.</span>
+            <a href="https://github.com/VisiOffice/visiconvert">Source</a>
+            <a href="/LICENSE.txt">License</a>
+            <button
+              className="text-button"
+              onClick={async () => {
+                try {
+                  await refresh();
+                  setError("");
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }}
+            >
+              Refresh data
+            </button>
+          </footer>
+        </div>
+      </main>
+      {selected && (
+        <LeadDetail
+          key={selected.id}
+          lead={selected}
+          api={api}
+          refresh={refresh}
+          close={() => setSelected(null)}
+        />
+      )}{" "}
+      {modal && (
+        <CreateModal
+          kind={modal}
+          api={api}
+          close={() => setModal(null)}
+          done={async () => {
+            await refresh();
+            setModal(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+function Brand() {
+  return (
+    <div className="brand">
+      <span className="brand-icon">
+        <img src="/brand/visiconvert-mark.svg" width="25" height="24" alt="" />
+      </span>
+      <strong>
+        visi<span>convert</span>
+      </strong>
+    </div>
+  );
+}
+function Empty({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="empty">
+      <Layers3 size={26} />
+      <h3>{title}</h3>
+      <p>{text}</p>
+    </div>
+  );
+}
+function LeadTable({
+  leads,
+  select,
+}: {
+  leads: Lead[];
+  select: (lead: Lead) => void;
+}) {
+  return leads.length ? (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Inquiry</th>
+            <th>Source</th>
+            <th>Qualification</th>
+            <th>Booked value</th>
+            <th>Received</th>
+          </tr>
+        </thead>
+        <tbody>
+          {leads.map((l) => (
+            <tr key={l.id}>
+              <td>
+                <button className="lead-button" onClick={() => select(l)}>
+                  <span className={`channel ${l.channel}`}>
+                    {l.channel === "call" ? (
+                      <Phone size={15} />
+                    ) : (
+                      <Layers3 size={15} />
+                    )}
+                  </span>
+                  <span>
+                    <strong>{l.name}</strong>
+                    <small>
+                      {l.contact} {l.is_demo && <em>DEMO</em>}
+                    </small>
+                  </span>
+                </button>
+              </td>
+              <td>
+                {l.source}
+                <small>{l.campaign || "No campaign supplied"}</small>
+              </td>
+              <td>
+                <span className={`badge ${l.qualification}`}>
+                  <i />
+                  {label(l.qualification)}
+                </span>
+              </td>
+              <td>{l.booked_minor ? money(l.booked_minor) : "—"}</td>
+              <td className="date">
+                {new Date(l.created_at).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+                <small>
+                  {new Date(l.created_at).toLocaleTimeString(undefined, {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </small>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : (
+    <Empty
+      title="No inquiries to show"
+      text="Add a form lead, connect a tracking number, or adjust your search."
+    />
+  );
+}
+function LeadDetail({
+  lead,
+  api,
+  refresh,
+  close,
+}: {
+  lead: Lead;
+  api: Client;
+  refresh: () => Promise<void>;
+  close: () => void;
+}) {
+  const [qualification, setQualification] = useState(lead.qualification),
+    [notes, setNotes] = useState(lead.notes),
+    [editVersion, setEditVersion] = useState(lead.version),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [busy, setBusy] = useState(false),
+    [outcomes, setOutcomes] = useState<Outcome[]>([]);
+  const [booking, setBooking] = useState(""),
+    [amount, setAmount] = useState("");
+  useEffect(() => {
+    api<Outcome[]>(`/leads/${lead.id}/outcomes`)
+      .then(setOutcomes)
+      .catch((e) => setError(e.message));
+  }, [api, lead.id]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [close]);
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await action();
+      await refresh();
+      setOutcomes(await api<Outcome[]>(`/leads/${lead.id}/outcomes`));
+      setNotice("Saved");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="overlay">
+      <section
+        className="drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Lead details"
+      >
+        <div className="drawer-top">
+          <span className="eyebrow">
+            INQUIRY DETAILS {lead.is_demo ? "· DEMO" : ""}
+          </span>
+          <button aria-label="Close details" onClick={close}>
+            <X size={20} />
+          </button>
+        </div>
+        <h2>{lead.name}</h2>
+        <p>{lead.contact}</p>
+        <div className="detail-grid">
+          <div>
+            <small>Source</small>
+            <strong>{lead.source}</strong>
+          </div>
+          <div>
+            <small>Campaign</small>
+            <strong>{lead.campaign || "Not supplied"}</strong>
+          </div>
+          <div>
+            <small>Channel</small>
+            <strong>{label(lead.channel)}</strong>
+          </div>
+          <div>
+            <small>Booked revenue</small>
+            <strong>{money(lead.booked_minor)}</strong>
+          </div>
+        </div>
+        {lead.channel === "call" && (
+          <div className="call-note">
+            <strong>{label(lead.call_status || "unknown")}</strong>
+            <p>
+              {lead.tracking_number} → {lead.destination}
+            </p>
+            <small>
+              A destination answer can be an IVR or voicemail. It does not
+              confirm a human answered.
+            </small>
+          </div>
+        )}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => {
+              await api(
+                `/leads/${lead.id}`,
+                { version: editVersion, qualification, notes },
+                "PATCH",
+              );
+              setEditVersion((value) => value + 1);
+            });
+          }}
+        >
+          <div className="form-field">
+            <label htmlFor="lead-qualification">Qualification</label>
+            <select
+              id="lead-qualification"
+              value={qualification}
+              onChange={(e) => setQualification(e.target.value)}
+            >
+              {["unreviewed", "qualified", "unqualified", "spam"].map((v) => (
+                <option key={v} value={v}>
+                  {label(v)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-field">
+            <label htmlFor="lead-notes">Notes</label>
+            <textarea
+              id="lead-notes"
+              rows={4}
+              maxLength={4000}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+          <button className="primary" disabled={busy}>
+            Save lead
+          </button>
+        </form>
+        <hr />
+        <h3>Bookings</h3>
+        <p className="small muted">
+          Use the booking ID from your business system. Repeated IDs do not add
+          revenue twice.
+        </p>
+        {outcomes.map((o) => (
+          <div className="outcome" key={o.external_id}>
+            <div>
+              <strong>{o.external_id}</strong>
+              <small>
+                {money(o.amount_minor)} · {o.status} · revision {o.revision}
+              </small>
+            </div>
+            {o.status === "booked" && (
+              <button
+                disabled={busy}
+                className="text-button"
+                onClick={() =>
+                  void run(async () => {
+                    await api(
+                      `/leads/${lead.id}/outcomes`,
+                      { ...o, status: "canceled", revision: o.revision + 1 },
+                      "PUT",
+                    );
+                  })
+                }
+              >
+                Cancel booking
+              </button>
+            )}
+          </div>
+        ))}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => {
+              const parts = amount.split(".");
+              const minor =
+                Number(parts[0]) * 100 +
+                Number((parts[1] || "").padEnd(2, "0"));
+              await api(
+                `/leads/${lead.id}/outcomes`,
+                {
+                  external_id: booking,
+                  amount_minor: minor,
+                  currency: "USD",
+                  status: "booked",
+                  revision: 1,
+                },
+                "PUT",
+              );
+              setBooking("");
+              setAmount("");
+            });
+          }}
+        >
+          <div className="form-row">
+            <label>
+              Booking ID
+              <input
+                required
+                maxLength={150}
+                placeholder="booking-1042"
+                value={booking}
+                onChange={(e) => setBooking(e.target.value)}
+              />
+            </label>
+            <label>
+              Amount (USD)
+              <input
+                required
+                inputMode="decimal"
+                pattern="[0-9]+(\.[0-9]{1,2})?"
+                placeholder="250.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </label>
+          </div>
+          <button className="secondary" disabled={busy}>
+            <Plus size={15} /> Record booking
+          </button>
+        </form>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p className="success" role="status">
+            {notice}
+          </p>
+        )}
+      </section>
+    </div>
+  );
+}
+function CreateModal({
+  kind,
+  api,
+  close,
+  done,
+}: {
+  kind: "number" | "lead";
+  api: Client;
+  close: () => void;
+  done: () => Promise<void>;
+}) {
+  const [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
+  const fields =
+    kind === "number"
+      ? [
+          ["label", "Label", "Google search line"],
+          ["phone_number", "Twilio tracking number", "+12025550101"],
+          ["destination", "Business destination", "+12025550102"],
+          ["source", "Marketing source", "Google Ads"],
+          ["campaign", "Campaign", "Spring campaign"],
+        ]
+      : [
+          ["external_id", "Submission ID", "form-1042"],
+          ["name", "Name", "Alex Morgan"],
+          ["contact", "Email or phone", "alex@example.com"],
+          ["source", "Marketing source", "Website"],
+          ["campaign", "Campaign (optional)", "Contact form"],
+        ];
+  return (
+    <div className="overlay modal-overlay">
+      <section
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={kind === "number" ? "Add tracking number" : "Add form lead"}
+      >
+        <div className="drawer-top">
+          <h2>{kind === "number" ? "Add tracking number" : "Add form lead"}</h2>
+          <button aria-label="Close form" onClick={close}>
+            <X size={20} />
+          </button>
+        </div>
+        <p>
+          {kind === "number"
+            ? "Register an existing Twilio number and where to forward calls."
+            : "Record a submitted inquiry. The private API also accepts server-to-server form submissions."}
+        </p>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const data = Object.fromEntries(new FormData(e.currentTarget));
+            setBusy(true);
+            setError("");
+            try {
+              await api(
+                kind === "number" ? "/numbers" : "/leads",
+                kind === "number" ? data : { ...data, notes: "" },
+              );
+              await done();
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {fields.map(([name, title, placeholder], i) => (
+            <label key={name}>
+              {title}
+              <input
+                name={name}
+                placeholder={placeholder}
+                required={!(kind === "lead" && name === "campaign")}
+                autoFocus={i === 0}
+                maxLength={name === "contact" ? 200 : 150}
+              />
+            </label>
+          ))}
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <button className="primary" disabled={busy}>
+            {busy
+              ? "Saving…"
+              : kind === "number"
+                ? "Register number"
+                : "Add lead"}
+          </button>
+        </form>
+      </section>
+    </div>
+  );
+}
+function Connections({ boot }: { boot: Bootstrap }) {
+  const [url, setUrl] = useState(
+      "https://example.com/?utm_source=google&utm_medium=cpc&utm_campaign=spring",
+    ),
+    [preview, setPreview] = useState(""),
+    [ready, setReady] = useState(false);
+  useEffect(() => {
+    initWasm()
+      .then(() => setReady(true))
+      .catch(() => setPreview("Could not load the attribution preview."));
+  }, []);
+  return (
+    <div className="connections">
+      <section className="card connection">
+        <div className="card-header">
+          <div>
+            <h2>Twilio → your business phone</h2>
+            <p>Bring your own account and tracking numbers.</p>
+          </div>
+          <span
+            className={`badge ${boot.twilio_configured ? "qualified" : "unreviewed"}`}
+          >
+            {boot.twilio_configured
+              ? "Credentials configured"
+              : "Setup required"}
+          </span>
+        </div>
+        <div className="connection-body">
+          <ol>
+            <li>
+              Set <code>TWILIO_ACCOUNT_SID</code>,{" "}
+              <code>TWILIO_AUTH_TOKEN</code>, and your HTTPS{" "}
+              <code>PUBLIC_URL</code> in the server environment.
+            </li>
+            <li>
+              Register your tracking number and destination in Tracking numbers.
+            </li>
+            <li>
+              In Twilio, configure the number’s incoming voice webhook and call
+              status callback as HTTP POST using these URLs.
+            </li>
+          </ol>
+          <label>
+            Incoming voice webhook
+            <code className="code-block">{boot.voice_url}</code>
+          </label>
+          <label>
+            Call status callback
+            <code className="code-block">{boot.status_url}</code>
+          </label>
+          <p className="small muted">
+            Credential configuration is not a live connectivity test. Configure
+            a separate Twilio fallback before routing production calls.
+            Recording is off. Voice forwarding does not forward SMS.
+          </p>
+        </div>
+      </section>
+      <section className="card connection">
+        <div className="card-header">
+          <div>
+            <h2>Attribution preview</h2>
+            <p>Shared Rust rules, running in your browser through WASM.</p>
+          </div>
+          <span className="chip">UTM evidence</span>
+        </div>
+        <form
+          className="connection-body"
+          onSubmit={(e) => {
+            e.preventDefault();
+            try {
+              const p = JSON.parse(preview_attribution(url));
+              setPreview(
+                `Source: ${p.source || "unknown"} · Medium: ${p.medium || "unknown"} · Campaign: ${p.campaign || "unknown"}`,
+              );
+            } catch (e) {
+              setPreview(String(e));
+            }
+          }}
+        >
+          <label>
+            Landing page URL
+            <input
+              type="url"
+              required
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </label>
+          <button className="secondary" disabled={!ready}>
+            Preview attribution <ArrowRight size={15} />
+          </button>
+          {preview && (
+            <p role="status" className="preview-result">
+              {preview}
+            </p>
+          )}
+          <p className="small muted">
+            Missing UTM evidence stays unknown. This preview does not install a
+            website tracker.
+          </p>
+        </form>
+      </section>
+      <section className="next-up">
+        <span className="eyebrow">COMING AFTER THE PILOT</span>
+        <h3>More context, fewer gaps.</h3>
+        <p>
+          Session number pools, website form capture, Google conversion
+          delivery, and VisiComms connections are planned next.
+        </p>
+      </section>
+    </div>
+  );
+}

@@ -1,0 +1,325 @@
+use convert_domain::*;
+use sqlx::{PgPool, Row, postgres::PgPoolOptions};
+use uuid::Uuid;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+    #[error(transparent)]
+    Validation(#[from] ValidationError),
+    #[error("Not found")]
+    NotFound,
+    #[error("This record changed, or its identifier is already in use. Refresh and retry.")]
+    Conflict,
+}
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Clone)]
+pub struct Store {
+    pub pool: PgPool,
+    pub workspace: Uuid,
+}
+
+impl Store {
+    pub async fn connect(url: &str, workspace: Uuid) -> Result<Self> {
+        Ok(Self {
+            pool: PgPoolOptions::new().max_connections(8).connect(url).await?,
+            workspace,
+        })
+    }
+    pub async fn migrate(&self) -> anyhow::Result<()> {
+        sqlx::migrate!().run(&self.pool).await?;
+        sqlx::query(
+            "INSERT INTO workspaces(id,name) VALUES($1,'My workspace') ON CONFLICT DO NOTHING",
+        )
+        .bind(self.workspace)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+    pub async fn numbers(&self) -> Result<Vec<TrackingNumber>> {
+        let rows =
+            sqlx::query("SELECT * FROM tracking_numbers WHERE workspace_id=$1 ORDER BY label")
+                .bind(self.workspace)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows
+            .iter()
+            .map(|r| TrackingNumber {
+                id: r.get("id"),
+                label: r.get("label"),
+                phone_number: r.get("phone_number"),
+                destination: r.get("destination"),
+                source: r.get("source"),
+                campaign: r.get("campaign"),
+                is_demo: r.get("is_demo"),
+            })
+            .collect())
+    }
+    pub async fn add_number(&self, n: &NewNumber) -> Result<()> {
+        n.validate()?;
+        let mut tx = self.pool.begin().await?;
+        // Serialize registrations across workspaces: a destination must never be a tracked number.
+        sqlx::query("SELECT pg_advisory_xact_lock(73581001)")
+            .execute(&mut *tx)
+            .await?;
+        let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE phone_number=$1 OR phone_number=$2 OR destination=$1)").bind(&n.phone_number).bind(&n.destination).fetch_one(&mut *tx).await?;
+        if conflict {
+            return Err(Error::Conflict);
+        }
+        sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign) VALUES($1,$2,$3,$4,$5,$6,$7)")
+            .bind(Uuid::new_v4()).bind(self.workspace).bind(n.label.trim()).bind(&n.phone_number).bind(&n.destination).bind(n.source.trim()).bind(n.campaign.trim()).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    pub async fn leads(&self) -> Result<Vec<Lead>> {
+        let rows = sqlx::query("SELECT l.*, COALESCE((SELECT SUM(amount_minor)::bigint FROM outcomes o WHERE o.workspace_id=l.workspace_id AND o.lead_id=l.id AND o.status='booked'),0)::bigint AS booked_minor FROM leads l WHERE l.workspace_id=$1 ORDER BY l.created_at DESC LIMIT 500")
+            .bind(self.workspace).fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .map(|r| Lead {
+                id: r.get("id"),
+                name: r.get("name"),
+                contact: r.get("contact"),
+                channel: r.get("channel"),
+                source: r.get("source"),
+                campaign: r.get("campaign"),
+                qualification: r.get("qualification"),
+                notes: r.get("notes"),
+                version: r.get("version"),
+                created_at: r.get("created_at"),
+                is_demo: r.get("is_demo"),
+                call_status: r.get("call_status"),
+                duration_seconds: r.get("duration_seconds"),
+                tracking_number: r.get("tracking_number"),
+                destination: r.get("destination"),
+                booked_minor: r.get("booked_minor"),
+            })
+            .collect())
+    }
+    pub async fn add_lead(&self, n: &NewLead) -> Result<Uuid> {
+        n.validate()?;
+        let id = Uuid::new_v4();
+        let row = sqlx::query("INSERT INTO leads(id,workspace_id,external_id,name,contact,channel,source,campaign,notes,submission_payload) VALUES($1,$2,$3,$4,$5,'form',$6,$7,$8,$9) ON CONFLICT(workspace_id,channel,external_id) DO NOTHING RETURNING id")
+            .bind(id).bind(self.workspace).bind(&n.external_id).bind(&n.name).bind(&n.contact).bind(&n.source).bind(&n.campaign).bind(&n.notes).bind(serde_json::json!(n)).fetch_optional(&self.pool).await?;
+        if row.is_some() {
+            return Ok(id);
+        }
+        // Repeated identifiers are accepted only for an identical submitted payload.
+        let row = sqlx::query("SELECT id FROM leads WHERE workspace_id=$1 AND channel='form' AND external_id=$2 AND submission_payload=$3")
+            .bind(self.workspace).bind(&n.external_id).bind(serde_json::json!(n)).fetch_optional(&self.pool).await?;
+        row.map(|r| r.get("id")).ok_or(Error::Conflict)
+    }
+    pub async fn update_lead(&self, id: Uuid, n: &LeadUpdate) -> Result<()> {
+        if n.notes.chars().count() > 4000 || n.version < 1 {
+            return Err(ValidationError("Invalid notes or version").into());
+        }
+        let mut tx = self.pool.begin().await?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM leads WHERE workspace_id=$1 AND id=$2)",
+        )
+        .bind(self.workspace)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !exists {
+            return Err(Error::NotFound);
+        }
+        let result = sqlx::query("UPDATE leads SET qualification=$3,notes=$4,version=version+1 WHERE workspace_id=$1 AND id=$2 AND version=$5")
+            .bind(self.workspace).bind(id).bind(n.qualification.as_str()).bind(&n.notes).bind(n.version).execute(&mut *tx).await?;
+        if result.rows_affected() == 0 {
+            return Err(Error::Conflict);
+        }
+        sqlx::query("INSERT INTO audit_events(workspace_id,lead_id,kind,payload) VALUES($1,$2,'lead_updated',$3)").bind(self.workspace).bind(id).bind(serde_json::json!(n)).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    pub async fn outcomes(&self, id: Uuid) -> Result<Vec<Outcome>> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM leads WHERE workspace_id=$1 AND id=$2)",
+        )
+        .bind(self.workspace)
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+        if !exists {
+            return Err(Error::NotFound);
+        }
+        let rows = sqlx::query(
+            "SELECT * FROM outcomes WHERE workspace_id=$1 AND lead_id=$2 ORDER BY external_id",
+        )
+        .bind(self.workspace)
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| Outcome {
+                external_id: r.get("external_id"),
+                amount_minor: r.get("amount_minor"),
+                currency: r.get("currency"),
+                status: r.get("status"),
+                revision: r.get("revision"),
+            })
+            .collect())
+    }
+    pub async fn put_outcome(&self, id: Uuid, n: &OutcomeInput) -> Result<()> {
+        n.validate()?;
+        let mut tx = self.pool.begin().await?;
+        lock(
+            &mut tx,
+            &format!("{}:outcome:{}", self.workspace, n.external_id),
+        )
+        .await?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM leads WHERE workspace_id=$1 AND id=$2)",
+        )
+        .bind(self.workspace)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !exists {
+            return Err(Error::NotFound);
+        }
+        if let Some(row) =
+            sqlx::query("SELECT * FROM outcomes WHERE workspace_id=$1 AND external_id=$2")
+                .bind(self.workspace)
+                .bind(&n.external_id)
+                .fetch_optional(&mut *tx)
+                .await?
+        {
+            let same = row.get::<Uuid, _>("lead_id") == id
+                && row.get::<i64, _>("amount_minor") == n.amount_minor
+                && row.get::<String, _>("status") == n.status
+                && row.get::<i32, _>("revision") == n.revision;
+            if same {
+                return Ok(());
+            }
+            if row.get::<Uuid, _>("lead_id") != id
+                || n.revision != row.get::<i32, _>("revision") + 1
+            {
+                return Err(Error::Conflict);
+            }
+        } else if n.revision != 1 {
+            return Err(Error::Conflict);
+        }
+        sqlx::query("INSERT INTO outcomes(workspace_id,lead_id,external_id,amount_minor,currency,status,revision) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(workspace_id,external_id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor,status=EXCLUDED.status,revision=EXCLUDED.revision")
+            .bind(self.workspace).bind(id).bind(&n.external_id).bind(n.amount_minor).bind(&n.currency).bind(&n.status).bind(n.revision).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO audit_events(workspace_id,lead_id,kind,payload) VALUES($1,$2,'outcome_updated',$3)").bind(self.workspace).bind(id).bind(serde_json::json!(n)).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    pub async fn summary(&self) -> Result<Vec<SourceSummary>> {
+        let rows=sqlx::query("SELECT source,COUNT(*) AS leads,COUNT(*) FILTER(WHERE qualification='qualified') AS qualified,COALESCE(SUM(o.bookings),0)::bigint AS bookings,COALESCE(SUM(o.amount),0)::bigint AS booked_minor FROM leads l LEFT JOIN LATERAL (SELECT COUNT(*) AS bookings, SUM(amount_minor) AS amount FROM outcomes WHERE workspace_id=l.workspace_id AND lead_id=l.id AND status='booked') o ON true WHERE l.workspace_id=$1 GROUP BY source ORDER BY leads DESC,source").bind(self.workspace).fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .map(|r| SourceSummary {
+                source: r.get("source"),
+                leads: r.get("leads"),
+                qualified: r.get("qualified"),
+                bookings: r.get("bookings"),
+                booked_minor: r.get("booked_minor"),
+            })
+            .collect())
+    }
+
+    pub async fn call_event(&self, event: &CallEvent) -> Result<String> {
+        let mut tx = self.pool.begin().await?;
+        lock(&mut tx, &format!("{}:call:{}", self.workspace, event.sid)).await?;
+        let existing=sqlx::query("SELECT id,destination FROM leads WHERE workspace_id=$1 AND channel='call' AND external_id=$2").bind(self.workspace).bind(&event.sid).fetch_optional(&mut *tx).await?;
+        let (id, destination) = if let Some(r) = existing {
+            (r.get::<Uuid, _>("id"), r.get::<String, _>("destination"))
+        } else {
+            let number=sqlx::query("SELECT * FROM tracking_numbers WHERE workspace_id=$1 AND phone_number=$2 AND NOT is_demo").bind(self.workspace).bind(&event.to).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+            let id = Uuid::new_v4();
+            let destination: String = number.get("destination");
+            sqlx::query("INSERT INTO leads(id,workspace_id,external_id,name,contact,channel,source,campaign,tracking_number,destination,call_status) VALUES($1,$2,$3,'Phone inquiry',$4,'call',$5,$6,$7,$8,'ringing')")
+                .bind(id).bind(self.workspace).bind(&event.sid).bind(&event.from).bind(number.get::<String,_>("source")).bind(number.get::<String,_>("campaign")).bind(&event.to).bind(&destination).execute(&mut *tx).await?;
+            (id, destination)
+        };
+        let receipt=sqlx::query("INSERT INTO webhook_receipts(workspace_id,fingerprint) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(self.workspace).bind(&event.fingerprint).execute(&mut *tx).await?;
+        if receipt.rows_affected() > 0 {
+            match &event.kind {
+                CallEventKind::Voice => {}
+                CallEventKind::Dial { status, duration } => {
+                    // A destination answer can be an IVR or voicemail, never proof of a human answer.
+                    let result = if status == "completed" {
+                        "destination_answered"
+                    } else {
+                        status.as_str()
+                    };
+                    sqlx::query("UPDATE leads SET call_status=$3,duration_seconds=$4,dial_terminal=true WHERE workspace_id=$1 AND id=$2 AND NOT dial_terminal").bind(self.workspace).bind(id).bind(result).bind(duration).execute(&mut *tx).await?;
+                }
+                CallEventKind::Status { status, sequence } => {
+                    let mapped = match status.as_str() {
+                        "completed" => "ended_unknown",
+                        "in-progress" => "in_progress",
+                        other => other,
+                    };
+                    sqlx::query("UPDATE leads SET parent_status=$3,parent_sequence=$4,call_status=CASE WHEN dial_terminal THEN call_status ELSE $5 END WHERE workspace_id=$1 AND id=$2 AND parent_sequence<$4 AND COALESCE(parent_status,'') NOT IN ('completed','busy','failed','no-answer','canceled')")
+                        .bind(self.workspace).bind(id).bind(status).bind(sequence).bind(mapped).execute(&mut *tx).await?;
+                }
+            }
+        }
+        tx.commit().await?;
+        Ok(destination)
+    }
+    pub async fn seed_demo(&self) -> Result<()> {
+        for (index, (name, source, campaign)) in [
+            ("Avery Morgan", "Google Ads", "Emergency plumbing"),
+            ("Jordan Lee", "Organic search", "Website inquiry"),
+            ("Casey Rivera", "Google Ads", "Drain cleaning"),
+            ("Sam Taylor", "Direct / supplied", "Contact form"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let id = self
+                .add_lead(&NewLead {
+                    external_id: format!("demo-{index}"),
+                    name: name.to_string(),
+                    contact: format!("demo{}@example.com", index + 1),
+                    source: source.to_string(),
+                    campaign: campaign.to_string(),
+                    notes: "Sample inquiry for exploring the pilot.".into(),
+                })
+                .await?;
+            sqlx::query("UPDATE leads SET is_demo=true WHERE workspace_id=$1 AND id=$2")
+                .bind(self.workspace)
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+async fn lock(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    key: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(key)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+pub struct CallEvent {
+    pub sid: String,
+    pub to: String,
+    pub from: String,
+    pub fingerprint: String,
+    pub kind: CallEventKind,
+}
+pub enum CallEventKind {
+    Voice,
+    Dial {
+        status: String,
+        duration: Option<i32>,
+    },
+    Status {
+        status: String,
+        sequence: i32,
+    },
+}

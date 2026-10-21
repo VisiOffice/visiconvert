@@ -1,0 +1,76 @@
+# Standalone self-hosted installation. The Hetzner pilot uses deploy/compose.yml.
+name: ${COMPOSE_PROJECT_NAME:-visiconvert-selfhost}
+
+x-app: &app
+  image: ${VISICONVERT_IMAGE:-visiconvert-selfhost:local}
+  build:
+    context: .
+    target: app
+  environment:
+    DATABASE_URL: postgresql://visiconvert:${VISICONVERT_POSTGRES_PASSWORD:?run self-host init first}@db:5432/visiconvert
+    VISICONVERT_API_KEY: ${VISICONVERT_API_KEY:?run self-host init first}
+    VISICONVERT_WORKSPACE_ID: ${VISICONVERT_WORKSPACE_ID:?run self-host init first}
+    PUBLIC_URL: ${PUBLIC_URL:?run self-host init first}
+    LISTEN_ADDR: 0.0.0.0:3100
+    TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+    TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 512m
+  cpus: 1.0
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: visiconvert
+      POSTGRES_USER: visiconvert
+      POSTGRES_PASSWORD: ${VISICONVERT_POSTGRES_PASSWORD:?run self-host init first}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U visiconvert -d visiconvert"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  migrate:
+    <<: *app
+    command: [migrate]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    <<: *app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${VISICONVERT_HOST_PORT:-3100}:3100"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

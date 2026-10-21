@@ -1,0 +1,20 @@
+[package]
+name = "convert-store"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+convert-domain.workspace = true
+sqlx.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+serde_json.workspace = true
+thiserror.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+anyhow.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+

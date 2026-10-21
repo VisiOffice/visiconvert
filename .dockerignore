@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+target
+**/node_modules
+**/dist
+web/src/generated
+artifacts
+.local
+deploy/pilot.env
+website
+**/*.log
+**/*.tsbuildinfo
+**/__pycache__

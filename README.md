@@ -1,0 +1,69 @@
+<p><img src="assets/brand/visiconvert-wordmark.svg" alt="VisiConvert" width="340" /></p>
+
+# VisiConvert
+
+Self-hosted lead tracking and marketing attribution for service businesses.
+Connect inquiries to qualified leads, bookings, and source revenue.
+
+**Early beta, single workspace.** The application uses a Rust/Axum API,
+PostgreSQL, React/Vite, and a shared Rust/WASM attribution preview. Paid hosting
+and VisiComms integration are planned. See [visiconvert.com](https://visiconvert.com).
+
+## Install
+
+Requires Docker with the Compose plugin, Bash, and Python 3.11+. Allow roughly
+4 GiB of available RAM and 20 GiB of disk for the initial source build.
+
+```sh
+bash scripts/self-host.sh init
+bash scripts/self-host.sh up
+```
+
+Open http://127.0.0.1:3100. Retrieve your generated workspace key privately from
+`.local/self-host/config.env`. No Visi account or subscription is needed.
+
+See the [self-hosting guide](docs/SELF_HOSTING.md) for HTTPS, configuration,
+upgrades, backups, and restoration. Carrier numbers and usage are separate
+provider charges. You can explore form leads and bookings without a carrier.
+
+## What works
+
+- Register existing customer-owned Twilio campaign numbers and configure
+  forwarding destinations. Signed callbacks, deduplication, and call status
+  handling are implemented; live carrier/fallback verification is outstanding.
+- Submit form leads through the API or application, qualify leads, and save notes.
+- Record booked USD amounts in exact cents, revise or cancel outcomes, and
+  report booking totals by source.
+- Install with isolated PostgreSQL storage, generated credentials, explicit
+  migrations, pre-upgrade backups, and empty-database restoration.
+
+## Beta limitations
+
+Authentication uses one operator key per workspace. Individual accounts,
+roles, session-based dynamic number insertion, automatic website form capture,
+Google conversion delivery, recordings, SMS, and hosted billing are not yet
+implemented. The application does not buy numbers or configure Twilio for you.
+Booking totals represent recorded business outcomes, not settled payments.
+
+Use for controlled evaluation while these capabilities mature. There is no
+claim of full CallRail or WhatConverts feature parity.
+
+## Verification and contributions
+
+```sh
+python3 -m unittest discover -s tests -v
+python3 scripts/verify-self-host.py
+```
+
+The second command builds the app and exercises disposable installations,
+restart persistence, backups, and restoration. It requires a working Docker
+daemon and removes only its own test projects and volumes.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [release notes](CHANGELOG.md), and
+[LICENSE](LICENSE) for contribution guidance, current scope, and license terms.
+
+## License
+
+AGPL-3.0-only, matching VisiGrid and VisiPass package metadata. See [LICENSE](LICENSE).
+Third-party components retain their own licenses; the outlined wordmark uses
+Manrope, whose font license is included in `assets/brand/FONT-LICENSE.txt`.
