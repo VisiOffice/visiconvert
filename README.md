@@ -1,4 +1,7 @@
-<p><img src="assets/brand/visiconvert-wordmark.svg" alt="VisiConvert" width="340" /></p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/visiconvert-wordmark-light.svg" />
+  <img src="assets/brand/visiconvert-wordmark.svg" alt="VisiConvert" width="340" />
+</picture>
 
 # VisiConvert
 
