@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { verifyGrouping } from "./verify-grouping.mjs";
+import { verifySites } from "./verify-sites.mjs";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -175,6 +177,7 @@ process.once("SIGTERM", () => {
 });
 
 try {
+  await check("Tracker privacy, consent withdrawal, blocked storage, and retry behavior", () => command("node", ["--test", "web/tests/tracker.test.mjs"]));
   await check(
     "Start isolated PostgreSQL and create test database",
     async () => {
@@ -220,6 +223,13 @@ try {
   });
   await check("Twilio connections: encrypted credentials, ownership, and workspace callback isolation", async () => {
     await command("cargo", ["test", "-p", "convert-server", "connection_tests::shared_connections", "--", "--ignored", "--test-threads=1"]);
+  });
+  await check("Website collection: consent, retries, rate limits, and workspace isolation", async () => {
+    await command("cargo", ["test", "-p", "convert-server", "site_tests::", "--", "--ignored", "--test-threads=1"]);
+  });
+  await check("Inquiry grouping: migration, membership, callbacks, history, and booking totals", async () => {
+    await command("cargo", ["test", "-p", "convert-store", "--test", "inquiry_upgrade", "--", "--ignored", "--test-threads=1"]);
+    await command("cargo", ["test", "-p", "convert-server", "inquiry_tests::", "--", "--ignored", "--test-threads=1"]);
   });
   await check("Apply application migrations twice", async () => {
     await command(path.join(root, "target/debug/convert-server"), ["migrate"]);
@@ -457,6 +467,10 @@ try {
     END $$;`,
       ]),
   );
+  await check("Website browser flow: setup, consent, successful form, diagnostics, evidence, and pause", () => verifySites({ browser, page, origin, api, artifactDir }));
+  assert.deepEqual(errors, [], "No uncaught browser errors after website capture");
+  await check("Inquiry browser flow: combine, review, history, separate, and revenue", () => verifyGrouping({ page, api, artifactDir }));
+  assert.deepEqual(errors, [], "No uncaught browser errors after grouping");
   result.status = "passed";
 } catch (error) {
   result.status = "failed";

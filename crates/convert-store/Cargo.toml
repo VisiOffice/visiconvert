@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+serde.workspace = true
 convert-domain.workspace = true
 sqlx.workspace = true
 uuid = { workspace = true, features = ["v4"] }

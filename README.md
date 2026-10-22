@@ -36,6 +36,10 @@ provider charges. You can explore form leads and bookings without a carrier.
 - Register existing customer-owned Twilio campaign numbers and configure
   forwarding destinations. Signed callbacks, deduplication, and call status
   handling are implemented; live carrier/fallback verification is outstanding.
+- [Group repeat calls and forms into inquiries](docs/INQUIRY_GROUPING.md), with shared reviews, source evidence, booking totals, and separation/history controls.
+- Capture website visits and confirmed successful forms with explicit consent, field
+  allowlists, retry deduplication, and inspectable session source evidence.
+  See [website setup](docs/WEBSITE_TRACKING.md). No automatic form listeners.
 - Submit form leads through the API or application, qualify leads, and save notes.
 - Record booked USD amounts in exact cents, revise or cancel outcomes, and
   report booking totals by source.
@@ -45,7 +49,7 @@ provider charges. You can explore form leads and bookings without a carrier.
 ## Beta limitations
 
 Self-hosted authentication uses one operator key per workspace. Local individual accounts,
-roles, session-based dynamic number insertion, automatic website form capture,
+roles, session-based dynamic number insertion, native form-platform connectors,
 Google conversion delivery, recordings, and SMS are not yet implemented.
 Hosted billing is maintained in the separate Rails service. The application does not buy numbers or configure Twilio for you.
 Booking totals represent recorded business outcomes, not settled payments.

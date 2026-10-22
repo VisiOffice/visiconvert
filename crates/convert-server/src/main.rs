@@ -1,6 +1,8 @@
 mod connections;
 mod hosted;
+mod inquiries;
 mod secrets;
+mod sites;
 use axum::{
     Extension, Json, Router,
     body::Bytes,
@@ -141,6 +143,8 @@ fn router(app: Shared) -> Router {
     let secure_origin = app.public_url.starts_with("https://");
     let api = Router::new()
         .merge(connections::routes())
+        .merge(sites::private_routes())
+        .merge(inquiries::routes())
         .route("/bootstrap", get(bootstrap))
         .route("/leads", get(leads).post(add_lead))
         .route("/leads/{id}", patch(update_lead))
@@ -151,6 +155,7 @@ fn router(app: Shared) -> Router {
         .route_layer(middleware::from_fn_with_state(app.clone(), authenticate));
     Router::new()
         .merge(hosted::routes(app.clone()))
+        .merge(sites::public_routes(app.clone()))
         .nest("/api", api)
         .route("/health", get(|| async { Json(json!({"status":"ok"})) }))
         .route("/webhooks/twilio/voice", post(voice))
@@ -253,6 +258,7 @@ impl From<convert_store::Error> for ApiError {
         use convert_store::Error::*;
         match e {
             Validation(e) => Self(StatusCode::BAD_REQUEST, e.to_string()),
+            RateLimited => Self(StatusCode::TOO_MANY_REQUESTS, e.to_string()),
             NotFound => Self(StatusCode::NOT_FOUND, "Not found".into()),
             Conflict => Self(StatusCode::CONFLICT, e.to_string()),
             Database(error) => {
@@ -634,3 +640,9 @@ mod tests {
 mod connection_tests;
 #[cfg(test)]
 mod hosted_tests;
+
+#[cfg(test)]
+mod site_tests;
+
+#[cfg(test)]
+mod inquiry_tests;

@@ -48,6 +48,13 @@ class ReleasePackageTest(unittest.TestCase):
             names = archive.getnames()
             self.assertIn('visiconvert/README.md', names)
             self.assertIn('visiconvert/scripts/package-self-host.py', names)
+            self.assertIn('visiconvert/crates/convert-server/assets/tracker.js', names)
+            self.assertIn('visiconvert/crates/convert-store/migrations/0005_website_capture.sql', names)
+            self.assertIn('visiconvert/docs/WEBSITE_TRACKING.md', names)
+            self.assertIn('visiconvert/crates/convert-store/migrations/0006_inquiry_grouping.sql', names)
+            self.assertIn('visiconvert/docs/INQUIRY_GROUPING.md', names)
+            self.assertIn('visiconvert/web/tests/verify-grouping.mjs', names)
+            self.assertIn('visiconvert/web/tests/verify-sites.mjs', names)
             for member in archive.getmembers():
                 self.assertTrue(member.isfile())
                 self.assertEqual((member.uid, member.gid, member.mtime), (0, 0, 0))

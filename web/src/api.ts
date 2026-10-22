@@ -16,6 +16,7 @@ export type Lead = {
   destination: string | null;
   booked_minor: number;
 };
+export type Inquiry = Lead & { primary_lead_id: string; interaction_count: number; search_text: string };
 export type TrackingNumber = {
   id: string;
   label: string;

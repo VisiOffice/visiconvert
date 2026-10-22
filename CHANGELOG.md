@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — inquiry grouping
+
+- Explicitly combine repeat calls/forms into one inquiry in both hosted and self-hosted workspaces.
+- Interaction timeline, shared qualification/notes, preserved source evidence, and inquiry-level source/revenue reports.
+- Separate mistaken associations with bookings following their original interaction; retain review snapshots, reasons, and actor history.
+- Workspace isolation and version checks protect concurrent edits, including legacy interaction APIs.
+- Migration 0006 preserves existing records without automatically matching people; desktop/mobile and populated-database upgrade coverage.
+
+## Unreleased — website capture
+
+- Shared Sites setup, exact-origin collection, pause/edit controls, field allowlists, and receipt diagnostics.
+- Consent-gated standalone tracker with tab-scoped session entry context, recognized campaign/click IDs, and explicit successful-form hooks.
+- Atomic retry deduplication, per-site collection limits, workspace isolation, and source evidence in the lead drawer.
+- Additive migration 0005 and self-host packaging; no hosted billing dependency or new secret.
+- Browser collection remains best effort and browser-reported; no automatic form listeners, number pools, or cross-session attribution yet.
+
+## Unreleased — command line and MCP
+
+- New `visiconvert` binary (`crates/convert-cli`) for status, Twilio connection, numbers, leads, qualification, bookings and the source report, with `--json` output.
+- `visiconvert mcp` serves the same operations to AI agents over stdio. It is read-only unless started with `--allow-changes` and never accepts Twilio credentials.
+- Built only on existing API endpoints. Twilio webhook URLs are still set by hand.
+
 ## Unreleased — shared Twilio connections
 
 - Connect and verify a Twilio account in both self-hosted and hosted workspaces.

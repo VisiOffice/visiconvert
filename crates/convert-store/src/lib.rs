@@ -1,5 +1,7 @@
 pub mod connections;
 pub mod hosted;
+pub mod inquiries;
+pub mod sites;
 use convert_domain::*;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -10,6 +12,8 @@ pub enum Error {
     Database(#[from] sqlx::Error),
     #[error(transparent)]
     Validation(#[from] ValidationError),
+    #[error("Collection limit reached; retry in a minute")]
+    RateLimited,
     #[error("Not found")]
     NotFound,
     #[error("This record changed, or its identifier is already in use. Refresh and retry.")]
@@ -95,20 +99,21 @@ impl Store {
         Ok(())
     }
     pub async fn leads(&self) -> Result<Vec<Lead>> {
-        let rows = sqlx::query("SELECT l.*, COALESCE((SELECT SUM(amount_minor)::bigint FROM outcomes o WHERE o.workspace_id=l.workspace_id AND o.lead_id=l.id AND o.status='booked'),0)::bigint AS booked_minor FROM leads l WHERE l.workspace_id=$1 ORDER BY l.created_at DESC LIMIT 500")
+        let rows = sqlx::query("SELECT l.*, i.qualification AS inquiry_qualification,i.notes AS inquiry_notes,i.version AS inquiry_version, COALESCE((SELECT SUM(amount_minor)::bigint FROM outcomes o WHERE o.workspace_id=l.workspace_id AND o.lead_id=l.id AND o.status='booked'),0)::bigint AS booked_minor FROM leads l JOIN inquiries i ON i.workspace_id=l.workspace_id AND i.id=l.inquiry_id WHERE l.workspace_id=$1 ORDER BY l.created_at DESC LIMIT 500")
             .bind(self.workspace).fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
             .map(|r| Lead {
                 id: r.get("id"),
+                inquiry_id: Some(r.get("inquiry_id")),
                 name: r.get("name"),
                 contact: r.get("contact"),
                 channel: r.get("channel"),
                 source: r.get("source"),
                 campaign: r.get("campaign"),
-                qualification: r.get("qualification"),
-                notes: r.get("notes"),
-                version: r.get("version"),
+                qualification: r.get("inquiry_qualification"),
+                notes: r.get("inquiry_notes"),
+                version: r.get("inquiry_version"),
                 created_at: r.get("created_at"),
                 is_demo: r.get("is_demo"),
                 call_status: r.get("call_status"),
@@ -133,47 +138,26 @@ impl Store {
         row.map(|r| r.get("id")).ok_or(Error::Conflict)
     }
     pub async fn update_lead(&self, id: Uuid, n: &LeadUpdate) -> Result<()> {
-        if n.notes.chars().count() > 4000 || n.version < 1 {
-            return Err(ValidationError("Invalid notes or version").into());
-        }
         let mut tx = self.pool.begin().await?;
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM leads WHERE workspace_id=$1 AND id=$2)",
-        )
-        .bind(self.workspace)
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if !exists {
-            return Err(Error::NotFound);
-        }
-        let result = sqlx::query("UPDATE leads SET qualification=$3,notes=$4,version=version+1 WHERE workspace_id=$1 AND id=$2 AND version=$5")
-            .bind(self.workspace).bind(id).bind(n.qualification.as_str()).bind(&n.notes).bind(n.version).execute(&mut *tx).await?;
-        if result.rows_affected() == 0 {
-            return Err(Error::Conflict);
-        }
+        self.lock_inquiry_writes(&mut tx).await?;
+        let group = self.group_for_lead(&mut tx, id).await?;
+        self.update_inquiry_tx(&mut tx, group, n, "authenticated legacy API")
+            .await?;
         sqlx::query("INSERT INTO audit_events(workspace_id,lead_id,kind,payload) VALUES($1,$2,'lead_updated',$3)").bind(self.workspace).bind(id).bind(serde_json::json!(n)).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
     pub async fn outcomes(&self, id: Uuid) -> Result<Vec<Outcome>> {
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM leads WHERE workspace_id=$1 AND id=$2)",
-        )
-        .bind(self.workspace)
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await?;
-        if !exists {
-            return Err(Error::NotFound);
-        }
+        let mut tx = self.pool.begin().await?;
+        self.group_for_lead(&mut tx, id).await?;
         let rows = sqlx::query(
             "SELECT * FROM outcomes WHERE workspace_id=$1 AND lead_id=$2 ORDER BY external_id",
         )
         .bind(self.workspace)
         .bind(id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(rows
             .iter()
             .map(|r| Outcome {
@@ -185,9 +169,34 @@ impl Store {
             })
             .collect())
     }
+    pub async fn inquiry_outcomes(&self, id: Uuid) -> Result<serde_json::Value> {
+        sqlx::query_scalar("SELECT COALESCE((SELECT jsonb_agg(to_jsonb(o) - 'workspace_id' ORDER BY o.external_id) FROM outcomes o JOIN leads l ON l.workspace_id=o.workspace_id AND l.id=o.lead_id WHERE l.workspace_id=i.workspace_id AND l.inquiry_id=i.id),'[]'::jsonb) FROM inquiries i WHERE i.workspace_id=$1 AND i.id=$2 AND i.archived_at IS NULL")
+            .bind(self.workspace).bind(id).fetch_optional(&self.pool).await?.ok_or(Error::NotFound)
+    }
     pub async fn put_outcome(&self, id: Uuid, n: &OutcomeInput) -> Result<()> {
+        self.put_group_outcome(id, n, false, "authenticated legacy API")
+            .await
+    }
+    pub async fn put_inquiry_outcome(&self, id: Uuid, n: &OutcomeInput, actor: &str) -> Result<()> {
+        self.put_group_outcome(id, n, true, actor).await
+    }
+    async fn put_group_outcome(
+        &self,
+        requested: Uuid,
+        n: &OutcomeInput,
+        is_inquiry: bool,
+        actor: &str,
+    ) -> Result<()> {
         n.validate()?;
         let mut tx = self.pool.begin().await?;
+        self.lock_inquiry_writes(&mut tx).await?;
+        let group = if is_inquiry {
+            requested
+        } else {
+            self.group_for_lead(&mut tx, requested).await?
+        };
+        let primary: Uuid = sqlx::query_scalar("SELECT primary_lead_id FROM inquiries WHERE workspace_id=$1 AND id=$2 AND archived_at IS NULL").bind(self.workspace).bind(group).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+        let mut id = if is_inquiry { primary } else { requested };
         lock(
             &mut tx,
             &format!("{}:outcome:{}", self.workspace, n.external_id),
@@ -210,16 +219,18 @@ impl Store {
                 .fetch_optional(&mut *tx)
                 .await?
         {
-            let same = row.get::<Uuid, _>("lead_id") == id
-                && row.get::<i64, _>("amount_minor") == n.amount_minor
+            let original: Uuid = row.get("lead_id");
+            if self.group_for_lead(&mut tx, original).await? != group {
+                return Err(Error::Conflict);
+            }
+            id = original;
+            let same = row.get::<i64, _>("amount_minor") == n.amount_minor
                 && row.get::<String, _>("status") == n.status
                 && row.get::<i32, _>("revision") == n.revision;
             if same {
                 return Ok(());
             }
-            if row.get::<Uuid, _>("lead_id") != id
-                || n.revision != row.get::<i32, _>("revision") + 1
-            {
+            if n.revision != row.get::<i32, _>("revision") + 1 {
                 return Err(Error::Conflict);
             }
         } else if n.revision != 1 {
@@ -228,11 +239,25 @@ impl Store {
         sqlx::query("INSERT INTO outcomes(workspace_id,lead_id,external_id,amount_minor,currency,status,revision) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(workspace_id,external_id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor,status=EXCLUDED.status,revision=EXCLUDED.revision")
             .bind(self.workspace).bind(id).bind(&n.external_id).bind(n.amount_minor).bind(&n.currency).bind(&n.status).bind(n.revision).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO audit_events(workspace_id,lead_id,kind,payload) VALUES($1,$2,'outcome_updated',$3)").bind(self.workspace).bind(id).bind(serde_json::json!(n)).execute(&mut *tx).await?;
+        sqlx::query("UPDATE inquiries SET version=version+1 WHERE workspace_id=$1 AND id=$2")
+            .bind(self.workspace)
+            .bind(group)
+            .execute(&mut *tx)
+            .await?;
+        inquiries::event(
+            &mut tx,
+            self.workspace,
+            group,
+            "booking_updated",
+            actor,
+            serde_json::json!({"interaction_id":id,"booking":n}),
+        )
+        .await?;
         tx.commit().await?;
         Ok(())
     }
     pub async fn summary(&self) -> Result<Vec<SourceSummary>> {
-        let rows=sqlx::query("SELECT source,COUNT(*) AS leads,COUNT(*) FILTER(WHERE qualification='qualified') AS qualified,COALESCE(SUM(o.bookings),0)::bigint AS bookings,COALESCE(SUM(o.amount),0)::bigint AS booked_minor FROM leads l LEFT JOIN LATERAL (SELECT COUNT(*) AS bookings, SUM(amount_minor) AS amount FROM outcomes WHERE workspace_id=l.workspace_id AND lead_id=l.id AND status='booked') o ON true WHERE l.workspace_id=$1 GROUP BY source ORDER BY leads DESC,source").bind(self.workspace).fetch_all(&self.pool).await?;
+        let rows=sqlx::query("SELECT p.source,COUNT(*) AS leads,COUNT(*) FILTER(WHERE i.qualification='qualified') AS qualified,COALESCE(SUM(o.bookings),0)::bigint AS bookings,COALESCE(SUM(o.amount),0)::bigint AS booked_minor FROM inquiries i JOIN leads p ON p.workspace_id=i.workspace_id AND p.id=i.primary_lead_id LEFT JOIN LATERAL (SELECT COUNT(*) AS bookings,SUM(o.amount_minor) AS amount FROM outcomes o JOIN leads m ON m.workspace_id=o.workspace_id AND m.id=o.lead_id WHERE m.workspace_id=i.workspace_id AND m.inquiry_id=i.id AND o.status='booked') o ON true WHERE i.workspace_id=$1 AND i.archived_at IS NULL GROUP BY p.source ORDER BY leads DESC,p.source").bind(self.workspace).fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
             .map(|r| SourceSummary {

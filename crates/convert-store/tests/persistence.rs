@@ -178,24 +178,28 @@ async fn attribution_isolation_idempotency_and_ordering() {
             .await
             .is_err()
     );
+    let mut cleanup = store.pool.begin().await.unwrap();
     for ws in [store.workspace, other.workspace] {
         for statement in [
             "DELETE FROM audit_events WHERE workspace_id=$1",
             "DELETE FROM outcomes WHERE workspace_id=$1",
             "DELETE FROM webhook_receipts WHERE workspace_id=$1",
+            "DELETE FROM inquiry_events WHERE workspace_id=$1",
+            "DELETE FROM inquiries WHERE workspace_id=$1",
             "DELETE FROM leads WHERE workspace_id=$1",
             "DELETE FROM tracking_numbers WHERE workspace_id=$1",
         ] {
             sqlx::query(statement)
                 .bind(ws)
-                .execute(&store.pool)
+                .execute(&mut *cleanup)
                 .await
                 .unwrap();
         }
         sqlx::query("DELETE FROM workspaces WHERE id=$1")
             .bind(ws)
-            .execute(&store.pool)
+            .execute(&mut *cleanup)
             .await
             .unwrap();
     }
+    cleanup.commit().await.unwrap();
 }
