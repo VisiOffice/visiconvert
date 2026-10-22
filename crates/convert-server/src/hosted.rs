@@ -72,6 +72,7 @@ pub fn routes(app: Shared) -> Router<Shared> {
     Router::new()
         .route("/internal/cloud/workspaces", post(provision))
         .route("/internal/cloud/launch", post(launch))
+        .route("/internal/cloud/revoke-user", post(revoke_user))
         .route_layer(middleware::from_fn_with_state(app, service_auth))
         .route("/auth/start", get(start))
         .route("/auth/exchange", post(exchange))
@@ -122,9 +123,11 @@ struct Launch {
     workspace_id: Uuid,
     user_id: Uuid,
     state: String,
+    #[serde(default)]
+    credential_version: i64,
 }
 async fn launch(State(app): State<Shared>, Json(input): Json<Launch>) -> Api<Value> {
-    if !hex64(&input.state) {
+    if !hex64(&input.state) || input.credential_version < 0 {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "Invalid handoff state".into(),
@@ -138,6 +141,7 @@ async fn launch(State(app): State<Shared>, Json(input): Json<Launch>) -> Api<Val
             input.user_id,
             &input.state,
             &digest(&code),
+            input.credential_version,
         )
         .await?
     {
@@ -147,6 +151,26 @@ async fn launch(State(app): State<Shared>, Json(input): Json<Launch>) -> Api<Val
         ));
     }
     Ok(Json(json!({"code":code,"expires_in":60})))
+}
+#[derive(Deserialize)]
+struct RevokeUser {
+    user_id: Uuid,
+    credential_version: i64,
+}
+async fn revoke_user(State(app): State<Shared>, Json(input): Json<RevokeUser>) -> Api<Value> {
+    if input.credential_version < 1 {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Invalid credential version".into(),
+        ));
+    }
+    let version = app
+        .store
+        .revoke_hosted_user(input.user_id, input.credential_version)
+        .await?;
+    Ok(Json(
+        json!({"user_id":input.user_id,"credential_version":version}),
+    ))
 }
 #[derive(Deserialize)]
 struct Start {

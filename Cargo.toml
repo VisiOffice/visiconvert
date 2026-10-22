@@ -20,7 +20,7 @@ thiserror = "2"
 anyhow = "1"
 uuid = { version = "1", features = ["serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "signal"] }
 axum = "0.8"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
 clap = { version = "4", features = ["derive", "env"] }

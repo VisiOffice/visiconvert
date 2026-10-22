@@ -119,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 fn router(app: Shared) -> Router {
+    let secure_origin = app.public_url.starts_with("https://");
     let api = Router::new()
         .route("/bootstrap", get(bootstrap))
         .route("/leads", get(leads).post(add_lead))
@@ -155,8 +156,13 @@ fn router(app: Shared) -> Router {
         )
         .layer(DefaultBodyLimit::max(65536))
         .layer(middleware::from_fn(
-            |request: Request, next: Next| async move {
+            move |request: Request, next: Next| async move {
                 let mut response = next.run(request).await;
+                response.headers_mut().insert("content-security-policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'".parse().unwrap());
+                response.headers_mut().insert("x-frame-options", "DENY".parse().unwrap());
+                if secure_origin {
+                    response.headers_mut().insert("strict-transport-security", "max-age=31536000".parse().unwrap());
+                }
                 response
                     .headers_mut()
                     .insert("referrer-policy", "no-referrer".parse().unwrap());
@@ -480,6 +486,17 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
             assert_eq!(response.headers()["cache-control"], "no-store");
+            assert_eq!(response.headers()["x-frame-options"], "DENY");
+            assert!(
+                response.headers()["content-security-policy"]
+                    .to_str()
+                    .unwrap()
+                    .contains("'wasm-unsafe-eval'")
+            );
+            assert_eq!(
+                response.headers()["strict-transport-security"],
+                "max-age=31536000"
+            );
         }
         let response = app(false)
             .oneshot(

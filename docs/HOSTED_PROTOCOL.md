@@ -19,19 +19,27 @@ The service credential cannot access the private lead API. Operator credentials 
 ## Browser handoff
 
 1. The browser visits `/auth/start?workspace_id=<uuid>`. Rust creates a 5-minute HttpOnly SameSite=Lax cookie restricted to `/auth`, then redirects to the configured Cloud origin's `/workspaces/<uuid>/authorize?state=<SHA256 cookie secret>`.
-2. Cloud authenticates the user, checks membership, and asks them to continue using a CSRF-protected POST. Its server calls `POST /internal/cloud/launch` with `{workspace_id, user_id, state}` and the service credential.
+2. Cloud authenticates the user, checks membership, and asks them to continue using a CSRF-protected POST. Its server calls `POST /internal/cloud/launch` with `{workspace_id, user_id, state, credential_version}` and the service credential. The nonnegative integer version must match the engine identity. Omission means version zero for rollout compatibility; it never bypasses a later revocation.
 3. Rust requires enabled workspace membership and returns `{code, expires_in: 60}`. Cloud redirects to the fixed engine origin with `/#launch=<code>`; it must not log that Location header.
 4. The app removes the fragment before other asynchronous work, then sends `POST /auth/exchange` with `{code}`, the browser cookie, and the engine Origin. Rust atomically consumes a matching, unexpired code and returns `{token, expires_in: 900}`. Another browser or a repeated exchange cannot use it.
 5. The token stays in browser memory and authenticates `/api/*`. Every request resolves the tenant from the stored session and checks enabled membership and expiry. `DELETE /api/session` revokes that session.
 
-`hosted_workspaces`, `hosted_memberships`, `hosted_launch_codes`, and `hosted_sessions` are engine-owned records. Only hashes of codes and bearer tokens are stored. Cloud's user UUID is an external identity reference, not access on its own. Disabled memberships/workspaces stop subsequent session access. In-flight requests may finish normally.
+`hosted_users`, `hosted_workspaces`, `hosted_memberships`, `hosted_launch_codes`, and `hosted_sessions` are engine-owned records. Only hashes of codes and bearer tokens are stored. Cloud's user UUID is an external identity reference, not access on its own. Disabled memberships/workspaces or a stale credential version stop subsequent session access. In-flight requests may finish normally.
+
+## Credential revocation
+
+`POST /internal/cloud/revoke-user`, authenticated with the service key, accepts `{user_id, credential_version}` with a positive integer version. It atomically advances the user's version (never decreasing it) and deletes every older launch code and session across that user's workspaces. Success returns `{user_id, credential_version}` with the engine's current version. Repeating the same version preserves credentials legitimately issued at that version. Provisioning an identity later does not undo a preexisting revocation.
+
+Issuance, exchange, and revocation lock the same identity row, preventing concurrent exchanges or delayed launch requests from restoring old access. The caller must persist its version before issuing the revocation and must not launch using the new version until recovery completes. Cloud persists the proposed password's bcrypt digest and a revocation job together, blocks sign-in while pending, then activates the password after the engine acknowledges. A timeout keeps the reset pending and retryable; it is not reported as a successful reset. Existing engine access cannot be revoked while the engine is unreachable and retains its expiry until revocation is delivered.
+
+Deploy the engine migration and implementation before the updated Cloud workers/web. Keep paired database backups; do not downgrade to an engine that ignores credential versions after using this protocol.
 
 ## Current limits
 
 Hosted workspaces support form leads, qualification, and bookings. Their bootstrap response identifies `hosted: true`, hides operator callback URLs, and disables phone-number writes. Existing Twilio callbacks remain scoped to the configured self-hosted workspace. Per-tenant carrier credentials and callback resolution must precede hosted calling.
 
-Sessions expire after 15 minutes without refresh; reopen through Cloud after a reload or expiry. Rails logout/password reset currently invalidates Rails sessions only, while an existing engine session remains valid until its expiry or explicit engine logout. Unified revocation, refresh, invitations, email verification, billing, quotas, and tenant deletion are future work.
+Sessions expire after 15 minutes without refresh; reopen through Cloud after a reload or expiry. Completed password resets revoke engine access. Ordinary Rails logout and subscription cancellation do not yet revoke existing engine sessions; engine logout revokes its own session. Session refresh, invitations, email verification, and tenant deletion remain future work. Cloud owns billing and applies its entitlement checks before issuing launch requests.
 
 ## Verification
 
-The Docker `verify` target includes `cloud_handoff_enforces_membership_browser_binding_expiry_and_single_use`, an isolated PostgreSQL/HTTP test of service-key boundaries, idempotent provisioning, membership, concurrent exchange, code/session expiry, logout, and cross-tenant lead isolation. It also runs the existing self-hosted database and browser workflow. Cloud maintains its own Rails and full onboarding browser suites.
+The Docker `verify` target includes isolated PostgreSQL/HTTP tests of service-key boundaries, idempotent provisioning, membership, concurrent exchange, code/session expiry, logout, cross-tenant lead isolation, and revocation races. It also runs the existing self-hosted database and browser workflow. Cloud maintains its own Rails, onboarding, and password-recovery browser suites.

@@ -401,3 +401,195 @@ fn hosted_origins_reject_insecure_or_untrusted_redirect_shapes() {
         assert!(hosted::origin(url).is_ok());
     }
 }
+
+#[tokio::test]
+#[ignore = "requires VISICONVERT_TEST_DATABASE_URL pointing to a disposable Postgres database"]
+async fn credential_revocation_is_monotonic_isolated_and_serializes_exchange_and_issuance() {
+    let store = Store::connect(
+        &std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap(),
+        Uuid::new_v4(),
+    )
+    .await
+    .unwrap();
+    store.migrate().await.unwrap();
+    let owner = Uuid::new_v4();
+    let other = Uuid::new_v4();
+    let workspace = Uuid::new_v4();
+    let other_workspace = Uuid::new_v4();
+    store
+        .provision_hosted(workspace, owner, "Revocation QA")
+        .await
+        .unwrap();
+    store
+        .provision_hosted(other_workspace, other, "Other QA")
+        .await
+        .unwrap();
+    let key = |suffix: &str| format!("{}-{suffix}", Uuid::new_v4());
+    let used = key("used");
+    let unused = key("unused");
+    let session = key("session");
+    let other_code = key("other-code");
+    let other_session = key("other-session");
+    assert!(
+        store
+            .issue_hosted_code(workspace, owner, "challenge", &used, 0)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .exchange_hosted_code(&used, "challenge", &session)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .issue_hosted_code(workspace, owner, "challenge", &unused, 0)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .issue_hosted_code(other_workspace, other, "challenge", &other_code, 0)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .exchange_hosted_code(&other_code, "challenge", &other_session)
+            .await
+            .unwrap()
+    );
+    let service = "c".repeat(64);
+    let app = Arc::new(App {
+        store: store.clone(),
+        api_key: "a".repeat(64),
+        public_url: "http://127.0.0.1:3100".into(),
+        twilio_account: None,
+        twilio_token: None,
+        cloud: Some(hosted::Config {
+            service_key: service.clone(),
+            cloud_origin: "http://127.0.0.1:3200".into(),
+        }),
+    });
+    let payload = json!({"user_id":owner,"credential_version":1});
+    assert_eq!(
+        call(
+            app.clone(),
+            "POST",
+            "/internal/cloud/revoke-user",
+            &"a".repeat(64),
+            payload.clone(),
+            &[]
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let response = call(
+        app.clone(),
+        "POST",
+        "/internal/cloud/revoke-user",
+        &service,
+        payload,
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key("strict-transport-security"));
+    assert!(store.hosted_session(&session).await.unwrap().is_none());
+    assert!(
+        !store
+            .exchange_hosted_code(&unused, "challenge", &key("stolen"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .hosted_session(&other_session)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        !store
+            .issue_hosted_code(workspace, owner, "challenge", &key("late"), 0)
+            .await
+            .unwrap()
+    );
+
+    let fresh_code = key("fresh-code");
+    let fresh_session = key("fresh-session");
+    assert!(
+        store
+            .issue_hosted_code(workspace, owner, "challenge", &fresh_code, 1)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .exchange_hosted_code(&fresh_code, "challenge", &fresh_session)
+            .await
+            .unwrap()
+    );
+    assert_eq!(store.revoke_hosted_user(owner, 1).await.unwrap(), 1);
+    assert!(
+        store
+            .hosted_session(&fresh_session)
+            .await
+            .unwrap()
+            .is_some(),
+        "retry must not revoke newly authorized access"
+    );
+
+    for version in 2..10 {
+        let code = key("racing-code");
+        let token = key("racing-token");
+        let late_code = key("late-code");
+        assert!(
+            store
+                .issue_hosted_code(workspace, owner, "challenge", &code, version - 1)
+                .await
+                .unwrap()
+        );
+        let (exchange, revoke, issue) = tokio::join!(
+            store.exchange_hosted_code(&code, "challenge", &token),
+            store.revoke_hosted_user(owner, version),
+            store.issue_hosted_code(workspace, owner, "challenge", &late_code, version - 1)
+        );
+        exchange.unwrap();
+        revoke.unwrap();
+        issue.unwrap();
+        assert!(store.hosted_session(&token).await.unwrap().is_none());
+        assert!(
+            !store
+                .exchange_hosted_code(&late_code, "challenge", &key("late-token"))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            store.revoke_hosted_user(owner, version - 1).await.unwrap(),
+            version
+        );
+    }
+    // Revocation before first provisioning must not be undone by provisioning.
+    let future_user = Uuid::new_v4();
+    let future_workspace = Uuid::new_v4();
+    store.revoke_hosted_user(future_user, 3).await.unwrap();
+    store
+        .provision_hosted(future_workspace, future_user, "Later provisioning")
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .issue_hosted_code(future_workspace, future_user, "challenge", &key("old"), 0)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .issue_hosted_code(future_workspace, future_user, "challenge", &key("new"), 3)
+            .await
+            .unwrap()
+    );
+}

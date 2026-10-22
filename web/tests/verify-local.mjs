@@ -215,7 +215,7 @@ try {
       ]),
   );
   await check("Hosted handoff: membership, browser binding, replay, expiry, and isolation", async () => {
-    await command("cargo", ["test", "-p", "convert-server", "cloud_handoff_enforces", "--", "--ignored", "--test-threads=1"]);
+    await command("cargo", ["test", "-p", "convert-server", "hosted_tests::", "--", "--ignored", "--test-threads=1"]);
   });
   await check("Apply application migrations twice", async () => {
     await command(path.join(root, "target/debug/convert-server"), ["migrate"]);
