@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { TwilioConnection } from "./TwilioConnection";
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -28,6 +29,8 @@ import {
   type Bootstrap,
   type Client,
   type Outcome,
+  type TwilioConnection as Connection,
+  type TwilioInventory,
 } from "./api";
 import initWasm, {
   preview_attribution,
@@ -45,6 +48,7 @@ export default function App() {
   const [entry, setEntry] = useState("");
   const [page, setPage] = useState<Page>("Overview");
   const [boot, setBoot] = useState<Bootstrap | null>(null);
+  const [connection, setConnection] = useState<Connection | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [numbers, setNumbers] = useState<TrackingNumber[]>([]);
   const [summary, setSummary] = useState<Summary[]>([]);
@@ -79,13 +83,15 @@ export default function App() {
   }, []);
 
   async function refresh(request = api) {
-    const [b, l, n, s] = await Promise.all([
+    const [b, l, n, s, c] = await Promise.all([
       request<Bootstrap>("/bootstrap"),
       request<Lead[]>("/leads"),
       request<TrackingNumber[]>("/numbers"),
       request<Summary[]>("/summary"),
+      request<Connection>("/connections/twilio"),
     ]);
     setBoot(b);
+    setConnection(c);
     setLeads(l);
     setNumbers(n);
     setSummary(s);
@@ -249,6 +255,7 @@ export default function App() {
               }
               setKey("");
               setBoot(null);
+              setConnection(null);
               setSelected(null);
               setModal(null);
               setError("");
@@ -284,7 +291,7 @@ export default function App() {
             </div>
             <button
               className="primary"
-              disabled={boot?.hosted && page === "Tracking numbers"}
+              disabled={boot?.hosted && !connection?.connected && page === "Tracking numbers"}
               onClick={() =>
                 setModal(page === "Tracking numbers" ? "number" : "lead")
               }
@@ -295,7 +302,7 @@ export default function App() {
                 : "Add form lead"}
             </button>
           </div>
-          {boot?.hosted && page === "Tracking numbers" && <p className="notice">Phone-number setup is not available in hosted workspaces yet. You can add form leads, qualify inquiries, and record bookings.</p>}
+          {page === "Tracking numbers" && !connection?.connected && <p className="notice">Connect your Twilio account in Connections to receive calls. {boot?.hosted ? "Connect before registering a tracking number." : "Offline number registrations do not route calls."}</p>}
           {error && (
             <p className="error" role="alert">
               {error}
@@ -540,7 +547,7 @@ export default function App() {
               </p>
             </>
           )}
-          {page === "Connections" && boot && <Connections boot={boot} />}
+          {page === "Connections" && connection && <Connections api={api} connection={connection} refresh={refresh} />}
           <footer>
             VisiConvert <span>Make the connection.</span>
             <a href="https://github.com/VisiOffice/visiconvert">Source</a>
@@ -574,6 +581,7 @@ export default function App() {
         <CreateModal
           kind={modal}
           api={api}
+          connected={connection?.connected || false}
           close={() => setModal(null)}
           done={async () => {
             await refresh();
@@ -918,14 +926,25 @@ function CreateModal({
   api,
   close,
   done,
+  connected,
 }: {
   kind: "number" | "lead";
   api: Client;
   close: () => void;
   done: () => Promise<void>;
+  connected: boolean;
 }) {
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [inventory, setInventory] = useState<TwilioInventory | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (kind === "number" && connected) {
+      api<TwilioInventory>("/connections/twilio/numbers").then(value => { if (active) setInventory(value); })
+        .catch(error => { if (active) setError(error.message); });
+    }
+    return () => { active = false; };
+  }, [kind, connected, api]);
   const fields =
     kind === "number"
       ? [
@@ -985,6 +1004,7 @@ function CreateModal({
               {title}
               <input
                 name={name}
+                list={name === "phone_number" ? "twilio-owned-numbers" : undefined}
                 placeholder={placeholder}
                 required={!(kind === "lead" && name === "campaign")}
                 autoFocus={i === 0}
@@ -992,6 +1012,8 @@ function CreateModal({
               />
             </label>
           ))}
+          {kind === "number" && <datalist id="twilio-owned-numbers">{inventory?.numbers.map(n => <option key={n.sid} value={n.phone_number}>{n.friendly_name}</option>)}</datalist>}
+          {inventory?.has_more && <p className="small muted">Suggestions show the first page. Enter another owned number to verify it directly.</p>}
           {error && (
             <p className="error" role="alert">
               {error}
@@ -1009,7 +1031,7 @@ function CreateModal({
     </div>
   );
 }
-function Connections({ boot }: { boot: Bootstrap }) {
+function Connections({ api, connection, refresh }: { api: Client; connection: Connection; refresh: () => Promise<void> }) {
   const [url, setUrl] = useState(
       "https://example.com/?utm_source=google&utm_medium=cpc&utm_campaign=spring",
     ),
@@ -1022,50 +1044,7 @@ function Connections({ boot }: { boot: Bootstrap }) {
   }, []);
   return (
     <div className="connections">
-      {boot.hosted ? <section className="card connection"><div className="connection-body"><h2>Phone connections</h2><p>Phone-number setup is not available in hosted workspaces yet. Start with form leads, qualification, and bookings.</p></div></section> : <section className="card connection">
-        <div className="card-header">
-          <div>
-            <h2>Twilio → your business phone</h2>
-            <p>Bring your own account and tracking numbers.</p>
-          </div>
-          <span
-            className={`badge ${boot.twilio_configured ? "qualified" : "unreviewed"}`}
-          >
-            {boot.twilio_configured
-              ? "Credentials configured"
-              : "Setup required"}
-          </span>
-        </div>
-        <div className="connection-body">
-          <ol>
-            <li>
-              Set <code>TWILIO_ACCOUNT_SID</code>,{" "}
-              <code>TWILIO_AUTH_TOKEN</code>, and your HTTPS{" "}
-              <code>PUBLIC_URL</code> in the server environment.
-            </li>
-            <li>
-              Register your tracking number and destination in Tracking numbers.
-            </li>
-            <li>
-              In Twilio, configure the number’s incoming voice webhook and call
-              status callback as HTTP POST using these URLs.
-            </li>
-          </ol>
-          <label>
-            Incoming voice webhook
-            <code className="code-block">{boot.voice_url}</code>
-          </label>
-          <label>
-            Call status callback
-            <code className="code-block">{boot.status_url}</code>
-          </label>
-          <p className="small muted">
-            Credential configuration is not a live connectivity test. Configure
-            a separate Twilio fallback before routing production calls.
-            Recording is off. Voice forwarding does not forward SMS.
-          </p>
-        </div>
-      </section>}
+      <TwilioConnection api={api} connection={connection} refresh={refresh} />
       <section className="card connection">
         <div className="card-header">
           <div>

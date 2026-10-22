@@ -1,3 +1,4 @@
+pub mod connections;
 pub mod hosted;
 use convert_domain::*;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
@@ -59,8 +60,27 @@ impl Store {
             .collect())
     }
     pub async fn add_number(&self, n: &NewNumber) -> Result<()> {
+        self.add_number_with_connection(n, None).await
+    }
+    pub async fn add_number_with_connection(
+        &self,
+        n: &NewNumber,
+        revision: Option<i64>,
+    ) -> Result<()> {
         n.validate()?;
         let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE")
+            .bind(self.workspace)
+            .fetch_one(&mut *tx)
+            .await?;
+        let current: Option<i64> =
+            sqlx::query_scalar("SELECT revision FROM twilio_connections WHERE workspace_id=$1")
+                .bind(self.workspace)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if current != revision {
+            return Err(Error::Conflict);
+        }
         // Serialize registrations across workspaces: a destination must never be a tracked number.
         sqlx::query("SELECT pg_advisory_xact_lock(73581001)")
             .execute(&mut *tx)

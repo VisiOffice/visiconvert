@@ -9,6 +9,7 @@ x-app: &app
   environment:
     DATABASE_URL: postgresql://visiconvert:${VISICONVERT_POSTGRES_PASSWORD:?run self-host init first}@db:5432/visiconvert
     VISICONVERT_API_KEY: ${VISICONVERT_API_KEY:?run self-host init first}
+    VISICONVERT_ENCRYPTION_KEY: ${VISICONVERT_ENCRYPTION_KEY:-}
     VISICONVERT_WORKSPACE_ID: ${VISICONVERT_WORKSPACE_ID:?run self-host init first}
     PUBLIC_URL: ${PUBLIC_URL:?run self-host init first}
     LISTEN_ADDR: 0.0.0.0:3100

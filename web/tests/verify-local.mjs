@@ -37,6 +37,7 @@ const env = {
   VISICONVERT_TEST_DATABASE_URL: databaseURL,
   VISICONVERT_WORKSPACE_ID: workspace,
   VISICONVERT_API_KEY: apiKey,
+  VISICONVERT_ENCRYPTION_KEY: "",
   VISICONVERT_CLOUD_SERVICE_KEY: "",
   VISICONVERT_CLOUD_ORIGIN: "",
   TWILIO_ACCOUNT_SID: "",
@@ -216,6 +217,9 @@ try {
   );
   await check("Hosted handoff: membership, browser binding, replay, expiry, and isolation", async () => {
     await command("cargo", ["test", "-p", "convert-server", "hosted_tests::", "--", "--ignored", "--test-threads=1"]);
+  });
+  await check("Twilio connections: encrypted credentials, ownership, and workspace callback isolation", async () => {
+    await command("cargo", ["test", "-p", "convert-server", "connection_tests::shared_connections", "--", "--ignored", "--test-threads=1"]);
   });
   await check("Apply application migrations twice", async () => {
     await command(path.join(root, "target/debug/convert-server"), ["migrate"]);

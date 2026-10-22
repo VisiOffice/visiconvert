@@ -1,4 +1,6 @@
+mod connections;
 mod hosted;
+mod secrets;
 use axum::{
     Extension, Json, Router,
     body::Bytes,
@@ -36,6 +38,8 @@ struct App {
     twilio_account: Option<String>,
     twilio_token: Option<String>,
     cloud: Option<hosted::Config>,
+    vault: Option<secrets::Vault>,
+    twilio_client: convert_adapters::twilio_api::Client,
 }
 type Shared = Arc<App>;
 
@@ -98,6 +102,19 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     let cloud = hosted::configuration(&public_url, &api_key)?;
+    anyhow::ensure!(
+        account.is_none() || store.twilio_connection().await?.is_none(),
+        "Remove legacy TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN when using a saved workspace connection"
+    );
+    let vault = optional("VISICONVERT_ENCRYPTION_KEY")
+        .map(|key| {
+            anyhow::ensure!(
+                key != api_key,
+                "Use a separate VISICONVERT_ENCRYPTION_KEY, not the workspace API key"
+            );
+            secrets::Vault::from_hex(&key)
+        })
+        .transpose()?;
     let app = Arc::new(App {
         store,
         api_key,
@@ -105,6 +122,8 @@ async fn main() -> anyhow::Result<()> {
         twilio_account: account,
         twilio_token: token,
         cloud,
+        vault,
+        twilio_client: convert_adapters::twilio_api::Client::new()?,
     });
     let address: SocketAddr = std::env::var("LISTEN_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3100".into())
@@ -121,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
 fn router(app: Shared) -> Router {
     let secure_origin = app.public_url.starts_with("https://");
     let api = Router::new()
+        .merge(connections::routes())
         .route("/bootstrap", get(bootstrap))
         .route("/leads", get(leads).post(add_lead))
         .route("/leads/{id}", patch(update_lead))
@@ -136,6 +156,7 @@ fn router(app: Shared) -> Router {
         .route("/webhooks/twilio/voice", post(voice))
         .route("/webhooks/twilio/dial-complete", post(dial_complete))
         .route("/webhooks/twilio/status", post(status))
+        .route("/webhooks/twilio/workspaces/{workspace}/{endpoint}", post(connections::webhook))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
                 // This pilot publishes query-free callback URLs. Never validate a different URL.
@@ -267,16 +288,11 @@ async fn summary(Extension(access): Extension<hosted::Access>) -> Api<Vec<Source
     Ok(Json(access.store.summary().await?))
 }
 async fn add_number(
+    State(a): State<Shared>,
     Extension(access): Extension<hosted::Access>,
     Json(n): Json<NewNumber>,
 ) -> Api<Value> {
-    if access.session_hash.is_some() {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "Hosted carrier setup is not available yet".into(),
-        ));
-    }
-    access.store.add_number(&n).await?;
+    connections::register(&a, &access, &n).await?;
     Ok(Json(json!({"ok":true})))
 }
 async fn add_lead(
@@ -334,14 +350,38 @@ async fn webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let denied = || ApiError(StatusCode::FORBIDDEN, "Invalid webhook".into());
-    let malformed = || ApiError(StatusCode::BAD_REQUEST, "Invalid call payload".into());
     let token = a.twilio_token.as_deref().ok_or_else(|| {
         ApiError(
             StatusCode::SERVICE_UNAVAILABLE,
             "Twilio is not configured".into(),
         )
     })?;
+    process_webhook(
+        &a.store,
+        &a.public_url,
+        "/webhooks/twilio",
+        a.twilio_account.as_deref().unwrap(),
+        token,
+        endpoint,
+        headers,
+        body,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_webhook(
+    store: &Store,
+    public_url: &str,
+    prefix: &str,
+    account: &str,
+    token: &str,
+    endpoint: &str,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let denied = || ApiError(StatusCode::FORBIDDEN, "Invalid webhook".into());
+    let malformed = || ApiError(StatusCode::BAD_REQUEST, "Invalid call payload".into());
     if headers
         .get("content-type")
         .and_then(|h| h.to_str().ok())
@@ -354,11 +394,11 @@ async fn webhook(
         .get("x-twilio-signature")
         .and_then(|h| h.to_str().ok())
         .ok_or_else(denied)?;
-    let path = format!("/webhooks/twilio/{endpoint}");
-    let fields = twilio::verify(token, &format!("{}{path}", a.public_url), &body, signature)
+    let path = format!("{prefix}/{endpoint}");
+    let fields = twilio::verify(token, &format!("{public_url}{path}"), &body, signature)
         .map_err(|_| denied())?;
     let field = |name: &str| fields.get(name).map(String::as_str).unwrap_or("");
-    if Some(field("AccountSid")) != a.twilio_account.as_deref() {
+    if field("AccountSid") != account {
         return Err(denied());
     }
     if !twilio::valid_sid(field("CallSid"), "CA")
@@ -423,8 +463,7 @@ async fn webhook(
             }
         }
     };
-    let destination = a
-        .store
+    let destination = store
         .call_event(&CallEvent {
             sid: field("CallSid").into(),
             to: field("To").into(),
@@ -434,11 +473,8 @@ async fn webhook(
         })
         .await?;
     let xml = if endpoint == "voice" {
-        twilio::forward(
-            &destination,
-            &format!("{}/webhooks/twilio/dial-complete", a.public_url),
-        )
-        .map_err(|_| malformed())?
+        twilio::forward(&destination, &format!("{public_url}{prefix}/dial-complete"))
+            .map_err(|_| malformed())?
     } else {
         twilio::HANGUP.into()
     };
@@ -467,6 +503,8 @@ mod tests {
             },
             api_key: "test-workspace-key-at-least-32-characters".into(),
             cloud: None,
+            vault: None,
+            twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
             public_url: "https://convert.example.com".into(),
             twilio_account: configured.then(|| format!("AC{}", "1".repeat(32))),
             twilio_token: configured.then(|| "test-token".into()),
@@ -592,5 +630,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod connection_tests;
 #[cfg(test)]
 mod hosted_tests;

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — shared Twilio connections
+
+- Connect and verify a Twilio account in both self-hosted and hosted workspaces.
+- Encrypt provider credentials, verify number ownership, and isolate signed callbacks by workspace.
+- Protect account changes with revision checks and preserve routing for legacy environment configurations.
+- Include encryption-key setup, backup/restore handling, and connection documentation in self-host packages.
+- Provider configuration remains manual; real-call and outage-fallback verification remain launch gates.
+
 ## Unreleased
 
 - Optional hosted workspace provisioning and browser-bound single-use login.

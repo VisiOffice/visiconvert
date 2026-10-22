@@ -24,12 +24,14 @@ tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 dotenvy.workspace = true
+aes-gcm.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
+convert-adapters = { path = "../convert-adapters", features = ["test-support"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 sqlx.workspace = true
 hmac.workspace = true
 sha1.workspace = true
-base64.workspace = true
 

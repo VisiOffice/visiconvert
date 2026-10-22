@@ -36,7 +36,13 @@ Deploy the engine migration and implementation before the updated Cloud workers/
 
 ## Current limits
 
-Hosted workspaces support form leads, qualification, and bookings. Their bootstrap response identifies `hosted: true`, hides operator callback URLs, and disables phone-number writes. Existing Twilio callbacks remain scoped to the configured self-hosted workspace. Per-tenant carrier credentials and callback resolution must precede hosted calling.
+Hosted workspaces support form leads, qualification, bookings, and the same
+[Twilio connection flow](TWILIO_CONNECTIONS.md) as self-hosted workspaces.
+Phone-number registration requires verified workspace credentials and checks
+number ownership. Credentials are encrypted by the engine; scoped callback URLs
+resolve the workspace and validate its provider signature independently of
+Rails and billing. The engine operator must configure its encryption key.
+Legacy environment callbacks remain scoped to the default operator workspace.
 
 Sessions expire after 15 minutes without refresh; reopen through Cloud after a reload or expiry. Completed password resets revoke engine access. Ordinary Rails logout and subscription cancellation do not yet revoke existing engine sessions; engine logout revokes its own session. Session refresh, invitations, email verification, and tenant deletion remain future work. Cloud owns billing and applies its entitlement checks before issuing launch requests.
 

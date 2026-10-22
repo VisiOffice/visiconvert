@@ -31,6 +31,8 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 ## What works
 
+- Connect Twilio per workspace with encrypted credentials and verified number ownership
+  in both self-hosted and hosted modes. See [connection setup](docs/TWILIO_CONNECTIONS.md).
 - Register existing customer-owned Twilio campaign numbers and configure
   forwarding destinations. Signed callbacks, deduplication, and call status
   handling are implemented; live carrier/fallback verification is outstanding.
@@ -44,8 +46,8 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 Self-hosted authentication uses one operator key per workspace. Local individual accounts,
 roles, session-based dynamic number insertion, automatic website form capture,
-Google conversion delivery, recordings, SMS, and hosted billing are not yet
-implemented. The application does not buy numbers or configure Twilio for you.
+Google conversion delivery, recordings, and SMS are not yet implemented.
+Hosted billing is maintained in the separate Rails service. The application does not buy numbers or configure Twilio for you.
 Booking totals represent recorded business outcomes, not settled payments.
 
 An optional [hosted account protocol](docs/HOSTED_PROTOCOL.md) supports separate

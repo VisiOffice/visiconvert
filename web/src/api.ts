@@ -47,6 +47,21 @@ export type Outcome = {
   status: string;
   revision: number;
 };
+export type TwilioConnection = {
+  mode: "workspace" | "environment" | "disconnected";
+  connected: boolean;
+  account_sid: string | null;
+  revision: number;
+  setup_available: boolean;
+  setup_message: string | null;
+  can_disconnect: boolean;
+  voice_url: string;
+  status_url: string;
+};
+export type TwilioInventory = {
+  numbers: { sid: string; phone_number: string; friendly_name: string }[];
+  has_more: boolean;
+};
 export function client(key: string) {
   return async function request<T>(
     path: string,
