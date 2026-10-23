@@ -62,7 +62,7 @@ and API-key administration currently require the workspace UI. Reviewing a group
 interaction updates its inquiry's shared qualification and notes. Read access exposes
 customer contacts and notes to the connected agent; choose an appropriate client.
 
-Hosted CLI/MCP access uses [workspace API keys](/api/public-api/) after rollout.
+Hosted CLI/MCP access uses [workspace API keys](/api/public-api/).
 The browser's short-lived `vc_session_` token is not an automation credential.
 For desktop clients that cannot find `visiconvert`, use its absolute installed path
 in `command` and ensure the process has the same config path/environment as your shell.

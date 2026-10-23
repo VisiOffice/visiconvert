@@ -3,9 +3,10 @@ title: API keys and public API v1
 description: Create scoped workspace API keys and integrate with the versioned HTTP API.
 ---
 
-Available in the current source for hosted and self-hosted workspaces. Deployment
-and public source publication are pending for this slice. The engine, CLI/MCP,
-and hosted Rails application must be upgraded before using it.
+Deployed on October 23, 2026 for hosted workspaces and the standalone pilot.
+Self-hosted installations can use the same feature by upgrading to the
+[matching source revision](https://github.com/VisiOffice/visiconvert/tree/35cde2e75536d0ded94271db11982489d60af742).
+Upgrade the engine and CLI/MCP together.
 
 ## Create a key
 
@@ -53,8 +54,7 @@ check returns 503, without a grace period. Self-hosted keys have no Rails depend
 
 ## Authentication
 
-Base URL: `https://workspaces.visiconvert.com/api/v1` for hosted workspaces after
-rollout; your own engine origin plus `/api/v1` for self-hosting. The hosted billing
+Base URL: `https://workspaces.visiconvert.com/api/v1` for hosted workspaces; your own engine origin plus `/api/v1` for self-hosting. The hosted billing
 site `cloud.visiconvert.com` is not the engine API.
 
 ```sh

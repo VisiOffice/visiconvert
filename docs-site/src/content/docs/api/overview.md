@@ -113,6 +113,6 @@ POST /api/numbers
 
 Inquiry grouping, website tracking and dynamic number insertion have their own endpoints. They are documented on GitHub for now:
 
-- [Inquiry grouping](https://github.com/VisiOffice/visiconvert/blob/main/docs/INQUIRY_GROUPING.md)
-- [Website tracking](https://github.com/VisiOffice/visiconvert/blob/main/docs/WEBSITE_TRACKING.md)
-- [Dynamic number insertion](https://github.com/VisiOffice/visiconvert/blob/main/docs/DYNAMIC_NUMBERS.md)
+- [Inquiry grouping](https://github.com/VisiOffice/visiconvert/blob/35cde2e75536d0ded94271db11982489d60af742/docs/INQUIRY_GROUPING.md)
+- [Website tracking](https://github.com/VisiOffice/visiconvert/blob/35cde2e75536d0ded94271db11982489d60af742/docs/WEBSITE_TRACKING.md)
+- [Dynamic number insertion](https://github.com/VisiOffice/visiconvert/blob/35cde2e75536d0ded94271db11982489d60af742/docs/DYNAMIC_NUMBERS.md)

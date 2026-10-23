@@ -24,7 +24,7 @@ It is open source under AGPL-3.0 and built for US service businesses.
 - **The web app** for day-to-day review.
 - **The [`visiconvert` command line](/cli/overview/)** for setup, scripts and bulk work.
 - **The [MCP server](/agents/mcp/)** so an AI agent can check setup, qualify leads and record bookings.
-- **The [public HTTP API](/api/public-api/)** for integrations using scoped workspace keys, including the CLI and MCP. The web app uses separate owner/operator endpoints. The public API and key-management screen require the updated release; rollout is pending.
+- **The [public HTTP API](/api/public-api/)** for integrations using scoped workspace keys, including the CLI and MCP. The web app uses separate owner/operator endpoints. The public API and key-management screen are live for hosted workspaces and available in the current self-host source.
 
 ## Beta scope
 

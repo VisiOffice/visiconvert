@@ -6,7 +6,7 @@
 - Public v1 inquiry/interaction/booking endpoints with pagination, reports and number registration; OpenAPI contract.
 - Hosted keys enforce owner membership, credential version and live Rails access/billing checks; self-hosted keys stay local.
 - CLI/MCP support scoped keys and v1 pagination, with secure origin validation for all configuration sources.
-- Additive migration 0009; Rails must roll out the internal access check before the engine. Not deployed yet.
+- Additive migration 0009; Rails must roll out the internal access check before the engine. Deployed October 23, 2026 to the hosted engine and standalone pilot.
 
 ## Unreleased — conversion preparation
 

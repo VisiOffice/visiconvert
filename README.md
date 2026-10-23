@@ -9,8 +9,8 @@ Self-hosted lead tracking and marketing attribution for service businesses.
 Connect inquiries to qualified leads, bookings, and source revenue.
 
 **Early beta, single workspace.** The application uses a Rust/Axum API,
-PostgreSQL, React/Vite, and a shared Rust/WASM attribution preview. Paid hosting
-and VisiComms integration are planned. See [visiconvert.com](https://visiconvert.com).
+PostgreSQL, React/Vite, and a shared Rust/WASM attribution preview. Hosting is in private beta;
+VisiComms integration is planned. See [visiconvert.com](https://visiconvert.com).
 
 ## Install
 

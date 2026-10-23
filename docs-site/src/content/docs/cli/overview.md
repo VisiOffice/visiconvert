@@ -3,21 +3,23 @@ title: The visiconvert command line
 description: Install the CLI, log in, and use it for setup, lead review and bookings.
 ---
 
-`visiconvert` works against a self-hosted server or a hosted workspace. It uses the same [HTTP API](/api/overview/) as the web app. Every command and option is listed in the [command reference](/reference/cli/).
+`visiconvert` works against a self-hosted server or a hosted workspace. Scoped workspace keys use the [public HTTP API](/api/public-api/). Every command and option is listed in the [command reference](/reference/cli/).
 
 ## Install
 
-Build it from the source repository. You need a Rust toolchain:
+Build the version matching the deployed API. You need Git and a current Rust toolchain:
 
 ```sh
-cargo install --path crates/convert-cli
+git clone https://github.com/VisiOffice/visiconvert.git
+cd visiconvert
+git checkout 35cde2e75536d0ded94271db11982489d60af742
+cargo install --locked --path crates/convert-cli
 ```
 
 ## Create a workspace API key
 
-The public API/key feature is in the current source and awaits deployment. Upgrade
-the engine and CLI together; hosted rollout also requires the Rails access-check
-endpoint. See [API keys and v1](/api/public-api/).
+The public API and key screen are live for hosted workspaces. Self-hosted users
+should upgrade the engine and CLI together. See [API keys and v1](/api/public-api/).
 
 Open your workspace, choose **API keys**, and create a named key. Read-only is the
 default. Grant write permissions only when needed. Save the secret when shown;

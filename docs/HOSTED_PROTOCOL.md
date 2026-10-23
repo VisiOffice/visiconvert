@@ -36,7 +36,7 @@ Deploy the engine migration and implementation before the updated Cloud workers/
 
 ## Current limits
 
-### Durable integration credentials (source only; rollout pending)
+### Durable integration credentials (deployed October 23, 2026)
 
 Workspace owners can issue scoped API keys for `/api/v1` from the engine UI.
 These keys are separate from the 15-minute browser sessions below. Keys retain

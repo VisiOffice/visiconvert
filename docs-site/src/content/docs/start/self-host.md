@@ -14,7 +14,7 @@ A self-hosted install is one workspace. Docker runs the Rust API, the web app an
 
 ## Install
 
-Download the source from [GitHub](https://github.com/VisiOffice/visiconvert/releases), then from the source directory:
+Download the [source matching the current API release](https://github.com/VisiOffice/visiconvert/archive/35cde2e75536d0ded94271db11982489d60af742.tar.gz), then from the source directory:
 
 ```sh
 bash scripts/self-host.sh init
@@ -63,4 +63,4 @@ Backups go to `.local/self-host/backups/<timestamp>/`. Each has the database dum
 A backup includes your keys, including `VISICONVERT_ENCRYPTION_KEY`. Without that key, saved Twilio credentials cannot be decrypted. Copy backups off the machine and keep them private.
 :::
 
-Restores only go into an empty installation, so they can never overwrite live data. The full procedure, along with rollback and troubleshooting, is in the [self-hosting guide on GitHub](https://github.com/VisiOffice/visiconvert/blob/main/docs/SELF_HOSTING.md).
+Restores only go into an empty installation, so they can never overwrite live data. The full procedure, along with rollback and troubleshooting, is in the [self-hosting guide on GitHub](https://github.com/VisiOffice/visiconvert/blob/35cde2e75536d0ded94271db11982489d60af742/docs/SELF_HOSTING.md).
