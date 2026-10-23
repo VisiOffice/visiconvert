@@ -111,8 +111,9 @@ POST /api/numbers
 
 ## More endpoints
 
-Inquiry grouping, website tracking and dynamic number insertion have their own endpoints. They are documented on GitHub for now:
+Inquiry grouping, website tracking, dynamic number insertion and conversion preparation have their own endpoints. They are covered in the guides, each of which links to its full technical reference:
 
-- [Inquiry grouping](https://github.com/VisiOffice/visiconvert/blob/6b76432bc1fde9686266cd5ec03449235d2a9685/docs/INQUIRY_GROUPING.md)
-- [Website tracking](https://github.com/VisiOffice/visiconvert/blob/6b76432bc1fde9686266cd5ec03449235d2a9685/docs/WEBSITE_TRACKING.md)
-- [Dynamic number insertion](https://github.com/VisiOffice/visiconvert/blob/6b76432bc1fde9686266cd5ec03449235d2a9685/docs/DYNAMIC_NUMBERS.md)
+- [Combine calls and forms into inquiries](/guides/inquiries/)
+- [Website tracking](/guides/website-tracking/)
+- [Dynamic number insertion](/guides/dynamic-numbers/)
+- [Google Ads conversion preparation](/guides/google-ads-preparation/)
