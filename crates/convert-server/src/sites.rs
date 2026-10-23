@@ -7,6 +7,8 @@ pub fn private_routes() -> Router<Shared> {
     Router::new()
         .route("/sites", get(list).post(save_new))
         .route("/sites/{id}", patch(save_existing))
+        .route("/sites/{id}/number-pool", get(pool).put(save_pool))
+        .route("/leads/{id}/dni-evidence", get(dni_evidence))
         .route("/leads/{id}/website-evidence", get(evidence))
 }
 pub fn public_routes(app: Shared) -> Router<Shared> {
@@ -17,6 +19,10 @@ pub fn public_routes(app: Shared) -> Router<Shared> {
             post(session).options(preflight),
         )
         .route("/collect/sites/{id}/forms", post(form).options(preflight))
+        .route(
+            "/collect/sites/{id}/numbers",
+            post(numbers).options(preflight),
+        )
         .route_layer(middleware::from_fn_with_state(app, cors))
         .layer(DefaultBodyLimit::max(8192));
     Router::new().merge(collect).route(
@@ -338,4 +344,45 @@ mod tests {
         );
         assert!(canonical_origin("http://localhost:4173").is_ok());
     }
+}
+
+async fn pool(Extension(access): Extension<hosted::Access>, Path(id): Path<Uuid>) -> Api<Value> {
+    owner(&access).await?;
+    Ok(Json(access.store.dni_pool(id).await?))
+}
+async fn save_pool(
+    Extension(access): Extension<hosted::Access>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<convert_store::dni::PoolInput>,
+) -> Api<Value> {
+    owner(&access).await?;
+    access.store.save_dni_pool(id, &input).await?;
+    Ok(Json(json!({"saved":true})))
+}
+async fn dni_evidence(
+    Extension(access): Extension<hosted::Access>,
+    Path(id): Path<Uuid>,
+) -> Api<Option<Value>> {
+    Ok(Json(access.store.dni_evidence(id).await?))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NumberInput {
+    session_id: Uuid,
+    consent: String,
+}
+async fn numbers(
+    State(a): State<Shared>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<NumberInput>,
+) -> Api<Value> {
+    if input.consent != "granted" {
+        return Err(invalid("Tracking consent is required"));
+    }
+    Ok(Json(
+        a.store
+            .allocate_dni(id, origin(&headers), input.session_id)
+            .await?,
+    ))
 }

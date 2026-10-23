@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { label, money, type Client, type Inquiry, type Lead } from "./api";
+import { DniEvidence } from "./NumberPool";
 import { WebsiteEvidence } from "./Sites";
 
 type History = { id: number; kind: string; actor: string; created_at: string; payload: { reason?: string; source_inquiry_id?: string; source_snapshot?: { notes: string; qualification: string }; booking?: { external_id: string; status: string; amount_minor: number }; interaction_id?: string } };
@@ -58,6 +59,7 @@ export function InquiryGrouping({ inquiry, api, disabled, changed }: { inquiry: 
       {interaction.channel === "call" && <small>A destination answer may be voicemail or an IVR.</small>}
       {interaction.booked_minor > 0 && <p className="small">{money(interaction.booked_minor)} booked on this interaction</p>}
       {interaction.notes && <details><summary>Original interaction notes</summary><p className="preserve-lines">{interaction.notes}</p></details>}
+      {interaction.channel === "call" && <DniEvidence api={api} leadId={interaction.id} />}
       {interaction.channel === "form" && <WebsiteEvidence api={api} leadId={interaction.id} />}
       {inquiry.interaction_count > 1 && <button className="text-button" disabled={blocked} onClick={() => { setSplit(interaction.id); setReason(""); setTarget(""); }}>Separate this interaction</button>}
     </article>)}

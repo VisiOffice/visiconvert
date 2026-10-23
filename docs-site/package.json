@@ -1,0 +1,24 @@
+{
+  "name": "visiconvert-docs",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "reference": "node scripts/reference.mjs",
+    "dev": "astro dev --host 127.0.0.1",
+    "build": "astro build",
+    "preview": "astro preview --host 127.0.0.1",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.6",
+    "@fontsource-variable/manrope": "5.3.0",
+    "astro": "7.4.0",
+    "sharp": "0.35.5",
+    "starlight-llms-txt": "0.12.0"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.0"
+  },
+  "license": "AGPL-3.0-only"
+}

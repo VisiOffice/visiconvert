@@ -41,7 +41,10 @@ fn available(a: &App) -> Option<&'static str> {
     }
 }
 
-async fn show(State(a): State<Shared>, Extension(access): Extension<hosted::Access>) -> Api<Value> {
+pub(super) async fn show(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+) -> Api<Value> {
     authorize(&access).await?;
     let connection = access.store.twilio_connection().await?;
     let environment = legacy(&a, &access);
@@ -181,7 +184,7 @@ async fn disconnect(
     Ok(Json(json!({"ok":true})))
 }
 
-async fn inventory(
+pub(super) async fn inventory(
     State(a): State<Shared>,
     Extension(access): Extension<hosted::Access>,
 ) -> Api<twilio_api::Inventory> {

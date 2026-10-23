@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { InquiryGrouping } from "./InquiryGrouping";
+import { ApiKeys } from "./ApiKeys";
+import { Conversions } from "./Conversions";
 import { Sites } from "./Sites";
 import { TwilioConnection } from "./TwilioConnection";
 import {
@@ -38,13 +40,15 @@ import initWasm, {
   preview_attribution,
 } from "./generated/attribution/convert_wasm";
 
-type Page = "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections";
+type Page = "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys";
 const pages = [
   { name: "Overview" as Page, icon: BarChart3 },
   { name: "Lead inbox" as Page, icon: Users },
   { name: "Tracking numbers" as Page, icon: Phone },
   { name: "Sites" as Page, icon: Layers3 },
   { name: "Connections" as Page, icon: Link2 },
+  { name: "Conversions" as Page, icon: Check },
+  { name: "API keys" as Page, icon: ShieldCheck },
 ];
 export default function App() {
   const [key, setKey] = useState("");
@@ -291,10 +295,11 @@ export default function App() {
                       ? "Give each campaign a number. Keep your existing phone system."
                       : page === "Sites"
                         ? "Connect website visits and successful forms to their source."
+                        : page === "Conversions" ? "Review qualified inquiries and bookings for Google Ads."
                         : "Start with your numbers and the tools you already use."}
               </p>
             </div>
-            {page !== "Sites" && <button
+            {page !== "Sites" && page !== "Conversions" && page !== "API keys" && <button
               className="primary"
               disabled={boot?.hosted && !connection?.connected && page === "Tracking numbers"}
               onClick={() =>
@@ -553,6 +558,8 @@ export default function App() {
             </>
           )}
           {page === "Sites" && <Sites api={api} />}
+          {page === "Conversions" && <Conversions api={api} />}
+          {page === "API keys" && <ApiKeys api={api} />}
           {page === "Connections" && connection && <Connections api={api} connection={connection} refresh={refresh} />}
           <footer>
             VisiConvert <span>Make the connection.</span>

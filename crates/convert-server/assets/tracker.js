@@ -29,6 +29,7 @@
       });
       requireConsent(epoch);
       const result = await response.json().catch(() => ({}));
+      requireConsent(epoch);
       if (!response.ok) throw new Error(result.error || `VisiConvert collection failed (${response.status})`);
       return result;
     } finally { controllers.delete(controller); }
@@ -57,17 +58,103 @@
     const job = work(); pending = job;
     try { return await job; } finally { if (pending === job) pending = null; }
   }
+  // Only explicit, phone-only markers are changed. Original markup stays intact.
+  const dniEnabled = script.dataset.dni === "true";
+  const originals = new Map();
+  let lease = null, refreshTimer = null, expiryTimer = null, numberJob = null;
+  let numberGeneration = 0;
+  const phone = value => { if (!/^\s*\+?[0-9\s().-]+\s*$/.test(String(value || ""))) return ""; const digits = String(value || "").replace(/[^0-9]/g, ""); return digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits[0] === "1" ? `+${digits}` : ""; };
+  function restoreNumbers() {
+    lease = null;
+    clearTimeout(expiryTimer);
+    for (const [node, original] of originals) {
+      if (original.aria !== null && node.getAttribute("aria-label") === original.replacement) node.setAttribute("aria-label", original.aria);
+      if (node.textContent === original.replacement) node.textContent = original.text;
+      if (node.getAttribute("href") === original.link) {
+        if (original.href === null) node.removeAttribute("href"); else node.setAttribute("href", original.href);
+      }
+    }
+    originals.clear();
+  }
+  function stopNumbers() {
+    if (!dniEnabled) return;
+    numberGeneration++; numberJob = null;
+    clearTimeout(refreshTimer); restoreNumbers();
+  }
+  function applyNumbers() {
+    if (!lease || !consent || Date.now() >= lease.until) { if (dniEnabled) restoreNumbers(); return; }
+    for (const node of document.querySelectorAll("[data-visiconvert-phone]")) {
+      if (originals.has(node) || node.children.length || phone(node.textContent) !== lease.fallback_phone) continue;
+      const href = node.getAttribute("href");
+      if (href !== null && (!href.startsWith("tel:") || phone(href.slice(4)) !== lease.fallback_phone)) continue;
+      const replacement = lease.phone_number;
+      const link = href === null ? null : `tel:${replacement}`;
+      const aria = node.getAttribute("aria-label");
+      if (aria !== null && phone(aria) !== lease.fallback_phone) continue;
+      originals.set(node, { text: node.textContent, href, replacement, link, aria });
+      if (aria !== null) node.setAttribute("aria-label", replacement);
+      node.textContent = replacement;
+      if (link !== null) node.setAttribute("href", link);
+    }
+  }
+  async function refreshNumbers() {
+    if (!dniEnabled || !consent || document.hidden) return { status: "off" };
+    if (numberJob) return numberJob;
+    const epoch = generation, attempt = numberGeneration;
+    const job = (async () => {
+      // Fail closed on a stalled request, even if fetch never rejects.
+      let timeout;
+      try {
+        const result = await Promise.race([
+          (async () => { const id = await session(epoch); return request("/numbers", { session_id: id, consent: "granted" }, epoch); })(),
+          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Number request timed out")), 8000); }),
+        ]);
+        requireConsent(epoch);
+        if (attempt !== numberGeneration) return { status: "off" };
+        restoreNumbers();
+        const until = Date.parse(result.expires_at);
+        if (result.status === "assigned" && /^\+1[0-9]{10}$/.test(result.phone_number) && /^\+1[0-9]{10}$/.test(result.fallback_phone) && until > Date.now() && until <= Date.now() + 31 * 60 * 1000) {
+          lease = { ...result, until };
+          applyNumbers();
+          expiryTimer = setTimeout(restoreNumbers, until - Date.now());
+        }
+        return result;
+      } catch {
+        if (attempt === numberGeneration) restoreNumbers();
+        return { status: "unavailable" };
+      } finally {
+        clearTimeout(timeout);
+        if (consent && attempt === numberGeneration) {
+          clearTimeout(refreshTimer);
+          refreshTimer = setTimeout(() => { void refreshNumbers(); }, 60000);
+        }
+      }
+    })();
+    numberJob = job;
+    try { return await job; } finally { if (numberJob === job) numberJob = null; }
+  }
+  if (dniEnabled) {
+    new MutationObserver(() => { if (lease) applyNumbers(); }).observe(document.documentElement, { childList: true, subtree: true });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopNumbers(); else if (consent) void refreshNumbers();
+    });
+    window.addEventListener("pagehide", stopNumbers);
+    window.addEventListener("pageshow", () => { if (consent) void refreshNumbers(); });
+  }
   window.VisiConvert = Object.freeze({
     async setConsent(granted) {
       if (granted !== true) {
+        stopNumbers();
         consent = false; generation++; current = null; pending = null; storage.clear();
         for (const controller of controllers) controller.abort();
         return { tracking: false };
       }
       consent = true;
-      await session(generation);
+      try { await session(generation); } catch (error) { stopNumbers(); throw error; }
+      if (dniEnabled) await refreshNumbers();
       return { tracking: true };
     },
+    refreshNumbers,
     async trackForm({ submissionId, fields = {} } = {}) {
       const epoch = generation; requireConsent(epoch);
       if (typeof submissionId !== "string" || !/^[a-zA-Z0-9_.:-]{1,80}$/.test(submissionId)) throw new Error("Use your form backend's stable submission ID (up to 80 characters)");

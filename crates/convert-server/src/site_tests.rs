@@ -399,3 +399,122 @@ async fn website_capture_isolated_atomic_and_consent_gated() {
     let local = call(app.clone(),"POST","/api/sites",key,website,json!({"name":"Self hosted","origin":website,"allowed_fields":[],"enabled":true,"version":0})).await;
     assert_eq!(local.0, StatusCode::OK);
 }
+
+#[tokio::test]
+#[ignore = "Requires a disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn dni_routes_require_owner_origin_and_consent() {
+    let store = Store::connect(
+        &std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap(),
+        Uuid::new_v4(),
+    )
+    .await
+    .unwrap();
+    store.migrate().await.unwrap();
+    let workspace = Uuid::new_v4();
+    let token = hosted_token(&store, workspace).await;
+    let other = hosted_token(&store, Uuid::new_v4()).await;
+    let app = Arc::new(App {
+        store: store.clone(),
+        api_key: "dni-operator-key-long-enough-for-test".into(),
+        public_url: "https://engine.example".into(),
+        twilio_account: None,
+        twilio_token: None,
+        vault: None,
+        cloud: Some(hosted::Config {
+            service_key: "dni-service-key-long-enough-for-test".into(),
+            cloud_origin: "https://cloud.example".into(),
+        }),
+        twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+    });
+    let origin = "https://dni.example";
+    let created = call(
+        app.clone(),
+        "POST",
+        "/api/sites",
+        &token,
+        origin,
+        json!({"name":"DNI routes","origin":origin,"allowed_fields":[],"enabled":true,"version":0}),
+    )
+    .await;
+    assert_eq!(created.0, StatusCode::OK);
+    let id = created.2["id"].as_str().unwrap();
+    let pool = format!("/api/sites/{id}/number-pool");
+    let collect = format!("/collect/sites/{id}/numbers");
+    assert_eq!(
+        call(app.clone(), "GET", &pool, "", origin, Value::Null)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(app.clone(), "GET", &pool, &other, origin, Value::Null)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(app.clone(), "GET", &pool, &token, origin, Value::Null)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let session = Uuid::new_v4();
+    assert_eq!(call(app.clone(),"POST",&format!("/collect/sites/{id}/sessions"),"",origin,json!({"id":session,"consent":"granted","landing_url":format!("{origin}/"),"referrer":""})).await.0,StatusCode::OK);
+    let payload = json!({"session_id":session,"consent":"granted"});
+    let result = call(app.clone(), "POST", &collect, "", origin, payload.clone()).await;
+    assert_eq!(result.0, StatusCode::OK);
+    assert_eq!(result.2, json!({"status":"not_configured"}));
+    assert_eq!(result.1["access-control-allow-origin"], origin);
+    assert_eq!(
+        call(
+            app.clone(),
+            "POST",
+            &collect,
+            "",
+            origin,
+            json!({"session_id":session,"consent":"denied"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            app.clone(),
+            "POST",
+            &collect,
+            "",
+            "https://wrong.example",
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            app.clone(),
+            "POST",
+            &collect,
+            "",
+            origin,
+            json!({"session_id":Uuid::new_v4(),"consent":"granted"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    // Revoking membership must stop pool administration immediately.
+    sqlx::query("UPDATE hosted_memberships SET enabled=false WHERE workspace_id=$1")
+        .bind(workspace)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(app.clone(), "GET", &pool, &token, origin, Value::Null)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(call(app,"PUT",&pool,&token,origin,json!({"fallback_phone":"+12025550181","number_ids":[],"version":0,"enabled":false,"dedicated_numbers":false})).await.0,StatusCode::UNAUTHORIZED);
+}
