@@ -60,6 +60,9 @@ export async function verifyGrouping({ page, api, artifactDir }) {
   await page.locator('article.interaction').filter({ hasText: 'Grouping follow-up' }).getByRole('button', { name: 'Separate this interaction' }).click();
   await page.getByLabel('Reason for separating').fill('Customer confirmed a second opportunity.');
   await page.getByRole('button', { name: 'Create separate inquiry', exact: true }).click();
+  // Refreshing the original inquiry also briefly shows one interaction. Wait
+  // for selection to finish switching to the newly created inquiry first.
+  await page.getByRole('dialog', { name: 'Lead details', exact: true }).getByRole('heading', { name: 'Grouping follow-up', exact: true }).waitFor();
   await page.getByRole('heading', { name: '1 interaction', exact: true }).waitFor();
   assert.equal(await page.getByLabel('Qualification', { exact: true }).inputValue(), 'unreviewed');
   assert.equal(await page.getByLabel('Notes', { exact: true }).inputValue(), '');
