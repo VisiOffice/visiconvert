@@ -1,0 +1,55 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+export async function verifyConversions({page,api,artifactDir}) {
+  const lead=(await api('/leads')).body.find(l=>l.name==='Website browser customer');
+  assert(lead,'Website fixture must exist');
+  const inquiry=(await api(`/inquiries/${lead.inquiry_id}`)).body.inquiry;
+  assert.equal((await api(`/inquiries/${inquiry.id}`,{qualification:'qualified',notes:inquiry.notes,version:inquiry.version},'PATCH')).status,200);
+  const booking={external_id:'ads-browser-booking',amount_minor:12345,currency:'USD',status:'booked',revision:1};
+  assert.equal((await api(`/inquiries/${inquiry.id}/outcomes`,booking,'PUT')).status,200);
+  await page.getByRole('button',{name:'Conversions',exact:true}).click();
+  await page.getByLabel('Google Ads customer ID').fill('1234567890');
+  await page.getByLabel('Qualified inquiry action ID').fill('123');
+  await page.getByLabel('Booking action ID').fill('456');
+  await page.getByRole('button',{name:'Save destination',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Destination saved.'}).waitFor();
+  await page.getByLabel('Conversion event',{exact:true}).selectOption('booking:ads-browser-booking');
+  await page.getByText('Advertising user-data consent is not recorded as granted',{exact:true}).waitFor();
+  assert(await page.getByRole('button',{name:'Stage reviewed conversion',exact:true}).isDisabled());
+  await page.getByText('Record advertising consent evidence',{exact:true}).click();
+  await page.getByLabel('Advertising user-data consent',{exact:true}).selectOption('granted');
+  await page.getByLabel('Advertising personalization consent',{exact:true}).selectOption('denied');
+  // Chromium normalizes zero seconds away; use its canonical minute precision.
+  await page.getByLabel('Decision effective at (UTC)').fill(new Date(Date.now()-3600000).toISOString().slice(0,16));
+  await page.getByLabel('Consent evidence reference').fill('Test consent receipt 123');
+  await page.getByRole('button',{name:'Save consent evidence',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Consent evidence recorded.'}).waitFor();
+  await page.getByRole('button',{name:'Stage reviewed conversion',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Conversion staged locally.'}).waitFor();
+  let preview=(await api('/conversions')).body;
+  let job=preview.jobs.find(j=>j.entity_key==='ads-browser-booking');
+  assert.equal(job.snapshot.amount_minor,12345);assert.equal(preview.connected,false);
+  const originalId=job.id,originalTransaction=job.transaction_id;
+  const c=preview.candidates.find(c=>c.entity_key==='ads-browser-booking');
+  const retry=await api('/conversions/stage',{kind:c.kind,entity_key:c.entity_key,fingerprint:c.fingerprint,version:0});
+  assert.equal(retry.status,200);assert.equal(retry.body.id,originalId);
+  // A real booking revision invalidates the preparation, preserving its snapshot.
+  assert.equal((await api(`/inquiries/${inquiry.id}/outcomes`,{...booking,amount_minor:67890,revision:2},'PUT')).status,200);
+  await page.getByRole('button',{name:'Refresh conversions',exact:true}).click();
+  const card=page.getByRole('article',{name:'Prepared booking ads-browser-booking',exact:true});
+  await card.getByText('needs review',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Stage reviewed conversion',exact:true}).click();
+  await card.getByText('awaiting connection',{exact:true}).waitFor();
+  job=(await api('/conversions')).body.jobs.find(j=>j.entity_key==='ads-browser-booking');
+  assert.equal(job.id,originalId);assert.equal(job.transaction_id,originalTransaction);assert.equal(job.snapshot.amount_minor,67890);
+  await page.getByText('Review the prepared data',{exact:true}).click();
+  await page.screenshot({path:path.join(artifactDir,'conversions-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Conversions must fit mobile');
+  await page.screenshot({path:path.join(artifactDir,'conversions-mobile.png'),fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});
+  await card.getByRole('button',{name:'Cancel preparation',exact:true}).click();
+  await card.getByText('canceled',{exact:true}).waitFor();
+  const stale=await api(`/conversions/${job.id}/cancel`,{version:job.version});assert.equal(stale.status,409);
+  assert.equal((await api('/conversions')).body.jobs.filter(j=>j.entity_key==='ads-browser-booking').length,1);
+}

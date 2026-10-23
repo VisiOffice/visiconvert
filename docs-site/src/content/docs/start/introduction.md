@@ -1,0 +1,31 @@
+---
+title: Introduction
+description: What VisiConvert does and how the pieces fit together.
+---
+
+VisiConvert connects inquiries to results. Each tracking number belongs to one marketing source and campaign, so every call arrives labeled. You mark leads as qualified or not, record the jobs they book, and see booked revenue by source.
+
+It is open source under AGPL-3.0 and built for US service businesses.
+
+## Two ways to run it
+
+- **Self-hosted.** Docker runs the app and a PostgreSQL database on your server. You bring your own Twilio account. See [Self-host VisiConvert](/start/self-host/).
+- **Hosted.** The same engine, run for you. You still connect your own Twilio account, so numbers and call history stay yours.
+
+## How a call is tracked
+
+1. You buy a number in Twilio and register it in VisiConvert with a source (for example Google Ads), a campaign, and the business line it rings through to.
+2. In Twilio, you point that number's voice and status webhooks at your VisiConvert server.
+3. When someone calls, Twilio asks VisiConvert what to do. VisiConvert records a lead with the number's source and campaign, then forwards the call.
+4. Afterwards, you qualify the lead and record any booked job against it.
+
+## Ways to work with it
+
+- **The web app** for day-to-day review.
+- **The [`visiconvert` command line](/cli/overview/)** for setup, scripts and bulk work.
+- **The [MCP server](/agents/mcp/)** so an AI agent can check setup, qualify leads and record bookings.
+- **The [public HTTP API](/api/public-api/)** for integrations using scoped workspace keys, including the CLI and MCP. The web app uses separate owner/operator endpoints. The public API and key-management screen require the updated release; rollout is pending.
+
+## Beta scope
+
+Working today: call tracking on registered numbers, form and API leads, qualification and notes, bookings and cancellations, source reports, website tracking and dynamic number insertion. Setting webhook URLs on Twilio numbers is still a manual step, and individual user accounts are not implemented on self-hosted installs yet.

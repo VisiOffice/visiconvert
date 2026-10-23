@@ -384,6 +384,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "url",
  "uuid",
 ]
 
@@ -406,6 +407,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "chrono",
  "clap",
  "convert-adapters",
  "convert-domain",
@@ -413,6 +415,7 @@ dependencies = [
  "dotenvy",
  "hmac 0.12.1",
  "http-body-util",
+ "reqwest",
  "serde",
  "serde_json",
  "sha1 0.10.7",
@@ -437,6 +440,7 @@ dependencies = [
  "convert-domain",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "thiserror",
  "tokio",

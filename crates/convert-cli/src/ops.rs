@@ -40,9 +40,7 @@ pub async fn status(client: &Client) -> Result<Status> {
         if let Some(message) = twilio["setup_message"].as_str() {
             next_steps.push(message.to_owned());
         } else {
-            next_steps.push(
-                "Connect Twilio: visiconvert connect twilio --account-sid AC… --token-stdin".into(),
-            );
+            next_steps.push(if client.public_key() { "Connect Twilio in the workspace UI. Scoped API keys cannot change provider credentials.".into() } else { "Connect Twilio: visiconvert connect twilio --account-sid AC… --token-stdin".into() });
         }
     } else if tracking == 0 {
         next_steps.push(
@@ -174,6 +172,11 @@ pub async fn list_leads(client: &Client, filter: &LeadFilter) -> Result<Vec<Lead
 /// Finds a lead by its full ID or a unique prefix of at least 6 characters.
 pub async fn find_lead(client: &Client, id: &str) -> Result<Lead> {
     let id = id.trim().to_ascii_lowercase();
+    if client.public_key()
+        && let Ok(uuid) = id.parse::<Uuid>()
+    {
+        return Ok(client.lead(uuid).await?);
+    }
     if id.len() < 6 {
         bail!("Use at least 6 characters of the lead ID");
     }
