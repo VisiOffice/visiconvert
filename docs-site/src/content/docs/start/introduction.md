@@ -28,4 +28,4 @@ It is open source under AGPL-3.0 and built for US service businesses.
 
 ## Beta scope
 
-Working today: call tracking on registered numbers, form and API leads, qualification and notes, bookings and cancellations, source reports, website tracking and dynamic number insertion. Setting webhook URLs on Twilio numbers is still a manual step, and individual user accounts are not implemented on self-hosted installs yet.
+Working today: call tracking on registered numbers, form and API leads, qualification and notes, bookings and cancellations, source reports, website tracking, dynamic number insertion, scoped API keys and the [v1 API](/api/public-api/). Google Ads conversions can be [prepared](/guides/google-ads-preparation/) but not sent yet. See [what each tool can do](/start/capabilities/). Setting webhook URLs on Twilio numbers is still a manual step, and individual user accounts are not implemented on self-hosted installs yet.
