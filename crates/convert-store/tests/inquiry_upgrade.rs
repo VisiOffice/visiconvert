@@ -69,6 +69,32 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
     let counts=sqlx::query("SELECT (SELECT count(*) FROM leads) AS interactions,(SELECT count(*) FROM inquiries) AS inquiries").fetch_one(&pool).await.unwrap();
     assert_eq!(counts.get::<i64, _>("interactions"), 2);
     assert_eq!(counts.get::<i64, _>("inquiries"), 2);
+    for migration in [
+        include_str!("../migrations/0007_dynamic_numbers.sql"),
+        include_str!("../migrations/0008_conversion_preparation.sql"),
+        include_str!("../migrations/0009_public_api.sql"),
+    ] {
+        sqlx::raw_sql(migration).execute(&pool).await.unwrap();
+    }
+    let after = store.inquiry(id).await.unwrap();
+    assert_eq!(after.lead.notes, "Existing notes");
+    assert_eq!(after.lead.version, 7);
+    assert_eq!(after.lead.booked_minor, 12005);
+    let keys = store.api_keys().await.unwrap();
+    assert!(keys["keys"].as_array().unwrap().is_empty());
+    assert!(keys["history"].as_array().unwrap().is_empty());
+    let conversions = store.conversion_preview().await.unwrap();
+    assert_eq!(conversions["settings"]["version"], 0);
+    assert!(conversions["jobs"].as_array().unwrap().is_empty());
+    assert_eq!(conversions["candidates"].as_array().unwrap().len(), 2);
+    for candidate in conversions["candidates"].as_array().unwrap() {
+        assert_eq!(candidate["eligible"], false);
+        assert!(
+            candidate["reasons"]
+                .to_string()
+                .contains("Original event time")
+        );
+    }
     pool.close().await;
     admin
         .execute("DROP SCHEMA inquiry_upgrade_fixture CASCADE")

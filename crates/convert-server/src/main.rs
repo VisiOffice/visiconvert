@@ -1,6 +1,9 @@
+mod api_keys;
 mod connections;
+mod conversions;
 mod hosted;
 mod inquiries;
+mod public_api;
 mod secrets;
 mod sites;
 use axum::{
@@ -145,6 +148,8 @@ fn router(app: Shared) -> Router {
         .merge(connections::routes())
         .merge(sites::private_routes())
         .merge(inquiries::routes())
+        .merge(conversions::routes())
+        .merge(api_keys::routes())
         .route("/bootstrap", get(bootstrap))
         .route("/leads", get(leads).post(add_lead))
         .route("/leads/{id}", patch(update_lead))
@@ -156,6 +161,7 @@ fn router(app: Shared) -> Router {
     Router::new()
         .merge(hosted::routes(app.clone()))
         .merge(sites::public_routes(app.clone()))
+        .nest("/api/v1", public_api::routes(app.clone()))
         .nest("/api", api)
         .route("/health", get(|| async { Json(json!({"status":"ok"})) }))
         .route("/webhooks/twilio/voice", post(voice))
@@ -646,3 +652,9 @@ mod site_tests;
 
 #[cfg(test)]
 mod inquiry_tests;
+
+#[cfg(test)]
+mod conversion_tests;
+
+#[cfg(test)]
+mod public_api_tests;

@@ -9,8 +9,8 @@ Self-hosted lead tracking and marketing attribution for service businesses.
 Connect inquiries to qualified leads, bookings, and source revenue.
 
 **Early beta, single workspace.** The application uses a Rust/Axum API,
-PostgreSQL, React/Vite, and a shared Rust/WASM attribution preview. Paid hosting
-and VisiComms integration are planned. See [visiconvert.com](https://visiconvert.com).
+PostgreSQL, React/Vite, and a shared Rust/WASM attribution preview. Hosting is in private beta;
+VisiComms integration is planned. See [visiconvert.com](https://visiconvert.com).
 
 ## Install
 
@@ -31,6 +31,8 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 ## What works
 
+- [Prepare Google Ads conversions](docs/CONVERSIONS.md) from qualified inquiries and bookings, with consent evidence and reviewed local staging. Google delivery is not connected yet.
+
 - Connect Twilio per workspace with encrypted credentials and verified number ownership
   in both self-hosted and hosted modes. See [connection setup](docs/TWILIO_CONNECTIONS.md).
 - Register existing customer-owned Twilio campaign numbers and configure
@@ -41,6 +43,8 @@ provider charges. You can explore form leads and bookings without a carrier.
   allowlists, retry deduplication, and inspectable session source evidence.
   See [website setup](docs/WEBSITE_TRACKING.md). No automatic form listeners.
 - Submit form leads through the API or application, qualify leads, and save notes.
+- Create scoped workspace keys for the [public API, CLI, and MCP](docs/PUBLIC_API.md),
+  with expiration, rotation, revocation, and management history.
 - Record booked USD amounts in exact cents, revise or cancel outcomes, and
   report booking totals by source.
 - Install with isolated PostgreSQL storage, generated credentials, explicit
@@ -48,7 +52,8 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 ## Beta limitations
 
-Self-hosted authentication uses one operator key per workspace. Local individual accounts,
+Self-hosted administration uses one operator key per workspace; integrations can use
+separate scoped API keys. Local individual accounts,
 roles, native form-platform connectors,
 Google conversion delivery, recordings, and SMS are not yet implemented.
 Hosted billing is maintained in the separate Rails service. The application does not buy numbers or configure Twilio for you.

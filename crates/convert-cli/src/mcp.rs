@@ -142,13 +142,27 @@ const TOOLS: &[Tool] = &[
 
 const SETUP_PROMPT: &str = "Set up VisiConvert call tracking for this business.
 
-1. Call get_status. If Twilio is not connected, stop and ask the person to run `visiconvert connect twilio --account-sid AC… --token-stdin` themselves. Never ask them to paste the auth token into this conversation.
+1. Call get_status. If Twilio is not connected, stop and ask the person to connect it in the workspace UI. Scoped API keys cannot change provider credentials. Self-hosted operators using a legacy operator key can also run `visiconvert connect twilio --account-sid AC… --token-stdin` themselves. Never ask them to paste credentials into this conversation.
 2. Ask which marketing sources and campaigns they want to track (for example Google Ads, Facebook, yard signs, the van), and which business line calls should ring through to.
 3. Call list_twilio_numbers. Propose one untracked number per campaign and confirm the plan with the person. If there are not enough numbers, tell them how many more to buy in Twilio; buying is not available from these tools yet.
 4. For each confirmed pair, call add_tracking_number.
 5. Give the person the voice URL and status URL from the results, and the exact Twilio console steps for each number. These have to be set by hand for now.
 6. Ask them to call one tracking number from their own phone, then call list_leads with since 15m and confirm the call arrived with the right source.
 7. Summarise what is tracked, and anything left to do.";
+
+/// The reference page for the docs site, from the same table `tools/list` serves.
+pub fn reference() -> String {
+    let tools = TOOLS
+        .iter()
+        .map(|tool| crate::reference::ToolDoc {
+            name: tool.name,
+            description: tool.description,
+            changes: tool.changes,
+            schema: (tool.schema)(),
+        })
+        .collect();
+    crate::reference::mcp(tools, SETUP_PROMPT)
+}
 
 impl Server {
     pub fn new(client: Result<Client, String>, allow_changes: bool) -> Self {

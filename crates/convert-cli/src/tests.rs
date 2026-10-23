@@ -444,7 +444,7 @@ async fn mcp_is_read_only_unless_allowed() {
         prompt["result"]["messages"][0]["content"]["text"]
             .as_str()
             .unwrap()
-            .contains("Never ask them to paste the auth token")
+            .contains("Never ask them to paste credentials into this conversation")
     );
 }
 
@@ -462,4 +462,40 @@ async fn mcp_explains_a_missing_login() {
             .unwrap()
             .contains("visiconvert login")
     );
+}
+
+#[test]
+fn docs_reference_pages_are_current() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs-site/src/content/docs/reference");
+    for (page, name) in [(crate::Page::Cli, "cli"), (crate::Page::Mcp, "mcp")] {
+        let saved = std::fs::read_to_string(root.join(format!("{name}.mdx"))).unwrap();
+        assert!(
+            saved == crate::reference_page(page),
+            "docs-site/src/content/docs/reference/{name}.mdx is stale; run `npm run reference` in docs-site"
+        );
+    }
+}
+
+#[test]
+fn client_enforces_secure_origins_for_all_credentials() {
+    for url in [
+        "http://localhost.evil.example",
+        "http://127.0.0.1.example",
+        "http://example.com",
+        "https://user:password@example.com",
+        "https://example.com/path",
+        "https://example.com?key=x",
+        "https://example.com#x",
+    ] {
+        assert!(Client::new(url, "test-key").is_err(), "{url}");
+    }
+    for url in [
+        "https://example.com",
+        "http://localhost:3100",
+        "http://127.0.0.1:3100",
+        "http://[::1]:3100",
+    ] {
+        assert!(Client::new(url, "test-key").is_ok(), "{url}");
+    }
 }

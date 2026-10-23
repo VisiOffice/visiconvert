@@ -1,7 +1,10 @@
+pub mod api_keys;
 pub mod connections;
+pub mod conversions;
 pub mod dni;
 pub mod hosted;
 pub mod inquiries;
+pub mod public_api;
 pub mod sites;
 use convert_domain::*;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
@@ -139,11 +142,14 @@ impl Store {
         row.map(|r| r.get("id")).ok_or(Error::Conflict)
     }
     pub async fn update_lead(&self, id: Uuid, n: &LeadUpdate) -> Result<()> {
+        self.update_public_lead(id, n, "authenticated legacy API")
+            .await
+    }
+    pub async fn update_public_lead(&self, id: Uuid, n: &LeadUpdate, actor: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         self.lock_inquiry_writes(&mut tx).await?;
         let group = self.group_for_lead(&mut tx, id).await?;
-        self.update_inquiry_tx(&mut tx, group, n, "authenticated legacy API")
-            .await?;
+        self.update_inquiry_tx(&mut tx, group, n, actor).await?;
         sqlx::query("INSERT INTO audit_events(workspace_id,lead_id,kind,payload) VALUES($1,$2,'lead_updated',$3)").bind(self.workspace).bind(id).bind(serde_json::json!(n)).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
@@ -173,6 +179,9 @@ impl Store {
     pub async fn inquiry_outcomes(&self, id: Uuid) -> Result<serde_json::Value> {
         sqlx::query_scalar("SELECT COALESCE((SELECT jsonb_agg(to_jsonb(o) - 'workspace_id' ORDER BY o.external_id) FROM outcomes o JOIN leads l ON l.workspace_id=o.workspace_id AND l.id=o.lead_id WHERE l.workspace_id=i.workspace_id AND l.inquiry_id=i.id),'[]'::jsonb) FROM inquiries i WHERE i.workspace_id=$1 AND i.id=$2 AND i.archived_at IS NULL")
             .bind(self.workspace).bind(id).fetch_optional(&self.pool).await?.ok_or(Error::NotFound)
+    }
+    pub async fn put_public_outcome(&self, id: Uuid, n: &OutcomeInput, actor: &str) -> Result<()> {
+        self.put_group_outcome(id, n, false, actor).await
     }
     pub async fn put_outcome(&self, id: Uuid, n: &OutcomeInput) -> Result<()> {
         self.put_group_outcome(id, n, false, "authenticated legacy API")

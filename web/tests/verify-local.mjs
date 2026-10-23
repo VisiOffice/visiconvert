@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { verifyGrouping } from "./verify-grouping.mjs";
+import { verifyApiKeys } from "./verify-api-keys.mjs";
+import { verifyConversions } from "./verify-conversions.mjs";
 import { verifyDni } from "./verify-dni.mjs";
 import { verifySites } from "./verify-sites.mjs";
 import { randomBytes } from "node:crypto";
@@ -232,6 +234,11 @@ try {
     await command("cargo", ["test", "-p", "convert-store", "--test", "inquiry_upgrade", "--", "--ignored", "--test-threads=1"]);
     await command("cargo", ["test", "-p", "convert-server", "inquiry_tests::", "--", "--ignored", "--test-threads=1"]);
   });
+  await check("Conversion preparation: consent, isolation, retries, revisions, and grouping", async () => {
+    await command("cargo", ["test", "-p", "convert-store", "--test", "conversions", "--", "--ignored", "--test-threads=1"]);
+    await command("cargo", ["test", "-p", "convert-server", "conversion_tests::", "--", "--ignored", "--test-threads=1"]);
+  });
+  await check("Public API: scopes, pagination, key lifecycle, hosted billing and isolation", () => command("cargo", ["test", "-p", "convert-server", "public_api_tests::", "--", "--ignored", "--test-threads=1"]));
   await check("DNI allocation: concurrency, cooldown, reuse, callback evidence, and isolation", () => command("cargo", ["test", "-p", "convert-store", "--test", "dni", "--", "--ignored", "--test-threads=1"]));
   await check("Apply application migrations twice", async () => {
     await command(path.join(root, "target/debug/convert-server"), ["migrate"]);
@@ -474,6 +481,28 @@ try {
   assert.deepEqual(errors, [], "No uncaught browser errors after website capture");
   await check("Inquiry browser flow: combine, review, history, separate, and revenue", () => verifyGrouping({ page, api, artifactDir }));
   assert.deepEqual(errors, [], "No uncaught browser errors after grouping");
+  await check("Conversions browser flow: evidence, preview, staging, revision, and cancellation", () => verifyConversions({ page, api, artifactDir }));
+  assert.deepEqual(errors, [], "No uncaught browser errors after conversions");
+  await check("Restart API and PostgreSQL; preserve conversion preparations and history", async () => {
+    const before=(await api("/conversions")).body;
+    await stopApi();
+    await command("pg_ctl", ["-D", pgData, "-m", "fast", "-w", "stop"]);
+    postgresStarted=false;
+    await command("pg_ctl", ["-D", pgData, "-l", path.join(artifactDir,"postgres.log"), "-o", `-k ${socketDir} -h ''`, "-w", "start"]);
+    postgresStarted=true;
+    await startApi();
+    const after=(await api("/conversions")).body;
+    assert.deepEqual(after.settings,before.settings);
+    assert.deepEqual(after.jobs,before.jobs);
+    assert.deepEqual(after.history,before.history);
+    await page.reload();
+    await page.getByLabel("Workspace API key").fill(apiKey);
+    await page.getByRole("button",{name:"Open workspace"}).click();
+    await page.getByRole("button",{name:"Conversions",exact:true}).click();
+    await page.getByRole("article",{name:"Prepared booking ads-browser-booking",exact:true}).getByText("canceled",{exact:true}).waitFor();
+  });
+  await check("API keys browser and CLI/MCP: create, use, rotate, revoke and mobile layout", () => verifyApiKeys({page,api,origin,artifactDir,root}));
+  assert.deepEqual(errors, [], "No uncaught browser errors after API keys");
   result.status = "passed";
 } catch (error) {
   result.status = "failed";

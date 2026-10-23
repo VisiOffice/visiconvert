@@ -48,17 +48,37 @@ pub struct Client {
 
 impl Client {
     pub fn new(base: &str, key: &str) -> anyhow::Result<Self> {
+        let parsed = url::Url::parse(base)?;
+        let local = matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+        anyhow::ensure!(
+            (parsed.scheme() == "https" || (parsed.scheme() == "http" && local))
+                && parsed.host_str().is_some()
+                && parsed.path() == "/"
+                && parsed.query().is_none()
+                && parsed.fragment().is_none()
+                && parsed.username().is_empty()
+                && parsed.password().is_none(),
+            "Use an HTTPS server origin; HTTP is permitted only for exact loopback hosts"
+        );
         Ok(Self {
             http: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(5))
                 .timeout(Duration::from_secs(30))
                 .user_agent(concat!("visiconvert-cli/", env!("CARGO_PKG_VERSION")))
                 .build()?,
-            base: base.trim_end_matches('/').to_owned(),
+            base: parsed.origin().ascii_serialization(),
             key: key.to_owned(),
         })
     }
 
+    pub fn public_key(&self) -> bool {
+        self.key.starts_with("vc_key_")
+    }
+    pub async fn lead(&self, id: Uuid) -> Result<Lead, Error> {
+        self.send(self.http.get(self.url(&format!("/api/leads/{id}"))))
+            .await
+    }
     pub fn base(&self) -> &str {
         &self.base
     }
@@ -90,6 +110,19 @@ impl Client {
     }
 
     fn url(&self, path: &str) -> String {
+        let path = if self.public_key() && path.starts_with("/api/") {
+            let tail = path.strip_prefix("/api/").unwrap();
+            format!(
+                "/api/v1/{}",
+                match tail {
+                    "bootstrap" => "workspace",
+                    "summary" => "reports/sources",
+                    other => other,
+                }
+            )
+        } else {
+            path.to_owned()
+        };
         format!("{}{path}", self.base)
     }
 
@@ -112,6 +145,12 @@ impl Client {
         auth_token: &str,
         revision: i64,
     ) -> Result<Value, Error> {
+        if self.public_key() {
+            return Err(Error::Forbidden(
+                "API keys cannot change provider credentials. Connect Twilio in the workspace UI."
+                    .into(),
+            ));
+        }
         let body =
             json!({"account_sid": account_sid, "auth_token": auth_token, "revision": revision});
         self.send(
@@ -137,7 +176,31 @@ impl Client {
     }
 
     pub async fn leads(&self) -> Result<Vec<Lead>, Error> {
-        self.send(self.http.get(self.url("/api/leads"))).await
+        if !self.public_key() {
+            return self.send(self.http.get(self.url("/api/leads"))).await;
+        }
+        let mut result = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let mut request = self
+                .http
+                .get(self.url("/api/leads"))
+                .query(&[("limit", "100")]);
+            if let Some(c) = &cursor {
+                request = request.query(&[("cursor", c)]);
+            }
+            let page: Value = self.send(request).await?;
+            let rows: Vec<Lead> =
+                serde_json::from_value(page["data"].clone()).map_err(|_| Error::Decode)?;
+            result.extend(rows);
+            cursor = page["next_cursor"].as_str().map(str::to_owned);
+            let Some(c) = &cursor else { break };
+            if !seen.insert(c.clone()) {
+                return Err(Error::Decode);
+            }
+        }
+        Ok(result)
     }
 
     pub async fn add_lead(&self, lead: &NewLead) -> Result<Uuid, Error> {
