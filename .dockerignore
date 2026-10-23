@@ -12,3 +12,5 @@ website
 **/*.log
 **/*.tsbuildinfo
 **/__pycache__
+
+cloud

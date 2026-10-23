@@ -34,7 +34,8 @@ class ReleasePackageTest(unittest.TestCase):
 
     def test_reproducible_archive_excludes_private_files_and_normalizes_headers(self):
         private_marker = uuid.uuid4().hex
-        for name in ['.env', '.local/config.env', 'artifacts/private.dump', 'deploy/pilot.env']:
+        for name in ['.env', '.local/config.env', 'artifacts/private.dump', 'deploy/pilot.env',
+                     'cloud/.env', 'cloud/app/models/user.rb', 'cloud/config/master.key']:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(private_marker)
@@ -47,6 +48,22 @@ class ReleasePackageTest(unittest.TestCase):
             names = archive.getnames()
             self.assertIn('visiconvert/README.md', names)
             self.assertIn('visiconvert/scripts/package-self-host.py', names)
+            self.assertIn('visiconvert/crates/convert-server/assets/tracker.js', names)
+            self.assertIn('visiconvert/crates/convert-server/assets/openapi.json', names)
+            self.assertIn('visiconvert/crates/convert-store/migrations/0009_public_api.sql', names)
+            self.assertIn('visiconvert/web/tests/verify-api-keys.mjs', names)
+            self.assertIn('visiconvert/docs/PUBLIC_API.md', names)
+            self.assertIn('visiconvert/crates/convert-store/migrations/0005_website_capture.sql', names)
+            self.assertIn('visiconvert/docs/WEBSITE_TRACKING.md', names)
+            self.assertIn('visiconvert/crates/convert-store/migrations/0006_inquiry_grouping.sql', names)
+            self.assertIn('visiconvert/docs/INQUIRY_GROUPING.md', names)
+            self.assertIn('visiconvert/docs/DYNAMIC_NUMBERS.md', names)
+            self.assertIn('visiconvert/crates/convert-store/migrations/0007_dynamic_numbers.sql', names)
+            self.assertIn('visiconvert/web/tests/verify-dni.mjs', names)
+            self.assertIn('visiconvert/web/tests/verify-grouping.mjs', names)
+            self.assertIn('visiconvert/web/tests/verify-sites.mjs', names)
+            self.assertIn('visiconvert/docs-site/src/content/docs/reference/cli.mdx', names)
+            self.assertIn('visiconvert/docs-site/package-lock.json', names)
             for member in archive.getmembers():
                 self.assertTrue(member.isfile())
                 self.assertEqual((member.uid, member.gid, member.mtime), (0, 0, 0))

@@ -1,5 +1,13 @@
+mod api_keys;
+mod connections;
+mod conversions;
+mod hosted;
+mod inquiries;
+mod public_api;
+mod secrets;
+mod sites;
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, Path, Request, State},
     http::{HeaderMap, StatusCode},
@@ -34,6 +42,9 @@ struct App {
     public_url: String,
     twilio_account: Option<String>,
     twilio_token: Option<String>,
+    cloud: Option<hosted::Config>,
+    vault: Option<secrets::Vault>,
+    twilio_client: convert_adapters::twilio_api::Client,
 }
 type Shared = Arc<App>;
 
@@ -95,12 +106,29 @@ async fn main() -> anyhow::Result<()> {
             "Live Twilio requires a valid account SID and HTTPS PUBLIC_URL"
         );
     }
+    let cloud = hosted::configuration(&public_url, &api_key)?;
+    anyhow::ensure!(
+        account.is_none() || store.twilio_connection().await?.is_none(),
+        "Remove legacy TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN when using a saved workspace connection"
+    );
+    let vault = optional("VISICONVERT_ENCRYPTION_KEY")
+        .map(|key| {
+            anyhow::ensure!(
+                key != api_key,
+                "Use a separate VISICONVERT_ENCRYPTION_KEY, not the workspace API key"
+            );
+            secrets::Vault::from_hex(&key)
+        })
+        .transpose()?;
     let app = Arc::new(App {
         store,
         api_key,
         public_url,
         twilio_account: account,
         twilio_token: token,
+        cloud,
+        vault,
+        twilio_client: convert_adapters::twilio_api::Client::new()?,
     });
     let address: SocketAddr = std::env::var("LISTEN_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3100".into())
@@ -115,20 +143,31 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 fn router(app: Shared) -> Router {
+    let secure_origin = app.public_url.starts_with("https://");
     let api = Router::new()
+        .merge(connections::routes())
+        .merge(sites::private_routes())
+        .merge(inquiries::routes())
+        .merge(conversions::routes())
+        .merge(api_keys::routes())
         .route("/bootstrap", get(bootstrap))
         .route("/leads", get(leads).post(add_lead))
         .route("/leads/{id}", patch(update_lead))
         .route("/leads/{id}/outcomes", get(outcomes).put(put_outcome))
         .route("/numbers", get(numbers).post(add_number))
         .route("/summary", get(summary))
+        .route("/session", axum::routing::delete(hosted::logout))
         .route_layer(middleware::from_fn_with_state(app.clone(), authenticate));
     Router::new()
+        .merge(hosted::routes(app.clone()))
+        .merge(sites::public_routes(app.clone()))
+        .nest("/api/v1", public_api::routes(app.clone()))
         .nest("/api", api)
         .route("/health", get(|| async { Json(json!({"status":"ok"})) }))
         .route("/webhooks/twilio/voice", post(voice))
         .route("/webhooks/twilio/dial-complete", post(dial_complete))
         .route("/webhooks/twilio/status", post(status))
+        .route("/webhooks/twilio/workspaces/{workspace}/{endpoint}", post(connections::webhook))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
                 // This pilot publishes query-free callback URLs. Never validate a different URL.
@@ -149,8 +188,16 @@ fn router(app: Shared) -> Router {
         )
         .layer(DefaultBodyLimit::max(65536))
         .layer(middleware::from_fn(
-            |request: Request, next: Next| async move {
+            move |request: Request, next: Next| async move {
                 let mut response = next.run(request).await;
+                response.headers_mut().insert("content-security-policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'".parse().unwrap());
+                response.headers_mut().insert("x-frame-options", "DENY".parse().unwrap());
+                if secure_origin {
+                    response.headers_mut().insert("strict-transport-security", "max-age=31536000".parse().unwrap());
+                }
+                response
+                    .headers_mut()
+                    .insert("referrer-policy", "no-referrer".parse().unwrap());
                 response
                     .headers_mut()
                     .insert("cache-control", "no-store".parse().unwrap());
@@ -163,23 +210,49 @@ fn router(app: Shared) -> Router {
         .with_state(app)
 }
 
-async fn authenticate(State(app): State<Shared>, request: Request, next: Next) -> Response {
+async fn authenticate(State(app): State<Shared>, mut request: Request, next: Next) -> Response {
     let supplied = request
         .headers()
         .get("authorization")
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .unwrap_or("");
-    if supplied.as_bytes().ct_eq(app.api_key.as_bytes()).into() {
+        .unwrap_or("")
+        .to_owned();
+    let access = if supplied.as_bytes().ct_eq(app.api_key.as_bytes()).into() {
+        Some(hosted::Access {
+            store: app.store.clone(),
+            name: "My workspace".into(),
+            session_hash: None,
+        })
+    } else if app.cloud.is_some()
+        && supplied
+            .strip_prefix("vc_session_")
+            .is_some_and(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()))
+    {
+        let hash = hosted::digest(&supplied);
+        match app.store.hosted_session(&hash).await {
+            Ok(value) => value.map(|(store, name)| hosted::Access {
+                store,
+                name,
+                session_hash: Some(hash),
+            }),
+            Err(e) => return ApiError::from(e).into_response(),
+        }
+    } else {
+        None
+    };
+    if let Some(access) = access {
+        request.extensions_mut().insert(access);
         next.run(request).await
     } else {
         (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"Enter the workspace API key"})),
+            Json(json!({"error":"Sign in again or enter the workspace API key"})),
         )
             .into_response()
     }
 }
+
 struct ApiError(StatusCode, String);
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -191,6 +264,7 @@ impl From<convert_store::Error> for ApiError {
         use convert_store::Error::*;
         match e {
             Validation(e) => Self(StatusCode::BAD_REQUEST, e.to_string()),
+            RateLimited => Self(StatusCode::TOO_MANY_REQUESTS, e.to_string()),
             NotFound => Self(StatusCode::NOT_FOUND, "Not found".into()),
             Conflict => Self(StatusCode::CONFLICT, e.to_string()),
             Database(error) => {
@@ -204,44 +278,61 @@ impl From<convert_store::Error> for ApiError {
     }
 }
 type Api<T> = Result<Json<T>, ApiError>;
-async fn bootstrap(State(a): State<Shared>) -> Json<Value> {
+async fn bootstrap(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+) -> Json<Value> {
+    let hosted = access.session_hash.is_some();
     Json(
-        json!({"name":"My workspace","id":a.store.workspace,"mode":"single-workspace pilot","twilio_configured":a.twilio_token.is_some(),"voice_url":format!("{}/webhooks/twilio/voice",a.public_url),"status_url":format!("{}/webhooks/twilio/status",a.public_url),"currency":"USD"}),
+        json!({"name":access.name,"id":access.store.workspace,"mode":if hosted {"hosted workspace"} else {"single-workspace pilot"},
+        "twilio_configured":!hosted && a.twilio_token.is_some(),
+        "voice_url":if hosted {String::new()} else {format!("{}/webhooks/twilio/voice",a.public_url)},
+        "status_url":if hosted {String::new()} else {format!("{}/webhooks/twilio/status",a.public_url)},"currency":"USD","hosted":hosted}),
     )
 }
-async fn leads(State(a): State<Shared>) -> Api<Vec<Lead>> {
-    Ok(Json(a.store.leads().await?))
+async fn leads(Extension(access): Extension<hosted::Access>) -> Api<Vec<Lead>> {
+    Ok(Json(access.store.leads().await?))
 }
-async fn numbers(State(a): State<Shared>) -> Api<Vec<TrackingNumber>> {
-    Ok(Json(a.store.numbers().await?))
+async fn numbers(Extension(access): Extension<hosted::Access>) -> Api<Vec<TrackingNumber>> {
+    Ok(Json(access.store.numbers().await?))
 }
-async fn summary(State(a): State<Shared>) -> Api<Vec<SourceSummary>> {
-    Ok(Json(a.store.summary().await?))
+async fn summary(Extension(access): Extension<hosted::Access>) -> Api<Vec<SourceSummary>> {
+    Ok(Json(access.store.summary().await?))
 }
-async fn add_number(State(a): State<Shared>, Json(n): Json<NewNumber>) -> Api<Value> {
-    a.store.add_number(&n).await?;
+async fn add_number(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+    Json(n): Json<NewNumber>,
+) -> Api<Value> {
+    connections::register(&a, &access, &n).await?;
     Ok(Json(json!({"ok":true})))
 }
-async fn add_lead(State(a): State<Shared>, Json(n): Json<NewLead>) -> Api<Value> {
-    Ok(Json(json!({"id":a.store.add_lead(&n).await?})))
+async fn add_lead(
+    Extension(access): Extension<hosted::Access>,
+    Json(n): Json<NewLead>,
+) -> Api<Value> {
+    Ok(Json(json!({"id":access.store.add_lead(&n).await?})))
 }
 async fn update_lead(
-    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
     Path(id): Path<Uuid>,
     Json(n): Json<LeadUpdate>,
 ) -> Api<Value> {
-    a.store.update_lead(id, &n).await?;
+    access.store.update_lead(id, &n).await?;
     Ok(Json(json!({"ok":true})))
 }
-async fn outcomes(State(a): State<Shared>, Path(id): Path<Uuid>) -> Api<Vec<Outcome>> {
-    Ok(Json(a.store.outcomes(id).await?))
+async fn outcomes(
+    Extension(access): Extension<hosted::Access>,
+    Path(id): Path<Uuid>,
+) -> Api<Vec<Outcome>> {
+    Ok(Json(access.store.outcomes(id).await?))
 }
 async fn put_outcome(
-    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
     Path(id): Path<Uuid>,
     Json(n): Json<OutcomeInput>,
 ) -> Api<Value> {
-    a.store.put_outcome(id, &n).await?;
+    access.store.put_outcome(id, &n).await?;
     Ok(Json(json!({"ok":true})))
 }
 async fn voice(
@@ -271,14 +362,38 @@ async fn webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let denied = || ApiError(StatusCode::FORBIDDEN, "Invalid webhook".into());
-    let malformed = || ApiError(StatusCode::BAD_REQUEST, "Invalid call payload".into());
     let token = a.twilio_token.as_deref().ok_or_else(|| {
         ApiError(
             StatusCode::SERVICE_UNAVAILABLE,
             "Twilio is not configured".into(),
         )
     })?;
+    process_webhook(
+        &a.store,
+        &a.public_url,
+        "/webhooks/twilio",
+        a.twilio_account.as_deref().unwrap(),
+        token,
+        endpoint,
+        headers,
+        body,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_webhook(
+    store: &Store,
+    public_url: &str,
+    prefix: &str,
+    account: &str,
+    token: &str,
+    endpoint: &str,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let denied = || ApiError(StatusCode::FORBIDDEN, "Invalid webhook".into());
+    let malformed = || ApiError(StatusCode::BAD_REQUEST, "Invalid call payload".into());
     if headers
         .get("content-type")
         .and_then(|h| h.to_str().ok())
@@ -291,11 +406,11 @@ async fn webhook(
         .get("x-twilio-signature")
         .and_then(|h| h.to_str().ok())
         .ok_or_else(denied)?;
-    let path = format!("/webhooks/twilio/{endpoint}");
-    let fields = twilio::verify(token, &format!("{}{path}", a.public_url), &body, signature)
+    let path = format!("{prefix}/{endpoint}");
+    let fields = twilio::verify(token, &format!("{public_url}{path}"), &body, signature)
         .map_err(|_| denied())?;
     let field = |name: &str| fields.get(name).map(String::as_str).unwrap_or("");
-    if Some(field("AccountSid")) != a.twilio_account.as_deref() {
+    if field("AccountSid") != account {
         return Err(denied());
     }
     if !twilio::valid_sid(field("CallSid"), "CA")
@@ -360,8 +475,7 @@ async fn webhook(
             }
         }
     };
-    let destination = a
-        .store
+    let destination = store
         .call_event(&CallEvent {
             sid: field("CallSid").into(),
             to: field("To").into(),
@@ -371,11 +485,8 @@ async fn webhook(
         })
         .await?;
     let xml = if endpoint == "voice" {
-        twilio::forward(
-            &destination,
-            &format!("{}/webhooks/twilio/dial-complete", a.public_url),
-        )
-        .map_err(|_| malformed())?
+        twilio::forward(&destination, &format!("{public_url}{prefix}/dial-complete"))
+            .map_err(|_| malformed())?
     } else {
         twilio::HANGUP.into()
     };
@@ -403,6 +514,9 @@ mod tests {
                 workspace: Uuid::nil(),
             },
             api_key: "test-workspace-key-at-least-32-characters".into(),
+            cloud: None,
+            vault: None,
+            twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
             public_url: "https://convert.example.com".into(),
             twilio_account: configured.then(|| format!("AC{}", "1".repeat(32))),
             twilio_token: configured.then(|| "test-token".into()),
@@ -422,6 +536,17 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
             assert_eq!(response.headers()["cache-control"], "no-store");
+            assert_eq!(response.headers()["x-frame-options"], "DENY");
+            assert!(
+                response.headers()["content-security-policy"]
+                    .to_str()
+                    .unwrap()
+                    .contains("'wasm-unsafe-eval'")
+            );
+            assert_eq!(
+                response.headers()["strict-transport-security"],
+                "max-age=31536000"
+            );
         }
         let response = app(false)
             .oneshot(
@@ -516,3 +641,20 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod connection_tests;
+#[cfg(test)]
+mod hosted_tests;
+
+#[cfg(test)]
+mod site_tests;
+
+#[cfg(test)]
+mod inquiry_tests;
+
+#[cfg(test)]
+mod conversion_tests;
+
+#[cfg(test)]
+mod public_api_tests;

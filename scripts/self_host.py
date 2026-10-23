@@ -18,9 +18,10 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-KEYS = {'COMPOSE_PROJECT_NAME', 'VISICONVERT_POSTGRES_PASSWORD', 'VISICONVERT_API_KEY',
+REQUIRED_KEYS = {'COMPOSE_PROJECT_NAME', 'VISICONVERT_POSTGRES_PASSWORD', 'VISICONVERT_API_KEY',
         'VISICONVERT_WORKSPACE_ID', 'VISICONVERT_HOST_PORT', 'PUBLIC_URL',
         'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'}
+KEYS = REQUIRED_KEYS | {'VISICONVERT_ENCRYPTION_KEY'}
 
 
 def require(condition, message):
@@ -44,7 +45,11 @@ def read_config(path):
 
 
 def validate(v):
-    require(KEYS == v.keys(), 'Incomplete config.env; run init in a new directory for a reference.')
+    require(REQUIRED_KEYS <= v.keys() <= KEYS, 'Incomplete config.env; run init in a new directory for a reference.')
+    encryption = v.get('VISICONVERT_ENCRYPTION_KEY', '')
+    if encryption:
+        require(re.fullmatch(r'[0-9a-f]{64}', encryption) and encryption != v['VISICONVERT_API_KEY'],
+                'VISICONVERT_ENCRYPTION_KEY must be an independent 64-character lowercase hex secret.')
     require(re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,62}', v['COMPOSE_PROJECT_NAME'])
             and v['COMPOSE_PROJECT_NAME'] != 'visiconvert-pilot', 'Choose a valid, separate Compose project name.')
     for key in ['VISICONVERT_POSTGRES_PASSWORD', 'VISICONVERT_API_KEY']:
@@ -209,6 +214,7 @@ class Installation:
 
     def restore(self, backup):
         manifest = json.loads((backup / 'manifest.json').read_text())
+        source_config = read_config(backup / 'config.env')
         require(manifest['format'] == 1 and manifest['postgres_major'] == 17, 'Unsupported backup format.')
         uuid.UUID(manifest['workspace_id'])
         with (backup / 'database.dump').open('rb') as stream:
@@ -222,6 +228,9 @@ class Installation:
                          '--exit-on-error', '--single-transaction', '--no-owner', '--no-acl', stdin=stream)
         # Preserve the destination credentials/origin; keep the original workspace's identity.
         self.values['VISICONVERT_WORKSPACE_ID'] = manifest['workspace_id']
+        # Ciphertext is bound to the original workspace AND encryption key, not the destination API key.
+        if source_config.get('VISICONVERT_ENCRYPTION_KEY'):
+            self.values['VISICONVERT_ENCRYPTION_KEY'] = source_config['VISICONVERT_ENCRYPTION_KEY']
         write_config(self.config, self.values)
         print('Restore complete. Run up using the source version or retained image matching the backup.')
 
@@ -238,6 +247,7 @@ def main():
     up.add_argument('--image', help='use an already-loaded image instead of building')
     for name in ['verify', 'status', 'logs', 'stop', 'backup']:
         commands.add_parser(name)
+    commands.add_parser('enable-connections', help='add an encryption key to an older configuration without changing existing credentials')
     commands.add_parser('restore', help='restore a backup into an empty database').add_argument('backup', type=Path)
     args = parser.parse_args()
     os.umask(0o077)
@@ -260,6 +270,7 @@ def main():
             port = args.port if args.port is not None else 3100
             values = {'COMPOSE_PROJECT_NAME': args.project or 'visiconvert-selfhost',
                       'VISICONVERT_POSTGRES_PASSWORD': secrets.token_hex(32), 'VISICONVERT_API_KEY': secrets.token_hex(32),
+                      'VISICONVERT_ENCRYPTION_KEY': secrets.token_hex(32),
                       'VISICONVERT_WORKSPACE_ID': str(uuid.uuid4()), 'VISICONVERT_HOST_PORT': str(port),
                       'PUBLIC_URL': args.origin or f'http://127.0.0.1:{port}',
                       'TWILIO_ACCOUNT_SID': '', 'TWILIO_AUTH_TOKEN': ''}
@@ -267,6 +278,13 @@ def main():
             print(f'Created {config} (private, mode 600).\nNext: run self-host.sh up. No carrier account is required to start.')
             return
         require(config.is_file(), 'Run self-host.sh init first.')
+        if args.command == 'enable-connections':
+            values = read_config(config)
+            if not values.get('VISICONVERT_ENCRYPTION_KEY'):
+                values['VISICONVERT_ENCRYPTION_KEY'] = secrets.token_hex(32)
+                write_config(config, values)
+            print('Encryption key is configured and preserved. Run up, then open Connections. Back up config.env with the database.')
+            return
         require(config.stat().st_mode & 0o077 == 0, 'config.env must be private: chmod 600 the file.')
         require(shutil.which('docker'), 'Docker Engine/Desktop and Docker Compose are required.')
         daemon = subprocess.run(['docker', 'info', '--format', '{{.ServerVersion}}'],
