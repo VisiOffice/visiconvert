@@ -5,7 +5,7 @@ description: Create scoped workspace API keys and integrate with the versioned H
 
 Deployed on October 23, 2026 for hosted workspaces and the standalone pilot.
 Self-hosted installations can use the same feature by upgrading to the
-[matching source revision](https://github.com/VisiOffice/visiconvert/tree/35cde2e75536d0ded94271db11982489d60af742).
+[patched source revision](https://github.com/VisiOffice/visiconvert/tree/6b76432bc1fde9686266cd5ec03449235d2a9685).
 Upgrade the engine and CLI/MCP together.
 
 ## Create a key

@@ -12,7 +12,7 @@ Build the version matching the deployed API. You need Git and a current Rust too
 ```sh
 git clone https://github.com/VisiOffice/visiconvert.git
 cd visiconvert
-git checkout 35cde2e75536d0ded94271db11982489d60af742
+git checkout 6b76432bc1fde9686266cd5ec03449235d2a9685
 cargo install --locked --path crates/convert-cli
 ```
 
