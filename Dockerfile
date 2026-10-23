@@ -6,6 +6,8 @@ RUN rustup target add wasm32-unknown-unknown \
     && cargo install wasm-pack --version 0.15.0 --locked
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+# convert-cli checks that the generated docs reference pages are current.
+COPY docs-site/src/content/docs/reference ./docs-site/src/content/docs/reference
 RUN cargo test --locked --workspace \
     && cargo build --locked -p convert-server \
     && cargo build --locked --release -p convert-server \

@@ -463,3 +463,16 @@ async fn mcp_explains_a_missing_login() {
             .contains("visiconvert login")
     );
 }
+
+#[test]
+fn docs_reference_pages_are_current() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs-site/src/content/docs/reference");
+    for (page, name) in [(crate::Page::Cli, "cli"), (crate::Page::Mcp, "mcp")] {
+        let saved = std::fs::read_to_string(root.join(format!("{name}.mdx"))).unwrap();
+        assert!(
+            saved == crate::reference_page(page),
+            "docs-site/src/content/docs/reference/{name}.mdx is stale; run `npm run reference` in docs-site"
+        );
+    }
+}

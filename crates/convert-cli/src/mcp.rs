@@ -150,6 +150,20 @@ const SETUP_PROMPT: &str = "Set up VisiConvert call tracking for this business.
 6. Ask them to call one tracking number from their own phone, then call list_leads with since 15m and confirm the call arrived with the right source.
 7. Summarise what is tracked, and anything left to do.";
 
+/// The reference page for the docs site, from the same table `tools/list` serves.
+pub fn reference() -> String {
+    let tools = TOOLS
+        .iter()
+        .map(|tool| crate::reference::ToolDoc {
+            name: tool.name,
+            description: tool.description,
+            changes: tool.changes,
+            schema: (tool.schema)(),
+        })
+        .collect();
+    crate::reference::mcp(tools, SETUP_PROMPT)
+}
+
 impl Server {
     pub fn new(client: Result<Client, String>, allow_changes: bool) -> Self {
         Self {

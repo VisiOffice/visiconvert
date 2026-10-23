@@ -2,11 +2,12 @@ mod client;
 mod config;
 mod mcp;
 mod ops;
+mod reference;
 #[cfg(test)]
 mod tests;
 
 use anyhow::{Context, Result, bail};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use client::Client;
 use serde::Serialize;
 use serde_json::Value;
@@ -30,6 +31,7 @@ struct Cli {
 enum Command {
     /// Save the server URL and workspace key for later commands
     Login {
+        /// Server URL, e.g. https://convert.example.com (https unless it is localhost)
         #[arg(long)]
         url: String,
         /// Read the key from stdin instead of prompting
@@ -58,12 +60,22 @@ enum Command {
         #[arg(long)]
         allow_changes: bool,
     },
+    /// Print a Markdown reference page for the docs site
+    #[command(hide = true)]
+    Reference { page: Page },
+}
+
+#[derive(Clone, ValueEnum)]
+enum Page {
+    Cli,
+    Mcp,
 }
 
 #[derive(Subcommand)]
 enum Connect {
     /// Save Twilio credentials. The auth token is read from stdin, never from arguments.
     Twilio {
+        /// Twilio Account SID, starting with AC
         #[arg(long)]
         account_sid: String,
         /// Read the auth token from stdin instead of prompting
@@ -85,8 +97,10 @@ enum Numbers {
         /// The business line calls ring through to
         #[arg(long)]
         forward_to: String,
+        /// Marketing source, e.g. "Google Ads" or "Yard signs"
         #[arg(long)]
         source: String,
+        /// Campaign within the source
         #[arg(long)]
         campaign: String,
         /// Defaults to the campaign
@@ -101,15 +115,19 @@ enum Leads {
     List(ListArgs),
     /// Add a lead that did not arrive by phone
     Add {
+        /// Who the lead is
         #[arg(long)]
         name: String,
         /// Phone or email
         #[arg(long)]
         contact: String,
+        /// Marketing source
         #[arg(long)]
         source: String,
+        /// Campaign within the source
         #[arg(long, default_value = "")]
         campaign: String,
+        /// Free-text notes
         #[arg(long, default_value = "")]
         notes: String,
         /// Your ID for this lead; repeating it will not create a duplicate
@@ -120,6 +138,7 @@ enum Leads {
     Qualify {
         /// Lead ID or a unique prefix of at least 6 characters
         lead: String,
+        /// qualified, unqualified, spam or unreviewed
         qualification: String,
         /// Replace the lead's notes
         #[arg(long)]
@@ -140,7 +159,10 @@ enum Leads {
         canceled: bool,
     },
     /// Bookings recorded on a lead
-    Outcomes { lead: String },
+    Outcomes {
+        /// Lead ID or a unique prefix of at least 6 characters
+        lead: String,
+    },
 }
 
 #[derive(Args)]
@@ -148,11 +170,13 @@ struct ListArgs {
     /// 7d, 24h, 30m, or a date like 2026-10-01
     #[arg(long)]
     since: Option<String>,
+    /// Only leads from this source
     #[arg(long)]
     source: Option<String>,
     /// unreviewed, qualified, unqualified or spam
     #[arg(long)]
     status: Option<String>,
+    /// Most leads to show
     #[arg(long, default_value_t = 50)]
     limit: usize,
     /// Include sample leads
@@ -537,6 +561,17 @@ async fn run(cli: Cli) -> Result<()> {
                 .map_err(|e| e.to_string());
             mcp::Server::new(client, allow_changes).run().await
         }
+        Command::Reference { page } => {
+            print!("{}", reference_page(page));
+            Ok(())
+        }
+    }
+}
+
+fn reference_page(page: Page) -> String {
+    match page {
+        Page::Cli => reference::cli(&Cli::command()),
+        Page::Mcp => mcp::reference(),
     }
 }
 

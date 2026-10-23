@@ -16,9 +16,12 @@ FILES = ['Cargo.toml', 'Cargo.lock', 'Dockerfile', '.dockerignore', '.gitignore'
          'scripts/verify-self-host.py', 'scripts/package-self-host.py', 'scripts/sync-brand.py',
          'tests/test_self_host.py', 'tests/test_release_package.py',
          'web/package.json', 'web/pnpm-lock.yaml', 'web/tsconfig.json', 'web/vite.config.ts',
-         'web/index.html', 'web/tests/verify-local.mjs']
+         'web/index.html', 'web/tests/verify-local.mjs',
+         'docs-site/package.json', 'docs-site/package-lock.json', 'docs-site/astro.config.mjs',
+         'docs-site/wrangler.jsonc', 'docs-site/.gitignore', 'docs-site/scripts/reference.mjs']
 TREES = {'crates': {'.rs', '.toml', '.sql', '.js'}, 'web/src': {'.tsx', '.ts', '.css'},
-         'assets/brand': {'.svg', '.md', '.txt'}, 'web/public': {'.svg', '.txt'}}
+         'assets/brand': {'.svg', '.md', '.txt'}, 'web/public': {'.svg', '.txt'},
+         'docs-site/src': {'.md', '.mdx', '.css', '.svg', '.ts'}, 'docs-site/public': {'.svg'}}
 
 
 def files():

@@ -1,0 +1,31 @@
+---
+title: VisiConvert documentation
+description: Track which marketing brings calls, leads and booked jobs. Self-host it or use the hosted service.
+template: splash
+hero:
+  tagline: Find out which marketing brings calls, qualified leads and booked revenue. Run it on your own server with your own Twilio account, or use the hosted service.
+  actions:
+    - text: Get started
+      link: /start/introduction/
+      icon: right-arrow
+    - text: Let an AI agent set it up
+      link: /agents/mcp/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Self-host" icon="laptop">
+    Two commands start the app and its database in Docker. [Install guide](/start/self-host/)
+  </Card>
+  <Card title="Connect Twilio" icon="phone">
+    Use numbers you already own, in your own account. [Connect Twilio](/start/connect-twilio/)
+  </Card>
+  <Card title="Command line" icon="seti:shell">
+    Add numbers, qualify leads and record bookings from a terminal or a script. [visiconvert CLI](/cli/overview/)
+  </Card>
+  <Card title="AI agents" icon="rocket">
+    An MCP server lets Claude and other agents check setup and record outcomes. [MCP setup](/agents/mcp/)
+  </Card>
+</CardGrid>

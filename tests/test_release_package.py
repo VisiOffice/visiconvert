@@ -58,6 +58,8 @@ class ReleasePackageTest(unittest.TestCase):
             self.assertIn('visiconvert/web/tests/verify-dni.mjs', names)
             self.assertIn('visiconvert/web/tests/verify-grouping.mjs', names)
             self.assertIn('visiconvert/web/tests/verify-sites.mjs', names)
+            self.assertIn('visiconvert/docs-site/src/content/docs/reference/cli.mdx', names)
+            self.assertIn('visiconvert/docs-site/package-lock.json', names)
             for member in archive.getmembers():
                 self.assertTrue(member.isfile())
                 self.assertEqual((member.uid, member.gid, member.mtime), (0, 0, 0))

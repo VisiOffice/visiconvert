@@ -39,3 +39,19 @@ jobs:
           retention-days: 7
       - name: Verify installation, persistence, backup, and restore
         run: python3 scripts/verify-self-host.py --image visiconvert-selfhost:ci
+
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - run: npm ci
+      - run: npm run build
