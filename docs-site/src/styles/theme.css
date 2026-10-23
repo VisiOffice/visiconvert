@@ -1,0 +1,30 @@
+/* Brand colors from the marketing site: clay accent on paper, sage-tinted grays. */
+:root {
+  --sl-font: 'Manrope Variable', system-ui, sans-serif;
+  --sl-color-accent-low: #3d1d14;
+  --sl-color-accent: #d9694a;
+  --sl-color-accent-high: #f3cbbb;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #eceee6;
+  --sl-color-gray-2: #c4c9bf;
+  --sl-color-gray-3: #949b91;
+  --sl-color-gray-4: #656c64;
+  --sl-color-gray-5: #3b4a42;
+  --sl-color-gray-6: #25332e;
+  --sl-color-black: #18211e;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #f3d9ce;
+  --sl-color-accent: #bd4c2e;
+  --sl-color-accent-high: #7a2e1a;
+  --sl-color-white: #25332e;
+  --sl-color-gray-1: #2f3d37;
+  --sl-color-gray-2: #3b4a42;
+  --sl-color-gray-3: #656c64;
+  --sl-color-gray-4: #8e958b;
+  --sl-color-gray-5: #dedfd5;
+  --sl-color-gray-6: #e7ebdf;
+  --sl-color-gray-7: #efefe8;
+  --sl-color-black: #f6f5f0;
+}

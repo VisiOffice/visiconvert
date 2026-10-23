@@ -30,7 +30,7 @@ Open **http://127.0.0.1:3100**. Retrieve `VISICONVERT_API_KEY` privately from
 `.local/self-host/config.env` and enter it on the login screen. The installer
 never prints the key. The app holds it in browser memory for the session.
 
-`init` creates independent random database and workspace keys, a workspace UUID,
+`init` creates independent random database, workspace login, and provider-encryption keys, a workspace UUID,
 and mode-600 configuration. Repeating it preserves the existing file.
 `up` builds a uniquely tagged production image, waits for the database, backs it
 up, applies migrations, starts the app, and checks the frontend, authenticated
@@ -74,6 +74,7 @@ Shell exports and the repository's development `.env` do not override this file.
 | `VISICONVERT_HOST_PORT` | Loopback HTTP port, 1024–65535 |
 | `PUBLIC_URL` | External origin, without a trailing slash/path, used in callback URLs |
 | `VISICONVERT_API_KEY` | 64-character hex workspace login key |
+| `VISICONVERT_ENCRYPTION_KEY` | Stable 64-character hex key encrypting saved provider credentials; keep with backups |
 | `VISICONVERT_POSTGRES_PASSWORD` | 64-character hex database password |
 | `VISICONVERT_WORKSPACE_ID` | Stable UUID identifying the workspace |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Both empty by default |
@@ -147,7 +148,8 @@ bash scripts/self-host.sh --directory /path/to/recovery up
 
 The restore verifies the archive checksum and restores within one transaction.
 It keeps the recovery installation's new database password, API key, and origin,
-but adopts the backed-up workspace UUID so the original leads remain visible.
+but adopts the backed-up workspace UUID and provider-encryption key so the
+original leads and encrypted carrier credentials remain usable.
 After `up`, log in using the recovery configuration's key and verify your data.
 
 For a rollback, use the matching old source version or load the retained image
@@ -172,7 +174,13 @@ workspace with a shared operator key; individual users, permissions, and public
 signup are not implemented. Dynamic number insertion and automatic website form
 capture are still planned.
 
-Twilio starts disabled. Real calls require your carrier account, tracking numbers,
+Twilio starts disconnected. Use the shared **Connections** screen to verify your
+account and register owned voice numbers. Existing installations can enable
+credential storage with `bash scripts/self-host.sh enable-connections`, then
+restart with `up`. See [Twilio connections](TWILIO_CONNECTIONS.md), including
+the explicit cutover procedure for legacy environment credentials.
+
+Real calls require your carrier account, tracking numbers,
 HTTPS, webhook configuration, and a verified forwarding destination. Adding a
 number in the app does not buy or configure it at Twilio. Validate signed live
 callbacks and fallback handling before routing customer calls through the beta.

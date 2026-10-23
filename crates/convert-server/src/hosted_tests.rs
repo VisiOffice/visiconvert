@@ -43,6 +43,8 @@ async fn cloud_handoff_enforces_membership_browser_binding_expiry_and_single_use
         public_url: "http://127.0.0.1:3100".into(),
         twilio_account: None,
         twilio_token: None,
+        vault: None,
+        twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
         cloud: Some(hosted::Config {
             service_key: service.clone(),
             cloud_origin: "http://127.0.0.1:3200".into(),
@@ -467,6 +469,8 @@ async fn credential_revocation_is_monotonic_isolated_and_serializes_exchange_and
         public_url: "http://127.0.0.1:3100".into(),
         twilio_account: None,
         twilio_token: None,
+        vault: None,
+        twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
         cloud: Some(hosted::Config {
             service_key: service.clone(),
             cloud_origin: "http://127.0.0.1:3200".into(),

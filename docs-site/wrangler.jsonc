@@ -1,0 +1,7 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "visiconvert-docs",
+  "compatibility_date": "2026-10-21",
+  "routes": [{ "pattern": "docs.visiconvert.com", "custom_domain": true }],
+  "assets": { "directory": "./dist", "not_found_handling": "404-page" }
+}

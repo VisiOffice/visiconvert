@@ -36,7 +36,31 @@ Deploy the engine migration and implementation before the updated Cloud workers/
 
 ## Current limits
 
-Hosted workspaces support form leads, qualification, and bookings. Their bootstrap response identifies `hosted: true`, hides operator callback URLs, and disables phone-number writes. Existing Twilio callbacks remain scoped to the configured self-hosted workspace. Per-tenant carrier credentials and callback resolution must precede hosted calling.
+### Durable integration credentials (deployed October 23, 2026)
+
+Workspace owners can issue scoped API keys for `/api/v1` from the engine UI.
+These keys are separate from the 15-minute browser sessions below. Keys retain
+the issuing owner and credential version; engine membership disablement and
+password resets invalidate them. Creation and every hosted API-key request also
+call Rails' service-authenticated `POST /internal/api-access`, sending only the
+workspace ID, owner UUID and credential version. Rails verifies current ownership,
+membership, verified email, completed credential reset, workspace readiness and
+paid access. A denied entitlement returns 403; an unavailable check fails closed
+with 503. Self-hosted keys do not call Rails.
+
+For this slice, deploy the new Rails endpoint **before** engine migration 0009
+and the updated engine/CLI. This order differs from the earlier credential-version
+protocol rollout above. No service secret or operator key is handed to an
+integration. See [public API and key lifecycle](PUBLIC_API.md) for scopes,
+pagination, rate limits, revocation and backup-restoration precautions.
+
+Hosted workspaces support form leads, qualification, bookings, and the same
+[Twilio connection flow](TWILIO_CONNECTIONS.md) as self-hosted workspaces.
+Phone-number registration requires verified workspace credentials and checks
+number ownership. Credentials are encrypted by the engine; scoped callback URLs
+resolve the workspace and validate its provider signature independently of
+Rails and billing. The engine operator must configure its encryption key.
+Legacy environment callbacks remain scoped to the default operator workspace.
 
 Sessions expire after 15 minutes without refresh; reopen through Cloud after a reload or expiry. Completed password resets revoke engine access. Ordinary Rails logout and subscription cancellation do not yet revoke existing engine sessions; engine logout revokes its own session. Session refresh, invitations, email verification, and tenant deletion remain future work. Cloud owns billing and applies its entitlement checks before issuing launch requests.
 

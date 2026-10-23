@@ -118,6 +118,7 @@ class SelfHostTest(unittest.TestCase):
     def test_nonempty_restore_refused_without_mutation(self):
         backup = self.directory / 'backup'
         backup.mkdir()
+        shutil.copyfile(self.install.config, backup / 'config.env')
         (backup / 'database.dump').write_bytes(b'example')
         manifest = {'format': 1, 'postgres_major': 17, 'workspace_id': self.install.values['VISICONVERT_WORKSPACE_ID'],
                     'sha256': host.hashlib.sha256(b'example').hexdigest()}
@@ -130,12 +131,42 @@ class SelfHostTest(unittest.TestCase):
     def test_corrupt_backup_rejected_before_docker(self):
         backup = self.directory / 'backup'
         backup.mkdir()
+        shutil.copyfile(self.install.config, backup / 'config.env')
         (backup / 'database.dump').write_bytes(b'damaged')
         (backup / 'manifest.json').write_text(json.dumps({'format': 1, 'postgres_major': 17,
             'workspace_id': self.install.values['VISICONVERT_WORKSPACE_ID'], 'sha256': 'wrong'}))
         with patch.object(self.install, 'database') as database, self.assertRaisesRegex(ValueError, 'checksum'):
             self.install.restore(backup)
         database.assert_not_called()
+
+    def test_legacy_config_gets_one_independent_encryption_key_on_explicit_upgrade(self):
+        original = dict(self.install.values)
+        original.pop('VISICONVERT_ENCRYPTION_KEY')
+        host.write_config(self.install.config, original)
+        subprocess.run(self.command + ['init'], check=True, stdout=subprocess.DEVNULL)
+        self.assertEqual(host.read_config(self.install.config), original)
+        subprocess.run(self.command + ['enable-connections'], check=True, stdout=subprocess.DEVNULL)
+        upgraded = host.read_config(self.install.config)
+        for key, value in original.items():
+            self.assertEqual(upgraded[key], value)
+        self.assertNotEqual(upgraded['VISICONVERT_ENCRYPTION_KEY'], upgraded['VISICONVERT_API_KEY'])
+        subprocess.run(self.command + ['enable-connections'], check=True, stdout=subprocess.DEVNULL)
+        self.assertEqual(host.read_config(self.install.config), upgraded)
+
+    def test_restore_recovers_source_encryption_key_but_preserves_destination_login(self):
+        backup = self.directory / 'backup'
+        backup.mkdir()
+        source = dict(self.install.values, VISICONVERT_ENCRYPTION_KEY='b' * 64)
+        host.write_config(backup / 'config.env', source)
+        (backup / 'database.dump').write_bytes(b'example')
+        (backup / 'manifest.json').write_text(json.dumps({'format': 1, 'postgres_major': 17,
+            'workspace_id': source['VISICONVERT_WORKSPACE_ID'], 'sha256': host.hashlib.sha256(b'example').hexdigest()}))
+        before = self.install.values['VISICONVERT_API_KEY']
+        with patch.object(self.install, 'database'), patch.object(self.install, 'sql', return_value='0'), patch.object(self.install, 'compose'):
+            self.install.restore(backup)
+        restored = host.read_config(self.install.config)
+        self.assertEqual(restored['VISICONVERT_ENCRYPTION_KEY'], source['VISICONVERT_ENCRYPTION_KEY'])
+        self.assertEqual(restored['VISICONVERT_API_KEY'], before)
 
 
 if __name__ == '__main__':

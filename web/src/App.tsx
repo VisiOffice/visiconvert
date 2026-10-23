@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { InquiryGrouping } from "./InquiryGrouping";
+import { ApiKeys } from "./ApiKeys";
+import { Conversions } from "./Conversions";
+import { Sites } from "./Sites";
+import { TwilioConnection } from "./TwilioConnection";
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -22,29 +27,35 @@ import {
   client,
   money,
   label,
-  type Lead,
+  type Inquiry as Lead,
   type TrackingNumber,
   type Summary,
   type Bootstrap,
   type Client,
   type Outcome,
+  type TwilioConnection as Connection,
+  type TwilioInventory,
 } from "./api";
 import initWasm, {
   preview_attribution,
 } from "./generated/attribution/convert_wasm";
 
-type Page = "Overview" | "Lead inbox" | "Tracking numbers" | "Connections";
+type Page = "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys";
 const pages = [
   { name: "Overview" as Page, icon: BarChart3 },
   { name: "Lead inbox" as Page, icon: Users },
   { name: "Tracking numbers" as Page, icon: Phone },
+  { name: "Sites" as Page, icon: Layers3 },
   { name: "Connections" as Page, icon: Link2 },
+  { name: "Conversions" as Page, icon: Check },
+  { name: "API keys" as Page, icon: ShieldCheck },
 ];
 export default function App() {
   const [key, setKey] = useState("");
   const [entry, setEntry] = useState("");
   const [page, setPage] = useState<Page>("Overview");
   const [boot, setBoot] = useState<Bootstrap | null>(null);
+  const [connection, setConnection] = useState<Connection | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [numbers, setNumbers] = useState<TrackingNumber[]>([]);
   const [summary, setSummary] = useState<Summary[]>([]);
@@ -79,13 +90,15 @@ export default function App() {
   }, []);
 
   async function refresh(request = api) {
-    const [b, l, n, s] = await Promise.all([
+    const [b, l, n, s, c] = await Promise.all([
       request<Bootstrap>("/bootstrap"),
-      request<Lead[]>("/leads"),
+      request<Lead[]>("/inquiries"),
       request<TrackingNumber[]>("/numbers"),
       request<Summary[]>("/summary"),
+      request<Connection>("/connections/twilio"),
     ]);
     setBoot(b);
+    setConnection(c);
     setLeads(l);
     setNumbers(n);
     setSummary(s);
@@ -119,7 +132,7 @@ export default function App() {
   const filtered = leads.filter(
     (l) =>
       (filter === "all" || l.qualification === filter) &&
-      `${l.name} ${l.contact} ${l.source} ${l.campaign}`
+      l.search_text
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
@@ -249,6 +262,7 @@ export default function App() {
               }
               setKey("");
               setBoot(null);
+              setConnection(null);
               setSelected(null);
               setModal(null);
               setError("");
@@ -279,12 +293,15 @@ export default function App() {
                     ? "Review inquiries, qualify opportunities, and record bookings."
                     : page === "Tracking numbers"
                       ? "Give each campaign a number. Keep your existing phone system."
-                      : "Start with your numbers and the tools you already use."}
+                      : page === "Sites"
+                        ? "Connect website visits and successful forms to their source."
+                        : page === "Conversions" ? "Review qualified inquiries and bookings for Google Ads."
+                        : "Start with your numbers and the tools you already use."}
               </p>
             </div>
-            <button
+            {page !== "Sites" && page !== "Conversions" && page !== "API keys" && <button
               className="primary"
-              disabled={boot?.hosted && page === "Tracking numbers"}
+              disabled={boot?.hosted && !connection?.connected && page === "Tracking numbers"}
               onClick={() =>
                 setModal(page === "Tracking numbers" ? "number" : "lead")
               }
@@ -293,9 +310,9 @@ export default function App() {
               {page === "Tracking numbers"
                 ? "Add tracking number"
                 : "Add form lead"}
-            </button>
+            </button>}
           </div>
-          {boot?.hosted && page === "Tracking numbers" && <p className="notice">Phone-number setup is not available in hosted workspaces yet. You can add form leads, qualify inquiries, and record bookings.</p>}
+          {page === "Tracking numbers" && !connection?.connected && <p className="notice">Connect your Twilio account in Connections to receive calls. {boot?.hosted ? "Connect before registering a tracking number." : "Offline number registrations do not route calls."}</p>}
           {error && (
             <p className="error" role="alert">
               {error}
@@ -321,7 +338,7 @@ export default function App() {
                   {
                     title: "Total inquiries",
                     value: totals.leads,
-                    sub: "Calls and submitted forms",
+                    sub: "Grouped calls and submitted forms",
                     icon: ArrowDownLeft,
                   },
                   {
@@ -360,8 +377,8 @@ export default function App() {
                   <div>
                     <h2>Where your leads come from</h2>
                     <p>
-                      Compare source volume with qualified leads and booked
-                      revenue.
+                      Each inquiry counts once, using its chosen reporting source.
+                      Individual interaction sources remain available in its timeline.
                     </p>
                   </div>
                   <span className="chip">All sources</span>
@@ -540,7 +557,10 @@ export default function App() {
               </p>
             </>
           )}
-          {page === "Connections" && boot && <Connections boot={boot} />}
+          {page === "Sites" && <Sites api={api} />}
+          {page === "Conversions" && <Conversions api={api} />}
+          {page === "API keys" && <ApiKeys api={api} />}
+          {page === "Connections" && connection && <Connections api={api} connection={connection} refresh={refresh} />}
           <footer>
             VisiConvert <span>Make the connection.</span>
             <a href="https://github.com/VisiOffice/visiconvert">Source</a>
@@ -567,6 +587,11 @@ export default function App() {
           lead={selected}
           api={api}
           refresh={refresh}
+          changed={async (id) => {
+            await refresh();
+            const detail = await api<{ inquiry: Lead }>(`/inquiries/${id}`);
+            setSelected(detail.inquiry);
+          }}
           close={() => setSelected(null)}
         />
       )}{" "}
@@ -574,6 +599,7 @@ export default function App() {
         <CreateModal
           kind={modal}
           api={api}
+          connected={connection?.connected || false}
           close={() => setModal(null)}
           done={async () => {
             await refresh();
@@ -639,7 +665,7 @@ function LeadTable({
                   <span>
                     <strong>{l.name}</strong>
                     <small>
-                      {l.contact} {l.is_demo && <em>DEMO</em>}
+                      {l.contact} · {l.interaction_count} {l.interaction_count === 1 ? "interaction" : "interactions"} {l.is_demo && <em>DEMO</em>}
                     </small>
                   </span>
                 </button>
@@ -684,11 +710,13 @@ function LeadDetail({
   api,
   refresh,
   close,
+  changed,
 }: {
   lead: Lead;
   api: Client;
   refresh: () => Promise<void>;
   close: () => void;
+  changed: (id: string) => Promise<void>;
 }) {
   const [qualification, setQualification] = useState(lead.qualification),
     [notes, setNotes] = useState(lead.notes),
@@ -697,13 +725,17 @@ function LeadDetail({
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
     [outcomes, setOutcomes] = useState<Outcome[]>([]);
+  const dirty = notes !== lead.notes || qualification !== lead.qualification;
+  useEffect(() => { setQualification(lead.qualification); setNotes(lead.notes); setEditVersion(lead.version); }, [lead.id, lead.version, lead.notes, lead.qualification]);
   const [booking, setBooking] = useState(""),
     [amount, setAmount] = useState("");
   useEffect(() => {
-    api<Outcome[]>(`/leads/${lead.id}/outcomes`)
-      .then(setOutcomes)
-      .catch((e) => setError(e.message));
-  }, [api, lead.id]);
+    let active = true;
+    api<Outcome[]>(`/inquiries/${lead.id}/outcomes`)
+      .then(value => { if (active) setOutcomes(value); })
+      .catch((e) => { if (active) setError(e.message); });
+    return () => { active = false; };
+  }, [api, lead.id, lead.version]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
@@ -718,7 +750,6 @@ function LeadDetail({
     try {
       await action();
       await refresh();
-      setOutcomes(await api<Outcome[]>(`/leads/${lead.id}/outcomes`));
       setNotice("Saved");
     } catch (e) {
       setError((e as Error).message);
@@ -762,28 +793,16 @@ function LeadDetail({
             <strong>{money(lead.booked_minor)}</strong>
           </div>
         </div>
-        {lead.channel === "call" && (
-          <div className="call-note">
-            <strong>{label(lead.call_status || "unknown")}</strong>
-            <p>
-              {lead.tracking_number} → {lead.destination}
-            </p>
-            <small>
-              A destination answer can be an IVR or voicemail. It does not
-              confirm a human answered.
-            </small>
-          </div>
-        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();
             void run(async () => {
               await api(
-                `/leads/${lead.id}`,
+                `/inquiries/${lead.id}`,
                 { version: editVersion, qualification, notes },
                 "PATCH",
               );
-              setEditVersion((value) => value + 1);
+
             });
           }}
         >
@@ -815,6 +834,8 @@ function LeadDetail({
             Save lead
           </button>
         </form>
+        {dirty && <p className="notice">Save your review changes before grouping interactions or editing bookings.</p>}
+        <InquiryGrouping inquiry={lead} api={api} disabled={busy || dirty} changed={changed} />
         <hr />
         <h3>Bookings</h3>
         <p className="small muted">
@@ -831,12 +852,12 @@ function LeadDetail({
             </div>
             {o.status === "booked" && (
               <button
-                disabled={busy}
+                disabled={busy || dirty}
                 className="text-button"
                 onClick={() =>
                   void run(async () => {
                     await api(
-                      `/leads/${lead.id}/outcomes`,
+                      `/inquiries/${lead.id}/outcomes`,
                       { ...o, status: "canceled", revision: o.revision + 1 },
                       "PUT",
                     );
@@ -857,7 +878,7 @@ function LeadDetail({
                 Number(parts[0]) * 100 +
                 Number((parts[1] || "").padEnd(2, "0"));
               await api(
-                `/leads/${lead.id}/outcomes`,
+                `/inquiries/${lead.id}/outcomes`,
                 {
                   external_id: booking,
                   amount_minor: minor,
@@ -895,7 +916,7 @@ function LeadDetail({
               />
             </label>
           </div>
-          <button className="secondary" disabled={busy}>
+          <button className="secondary" disabled={busy || dirty}>
             <Plus size={15} /> Record booking
           </button>
         </form>
@@ -918,14 +939,25 @@ function CreateModal({
   api,
   close,
   done,
+  connected,
 }: {
   kind: "number" | "lead";
   api: Client;
   close: () => void;
   done: () => Promise<void>;
+  connected: boolean;
 }) {
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [inventory, setInventory] = useState<TwilioInventory | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (kind === "number" && connected) {
+      api<TwilioInventory>("/connections/twilio/numbers").then(value => { if (active) setInventory(value); })
+        .catch(error => { if (active) setError(error.message); });
+    }
+    return () => { active = false; };
+  }, [kind, connected, api]);
   const fields =
     kind === "number"
       ? [
@@ -985,6 +1017,7 @@ function CreateModal({
               {title}
               <input
                 name={name}
+                list={name === "phone_number" ? "twilio-owned-numbers" : undefined}
                 placeholder={placeholder}
                 required={!(kind === "lead" && name === "campaign")}
                 autoFocus={i === 0}
@@ -992,6 +1025,8 @@ function CreateModal({
               />
             </label>
           ))}
+          {kind === "number" && <datalist id="twilio-owned-numbers">{inventory?.numbers.map(n => <option key={n.sid} value={n.phone_number}>{n.friendly_name}</option>)}</datalist>}
+          {inventory?.has_more && <p className="small muted">Suggestions show the first page. Enter another owned number to verify it directly.</p>}
           {error && (
             <p className="error" role="alert">
               {error}
@@ -1009,7 +1044,7 @@ function CreateModal({
     </div>
   );
 }
-function Connections({ boot }: { boot: Bootstrap }) {
+function Connections({ api, connection, refresh }: { api: Client; connection: Connection; refresh: () => Promise<void> }) {
   const [url, setUrl] = useState(
       "https://example.com/?utm_source=google&utm_medium=cpc&utm_campaign=spring",
     ),
@@ -1022,50 +1057,7 @@ function Connections({ boot }: { boot: Bootstrap }) {
   }, []);
   return (
     <div className="connections">
-      {boot.hosted ? <section className="card connection"><div className="connection-body"><h2>Phone connections</h2><p>Phone-number setup is not available in hosted workspaces yet. Start with form leads, qualification, and bookings.</p></div></section> : <section className="card connection">
-        <div className="card-header">
-          <div>
-            <h2>Twilio → your business phone</h2>
-            <p>Bring your own account and tracking numbers.</p>
-          </div>
-          <span
-            className={`badge ${boot.twilio_configured ? "qualified" : "unreviewed"}`}
-          >
-            {boot.twilio_configured
-              ? "Credentials configured"
-              : "Setup required"}
-          </span>
-        </div>
-        <div className="connection-body">
-          <ol>
-            <li>
-              Set <code>TWILIO_ACCOUNT_SID</code>,{" "}
-              <code>TWILIO_AUTH_TOKEN</code>, and your HTTPS{" "}
-              <code>PUBLIC_URL</code> in the server environment.
-            </li>
-            <li>
-              Register your tracking number and destination in Tracking numbers.
-            </li>
-            <li>
-              In Twilio, configure the number’s incoming voice webhook and call
-              status callback as HTTP POST using these URLs.
-            </li>
-          </ol>
-          <label>
-            Incoming voice webhook
-            <code className="code-block">{boot.voice_url}</code>
-          </label>
-          <label>
-            Call status callback
-            <code className="code-block">{boot.status_url}</code>
-          </label>
-          <p className="small muted">
-            Credential configuration is not a live connectivity test. Configure
-            a separate Twilio fallback before routing production calls.
-            Recording is off. Voice forwarding does not forward SMS.
-          </p>
-        </div>
-      </section>}
+      <TwilioConnection api={api} connection={connection} refresh={refresh} />
       <section className="card connection">
         <div className="card-header">
           <div>
@@ -1115,8 +1107,8 @@ function Connections({ boot }: { boot: Bootstrap }) {
         <span className="eyebrow">COMING AFTER THE PILOT</span>
         <h3>More context, fewer gaps.</h3>
         <p>
-          Session number pools, website form capture, Google conversion
-          delivery, and VisiComms connections are planned next.
+          Website capture is available in Sites. Session number pools, Google
+          conversion delivery, and VisiComms connections are planned next.
         </p>
       </section>
     </div>
