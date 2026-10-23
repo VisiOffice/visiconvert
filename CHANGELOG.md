@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — dependency security update
+
+- Update the PostgreSQL client’s transitive `ctutils` dependency to 0.4.4, fixing RUSTSEC-2026-0385. No application or database schema changes.
+
 ## Unreleased — workspace API keys and public API v1
 
 - Shared key management with one-time secrets, hashed storage, scopes, expiration, rotation/revocation and audit history.
