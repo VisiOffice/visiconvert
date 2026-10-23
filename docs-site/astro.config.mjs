@@ -17,7 +17,7 @@ export default defineConfig({
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/VisiOffice/visiconvert' },
       ],
-      editLink: { baseUrl: 'https://github.com/VisiOffice/visiconvert/edit/workspace-api-keys/docs-site/' },
+      editLink: { baseUrl: 'https://github.com/VisiOffice/visiconvert/edit/main/docs-site/' },
       customCss: ['@fontsource-variable/manrope', './src/styles/theme.css'],
       plugins: [starlightLlmsTxt()],
       sidebar: [

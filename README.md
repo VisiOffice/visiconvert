@@ -10,7 +10,8 @@ Connect inquiries to qualified leads, bookings, and source revenue.
 
 **Early beta, single workspace.** The application uses a Rust/Axum API,
 PostgreSQL, React/Vite, and a shared Rust/WASM attribution preview. Hosting is in private beta;
-VisiComms integration is planned. See [visiconvert.com](https://visiconvert.com).
+VisiComms integration is planned. See [visiconvert.com](https://visiconvert.com) and the
+[documentation](https://docs.visiconvert.com) for setup, the CLI, AI agents (MCP), and the API.
 
 ## Install
 
