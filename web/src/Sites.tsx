@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { NumberPool } from "./NumberPool";
 import type { Client } from "./api";
 
 type Site = {
@@ -57,7 +58,8 @@ export function Sites({ api }: { api: Client }) {
         <textarea className="site-code" aria-label="Form integration example" readOnly rows={15} value={hook} />
         <p className="muted">Only allowed fields are sent. Catch tracking errors separately so they never block your customer’s form submission. Retries must use the same submission ID and field values.</p>
         <h3>3. Verify a complete visit</h3><p className="muted">Open a campaign URL, grant consent, and complete a form. Refresh these diagnostics, then open the lead inbox to inspect its source evidence. No visits yet? Check the exact origin, consent hook, browser blockers, and your website’s script-src/connect-src policy.</p>
-        <p className="notice">Attribution describes the session’s entry source, not proof that an ad caused a booking. Sessions last 30 minutes; this release does not track across devices or replace phone numbers.</p>
+        <p className="notice">Attribution describes the session’s entry source, not proof that an ad caused a booking. Sessions last 30 minutes; this release does not track across devices.</p>
+        <NumberPool key={site.id} api={api} siteId={site.id} />
       </>}
     </section>
   </div>;

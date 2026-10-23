@@ -49,7 +49,7 @@ provider charges. You can explore form leads and bookings without a carrier.
 ## Beta limitations
 
 Self-hosted authentication uses one operator key per workspace. Local individual accounts,
-roles, session-based dynamic number insertion, native form-platform connectors,
+roles, native form-platform connectors,
 Google conversion delivery, recordings, and SMS are not yet implemented.
 Hosted billing is maintained in the separate Rails service. The application does not buy numbers or configure Twilio for you.
 Booking totals represent recorded business outcomes, not settled payments.
@@ -80,3 +80,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [release notes](CHANGELOG.md), and
 AGPL-3.0-only, matching VisiGrid and VisiPass package metadata. See [LICENSE](LICENSE).
 Third-party components retain their own licenses; the outlined wordmark uses
 Manrope, whose font license is included in `assets/brand/FONT-LICENSE.txt`.
+
+## Dynamic number insertion
+
+Hosted and self-hosted workspaces can assign dedicated tracking numbers to consenting website sessions, with fallback, cooldown, and explicit inferred call-source evidence. See [setup and limits](docs/DYNAMIC_NUMBERS.md).

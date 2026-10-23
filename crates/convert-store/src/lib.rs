@@ -1,4 +1,5 @@
 pub mod connections;
+pub mod dni;
 pub mod hosted;
 pub mod inquiries;
 pub mod sites;
@@ -282,6 +283,13 @@ impl Store {
             let destination: String = number.get("destination");
             sqlx::query("INSERT INTO leads(id,workspace_id,external_id,name,contact,channel,source,campaign,tracking_number,destination,call_status) VALUES($1,$2,$3,'Phone inquiry',$4,'call',$5,$6,$7,$8,'ringing')")
                 .bind(id).bind(self.workspace).bind(&event.sid).bind(&event.from).bind(number.get::<String,_>("source")).bind(number.get::<String,_>("campaign")).bind(&event.to).bind(&destination).execute(&mut *tx).await?;
+            self.attribute_dni_call(
+                &mut tx,
+                id,
+                number.get("id"),
+                matches!(event.kind, CallEventKind::Voice),
+            )
+            .await?;
             (id, destination)
         };
         let receipt=sqlx::query("INSERT INTO webhook_receipts(workspace_id,fingerprint) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(self.workspace).bind(&event.fingerprint).execute(&mut *tx).await?;

@@ -51,8 +51,7 @@ their private `.env`. Hosted operators supply it to the engine environment.
 The adapter currently uses Twilio's default US1 REST API. It accepts +1 phone
 number syntax; it does not establish country eligibility, destination dialing
 permissions, or trial-account restrictions. Destination ownership is not checked.
-Twilio charges still apply. Recording, SMS, number purchasing, dynamic number
-pools, and automated provider configuration are outside this milestone.
+Twilio charges still apply. Recording, SMS, number purchasing, and automated provider configuration remain outside this milestone. Dedicated number pools are documented in [DNI setup](DYNAMIC_NUMBERS.md).
 
 Account verification uses a read-only account request. Number lookup uses the
 read-only incoming-number API. Provider response bodies and tokens are never
@@ -115,3 +114,5 @@ URL are supplied. It is compiled only in tests and stops with Ctrl-C.
 References: [Twilio request validation](https://www.twilio.com/docs/usage/security),
 [Twilio account authentication](https://www.twilio.com/docs/usage/requests-to-twilio),
 [incoming number API](https://www.twilio.com/docs/phone-numbers/api/incomingphonenumber-resource).
+
+Dedicated website pools are available through [dynamic number insertion](DYNAMIC_NUMBERS.md). Pool numbers must all forward to the same business destination.

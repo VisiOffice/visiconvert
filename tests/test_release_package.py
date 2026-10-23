@@ -53,6 +53,9 @@ class ReleasePackageTest(unittest.TestCase):
             self.assertIn('visiconvert/docs/WEBSITE_TRACKING.md', names)
             self.assertIn('visiconvert/crates/convert-store/migrations/0006_inquiry_grouping.sql', names)
             self.assertIn('visiconvert/docs/INQUIRY_GROUPING.md', names)
+            self.assertIn('visiconvert/docs/DYNAMIC_NUMBERS.md', names)
+            self.assertIn('visiconvert/crates/convert-store/migrations/0007_dynamic_numbers.sql', names)
+            self.assertIn('visiconvert/web/tests/verify-dni.mjs', names)
             self.assertIn('visiconvert/web/tests/verify-grouping.mjs', names)
             self.assertIn('visiconvert/web/tests/verify-sites.mjs', names)
             for member in archive.getmembers():

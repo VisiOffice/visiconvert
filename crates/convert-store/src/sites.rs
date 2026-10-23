@@ -41,6 +41,17 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         let id = if let Some(id) = id {
+            let old_origin: String = sqlx::query_scalar(
+                "SELECT origin FROM sites WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+            )
+            .bind(self.workspace)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Error::Conflict)?;
+            if !input.enabled || old_origin != input.origin {
+                sqlx::query("UPDATE dni_assignments SET revoked_at=clock_timestamp() WHERE site_id=$1 AND revoked_at IS NULL").bind(id).execute(&mut *tx).await?;
+            }
             let n = sqlx::query("UPDATE sites SET name=$3,origin=$4,allowed_fields=$5,enabled=$6,version=version+1 WHERE workspace_id=$1 AND id=$2 AND version=$7")
                 .bind(self.workspace).bind(id).bind(&input.name).bind(&input.origin).bind(&input.allowed_fields).bind(input.enabled).bind(input.version).execute(&mut *tx).await?;
             if n.rows_affected() != 1 {
@@ -96,7 +107,7 @@ impl Store {
         }
         rate_limit(&mut tx, site).await?;
         // Unconverted sessions expire from storage after 30 days. Bound each cleanup batch.
-        sqlx::query("DELETE FROM website_sessions WHERE (site_id,id) IN (SELECT s.site_id,s.id FROM website_sessions s WHERE s.site_id=$1 AND s.created_at < now()-interval '30 days' AND NOT EXISTS(SELECT 1 FROM website_submissions f WHERE f.site_id=s.site_id AND f.session_id=s.id) LIMIT 100)")
+        sqlx::query("DELETE FROM website_sessions WHERE (site_id,id) IN (SELECT s.site_id,s.id FROM website_sessions s WHERE s.site_id=$1 AND s.created_at < now()-interval '30 days' AND NOT EXISTS(SELECT 1 FROM website_submissions f WHERE f.site_id=s.site_id AND f.session_id=s.id) AND NOT EXISTS(SELECT 1 FROM dni_assignments a WHERE a.site_id=s.site_id AND a.session_id=s.id) LIMIT 100)")
             .bind(site).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO website_sessions(site_id,id,evidence) VALUES($1,$2,$3)")
             .bind(site)
@@ -178,7 +189,7 @@ impl Store {
             .bind(self.workspace).bind(lead).fetch_optional(&self.pool).await?)
     }
 }
-async fn collection_site(
+pub(crate) async fn collection_site(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     site: Uuid,
     origin: &str,
@@ -190,7 +201,10 @@ async fn collection_site(
         .await?
         .ok_or(Error::NotFound)
 }
-async fn rate_limit(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, site: Uuid) -> Result<()> {
+pub(crate) async fn rate_limit(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    site: Uuid,
+) -> Result<()> {
     let row = sqlx::query("UPDATE sites SET rate_count=CASE WHEN rate_started_at < now()-interval '1 minute' THEN 1 ELSE rate_count+1 END,rate_started_at=CASE WHEN rate_started_at < now()-interval '1 minute' THEN now() ELSE rate_started_at END WHERE id=$1 AND (rate_count<120 OR rate_started_at<now()-interval '1 minute')")
         .bind(site).execute(&mut **tx).await?;
     if row.rows_affected() == 0 {

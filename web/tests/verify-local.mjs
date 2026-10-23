@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { verifyGrouping } from "./verify-grouping.mjs";
+import { verifyDni } from "./verify-dni.mjs";
 import { verifySites } from "./verify-sites.mjs";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -231,6 +232,7 @@ try {
     await command("cargo", ["test", "-p", "convert-store", "--test", "inquiry_upgrade", "--", "--ignored", "--test-threads=1"]);
     await command("cargo", ["test", "-p", "convert-server", "inquiry_tests::", "--", "--ignored", "--test-threads=1"]);
   });
+  await check("DNI allocation: concurrency, cooldown, reuse, callback evidence, and isolation", () => command("cargo", ["test", "-p", "convert-store", "--test", "dni", "--", "--ignored", "--test-threads=1"]));
   await check("Apply application migrations twice", async () => {
     await command(path.join(root, "target/debug/convert-server"), ["migrate"]);
     await command(path.join(root, "target/debug/convert-server"), ["migrate"]);
@@ -467,6 +469,7 @@ try {
     END $$;`,
       ]),
   );
+  await check("DNI browser flow: pool setup, safe swapping, exhaustion, failures, expiry, and consent", () => verifyDni({ browser, page, origin, api, artifactDir }));
   await check("Website browser flow: setup, consent, successful form, diagnostics, evidence, and pause", () => verifySites({ browser, page, origin, api, artifactDir }));
   assert.deepEqual(errors, [], "No uncaught browser errors after website capture");
   await check("Inquiry browser flow: combine, review, history, separate, and revenue", () => verifyGrouping({ page, api, artifactDir }));

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — dynamic number insertion
+
+- Shared hosted/self-hosted website pools with atomic session assignments, 30-minute windows and a 30-minute reuse delay.
+- Consent-gated, explicitly marked phone/link swapping with safe fallback, expiry, and dynamic page support.
+- Owner pool settings and assignment diagnostics; immutable call evidence marks timing matches as inferred and out-of-order/unmatched calls as unknown.
+- Additive migration 0007, browser/database regression checks, and self-host installation instructions.
+
+
 ## Unreleased — inquiry grouping
 
 - Explicitly combine repeat calls/forms into one inquiry in both hosted and self-hosted workspaces.

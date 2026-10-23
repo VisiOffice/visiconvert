@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 const source = readFileSync(new URL('../../crates/convert-server/assets/tracker.js', import.meta.url), 'utf8');
-function fixture({ blockedStorage = false, failForm = false } = {}) {
+function fixture({ blockedStorage = false, failForm = false, jsonGate = null } = {}) {
   const requests = [], saved = new Map();
   const window = { dispatchEvent() {} };
   const ctx = vm.createContext({ window, document: { currentScript: { src: 'https://engine.example/tracker.js', dataset: { site: 'site-123' } }, referrer: 'https://search.example/private?secret=value' }, location: { href: 'https://business.example/quote?utm_source=google&gclid=abc&password=secret#fragment' }, URL, URLSearchParams, crypto: webcrypto, AbortController, CustomEvent: class {}, Date, sessionStorage: {
@@ -13,7 +13,7 @@ function fixture({ blockedStorage = false, failForm = false } = {}) {
     const body = options.body ? JSON.parse(options.body) : null;
     requests.push({ url, options, body });
     if (failForm && url.endsWith('/forms')) { failForm = false; throw Error('network failed'); }
-    return { ok: true, json: async () => url.endsWith('/config') ? { allowed_fields: ['name','email'] } : { accepted: true } };
+    return { ok: true, json: async () => { if (jsonGate) await jsonGate; return url.endsWith('/config') ? { allowed_fields: ['name','email'] } : { accepted: true }; } };
   } });
   vm.runInContext(source,ctx);
   return { api: window.VisiConvert, requests, saved };
@@ -50,4 +50,17 @@ test('invalid submission ID never creates a form request',async () => {
   const {api,requests} = fixture(); await api.setConsent(true);
   await assert.rejects(api.trackForm({submissionId:'contains spaces'}),/stable submission ID/);
   assert.equal(requests.length,1);
+});
+
+test('consent withdrawal while a response body is pending cannot complete capture', async () => {
+  let release;
+  const jsonGate = new Promise(resolve => { release = resolve; });
+  const {api, requests, saved} = fixture({jsonGate});
+  const pending = api.setConsent(true);
+  await Promise.resolve();
+  assert.equal(requests.length,1);
+  await api.setConsent(false);
+  release();
+  await assert.rejects(pending,/consent/);
+  assert.equal(saved.size,0);
 });
