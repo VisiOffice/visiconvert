@@ -9,16 +9,19 @@ import io
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ['Cargo.toml', 'Cargo.lock', 'Dockerfile', '.dockerignore', '.gitignore',
+FILES = ['crates/convert-server/assets/openapi.json', 'scripts/generate-openapi.py', 'docs/PUBLIC_API.md', 'web/tests/verify-api-keys.mjs', 'Cargo.toml', 'Cargo.lock', 'Dockerfile', '.dockerignore', '.gitignore',
          '.github/workflows/self-host.yml',
          'CONTRIBUTING.md', 'CHANGELOG.md', 'docs/PUBLIC_README.md',
-         'compose.yaml', 'docs/SELF_HOSTING.md', 'docs/HOSTED_PROTOCOL.md', 'docs/TWILIO_CONNECTIONS.md', 'scripts/self-host.sh', 'scripts/self_host.py',
+         'compose.yaml', 'docs/SELF_HOSTING.md', 'docs/HOSTED_PROTOCOL.md', 'docs/TWILIO_CONNECTIONS.md', 'docs/WEBSITE_TRACKING.md', 'docs/INQUIRY_GROUPING.md', 'docs/DYNAMIC_NUMBERS.md', 'docs/CONVERSIONS.md', 'web/tests/verify-conversions.mjs', 'web/tests/verify-dni.mjs', 'web/tests/verify-grouping.mjs', 'web/tests/tracker.test.mjs', 'web/tests/verify-sites.mjs', 'scripts/self-host.sh', 'scripts/self_host.py',
          'scripts/verify-self-host.py', 'scripts/package-self-host.py', 'scripts/sync-brand.py',
          'tests/test_self_host.py', 'tests/test_release_package.py',
          'web/package.json', 'web/pnpm-lock.yaml', 'web/tsconfig.json', 'web/vite.config.ts',
-         'web/index.html', 'web/tests/verify-local.mjs']
-TREES = {'crates': {'.rs', '.toml', '.sql'}, 'web/src': {'.tsx', '.ts', '.css'},
-         'assets/brand': {'.svg', '.md', '.txt'}, 'web/public': {'.svg', '.txt'}}
+         'web/index.html', 'web/tests/verify-local.mjs',
+         'docs-site/package.json', 'docs-site/package-lock.json', 'docs-site/astro.config.mjs',
+         'docs-site/wrangler.jsonc', 'docs-site/.gitignore', 'docs-site/scripts/reference.mjs']
+TREES = {'crates': {'.rs', '.toml', '.sql', '.js'}, 'web/src': {'.tsx', '.ts', '.css'},
+         'assets/brand': {'.svg', '.md', '.txt'}, 'web/public': {'.svg', '.txt'},
+         'docs-site/src': {'.md', '.mdx', '.css', '.svg', '.ts'}, 'docs-site/public': {'.svg'}}
 
 
 def files():

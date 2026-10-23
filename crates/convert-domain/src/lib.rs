@@ -144,6 +144,8 @@ pub struct TrackingNumber {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Lead {
     pub id: Uuid,
+    #[serde(default)]
+    pub inquiry_id: Option<Uuid>,
     pub name: String,
     pub contact: String,
     pub channel: String,

@@ -371,6 +371,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "convert-domain",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "convert-domain"
 version = "0.1.0"
 dependencies = [
@@ -389,6 +407,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "chrono",
  "clap",
  "convert-adapters",
  "convert-domain",
@@ -396,6 +415,7 @@ dependencies = [
  "dotenvy",
  "hmac 0.12.1",
  "http-body-util",
+ "reqwest",
  "serde",
  "serde_json",
  "sha1 0.10.7",
@@ -418,7 +438,9 @@ dependencies = [
  "anyhow",
  "chrono",
  "convert-domain",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "thiserror",
  "tokio",
@@ -519,9 +541,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03bb0e1cc970d482d121d9a1744999169b69a07470b3d644a7894e53fcaf4574"
+checksum = "12218662ccac37d9714f2191252553d67585b97df8c839cbe49e0bde278dc865"
 dependencies = [
  "cmov",
 ]

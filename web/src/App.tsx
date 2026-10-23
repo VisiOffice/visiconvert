@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { InquiryGrouping } from "./InquiryGrouping";
+import { ApiKeys } from "./ApiKeys";
+import { Conversions } from "./Conversions";
+import { Sites } from "./Sites";
 import { TwilioConnection } from "./TwilioConnection";
 import {
   ArrowDownLeft,
@@ -23,7 +27,7 @@ import {
   client,
   money,
   label,
-  type Lead,
+  type Inquiry as Lead,
   type TrackingNumber,
   type Summary,
   type Bootstrap,
@@ -36,12 +40,15 @@ import initWasm, {
   preview_attribution,
 } from "./generated/attribution/convert_wasm";
 
-type Page = "Overview" | "Lead inbox" | "Tracking numbers" | "Connections";
+type Page = "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys";
 const pages = [
   { name: "Overview" as Page, icon: BarChart3 },
   { name: "Lead inbox" as Page, icon: Users },
   { name: "Tracking numbers" as Page, icon: Phone },
+  { name: "Sites" as Page, icon: Layers3 },
   { name: "Connections" as Page, icon: Link2 },
+  { name: "Conversions" as Page, icon: Check },
+  { name: "API keys" as Page, icon: ShieldCheck },
 ];
 export default function App() {
   const [key, setKey] = useState("");
@@ -85,7 +92,7 @@ export default function App() {
   async function refresh(request = api) {
     const [b, l, n, s, c] = await Promise.all([
       request<Bootstrap>("/bootstrap"),
-      request<Lead[]>("/leads"),
+      request<Lead[]>("/inquiries"),
       request<TrackingNumber[]>("/numbers"),
       request<Summary[]>("/summary"),
       request<Connection>("/connections/twilio"),
@@ -125,7 +132,7 @@ export default function App() {
   const filtered = leads.filter(
     (l) =>
       (filter === "all" || l.qualification === filter) &&
-      `${l.name} ${l.contact} ${l.source} ${l.campaign}`
+      l.search_text
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
@@ -286,10 +293,13 @@ export default function App() {
                     ? "Review inquiries, qualify opportunities, and record bookings."
                     : page === "Tracking numbers"
                       ? "Give each campaign a number. Keep your existing phone system."
-                      : "Start with your numbers and the tools you already use."}
+                      : page === "Sites"
+                        ? "Connect website visits and successful forms to their source."
+                        : page === "Conversions" ? "Review qualified inquiries and bookings for Google Ads."
+                        : "Start with your numbers and the tools you already use."}
               </p>
             </div>
-            <button
+            {page !== "Sites" && page !== "Conversions" && page !== "API keys" && <button
               className="primary"
               disabled={boot?.hosted && !connection?.connected && page === "Tracking numbers"}
               onClick={() =>
@@ -300,7 +310,7 @@ export default function App() {
               {page === "Tracking numbers"
                 ? "Add tracking number"
                 : "Add form lead"}
-            </button>
+            </button>}
           </div>
           {page === "Tracking numbers" && !connection?.connected && <p className="notice">Connect your Twilio account in Connections to receive calls. {boot?.hosted ? "Connect before registering a tracking number." : "Offline number registrations do not route calls."}</p>}
           {error && (
@@ -328,7 +338,7 @@ export default function App() {
                   {
                     title: "Total inquiries",
                     value: totals.leads,
-                    sub: "Calls and submitted forms",
+                    sub: "Grouped calls and submitted forms",
                     icon: ArrowDownLeft,
                   },
                   {
@@ -367,8 +377,8 @@ export default function App() {
                   <div>
                     <h2>Where your leads come from</h2>
                     <p>
-                      Compare source volume with qualified leads and booked
-                      revenue.
+                      Each inquiry counts once, using its chosen reporting source.
+                      Individual interaction sources remain available in its timeline.
                     </p>
                   </div>
                   <span className="chip">All sources</span>
@@ -547,6 +557,9 @@ export default function App() {
               </p>
             </>
           )}
+          {page === "Sites" && <Sites api={api} />}
+          {page === "Conversions" && <Conversions api={api} />}
+          {page === "API keys" && <ApiKeys api={api} />}
           {page === "Connections" && connection && <Connections api={api} connection={connection} refresh={refresh} />}
           <footer>
             VisiConvert <span>Make the connection.</span>
@@ -574,6 +587,11 @@ export default function App() {
           lead={selected}
           api={api}
           refresh={refresh}
+          changed={async (id) => {
+            await refresh();
+            const detail = await api<{ inquiry: Lead }>(`/inquiries/${id}`);
+            setSelected(detail.inquiry);
+          }}
           close={() => setSelected(null)}
         />
       )}{" "}
@@ -647,7 +665,7 @@ function LeadTable({
                   <span>
                     <strong>{l.name}</strong>
                     <small>
-                      {l.contact} {l.is_demo && <em>DEMO</em>}
+                      {l.contact} · {l.interaction_count} {l.interaction_count === 1 ? "interaction" : "interactions"} {l.is_demo && <em>DEMO</em>}
                     </small>
                   </span>
                 </button>
@@ -692,11 +710,13 @@ function LeadDetail({
   api,
   refresh,
   close,
+  changed,
 }: {
   lead: Lead;
   api: Client;
   refresh: () => Promise<void>;
   close: () => void;
+  changed: (id: string) => Promise<void>;
 }) {
   const [qualification, setQualification] = useState(lead.qualification),
     [notes, setNotes] = useState(lead.notes),
@@ -705,13 +725,17 @@ function LeadDetail({
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
     [outcomes, setOutcomes] = useState<Outcome[]>([]);
+  const dirty = notes !== lead.notes || qualification !== lead.qualification;
+  useEffect(() => { setQualification(lead.qualification); setNotes(lead.notes); setEditVersion(lead.version); }, [lead.id, lead.version, lead.notes, lead.qualification]);
   const [booking, setBooking] = useState(""),
     [amount, setAmount] = useState("");
   useEffect(() => {
-    api<Outcome[]>(`/leads/${lead.id}/outcomes`)
-      .then(setOutcomes)
-      .catch((e) => setError(e.message));
-  }, [api, lead.id]);
+    let active = true;
+    api<Outcome[]>(`/inquiries/${lead.id}/outcomes`)
+      .then(value => { if (active) setOutcomes(value); })
+      .catch((e) => { if (active) setError(e.message); });
+    return () => { active = false; };
+  }, [api, lead.id, lead.version]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
@@ -726,7 +750,6 @@ function LeadDetail({
     try {
       await action();
       await refresh();
-      setOutcomes(await api<Outcome[]>(`/leads/${lead.id}/outcomes`));
       setNotice("Saved");
     } catch (e) {
       setError((e as Error).message);
@@ -770,28 +793,16 @@ function LeadDetail({
             <strong>{money(lead.booked_minor)}</strong>
           </div>
         </div>
-        {lead.channel === "call" && (
-          <div className="call-note">
-            <strong>{label(lead.call_status || "unknown")}</strong>
-            <p>
-              {lead.tracking_number} → {lead.destination}
-            </p>
-            <small>
-              A destination answer can be an IVR or voicemail. It does not
-              confirm a human answered.
-            </small>
-          </div>
-        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();
             void run(async () => {
               await api(
-                `/leads/${lead.id}`,
+                `/inquiries/${lead.id}`,
                 { version: editVersion, qualification, notes },
                 "PATCH",
               );
-              setEditVersion((value) => value + 1);
+
             });
           }}
         >
@@ -823,6 +834,8 @@ function LeadDetail({
             Save lead
           </button>
         </form>
+        {dirty && <p className="notice">Save your review changes before grouping interactions or editing bookings.</p>}
+        <InquiryGrouping inquiry={lead} api={api} disabled={busy || dirty} changed={changed} />
         <hr />
         <h3>Bookings</h3>
         <p className="small muted">
@@ -839,12 +852,12 @@ function LeadDetail({
             </div>
             {o.status === "booked" && (
               <button
-                disabled={busy}
+                disabled={busy || dirty}
                 className="text-button"
                 onClick={() =>
                   void run(async () => {
                     await api(
-                      `/leads/${lead.id}/outcomes`,
+                      `/inquiries/${lead.id}/outcomes`,
                       { ...o, status: "canceled", revision: o.revision + 1 },
                       "PUT",
                     );
@@ -865,7 +878,7 @@ function LeadDetail({
                 Number(parts[0]) * 100 +
                 Number((parts[1] || "").padEnd(2, "0"));
               await api(
-                `/leads/${lead.id}/outcomes`,
+                `/inquiries/${lead.id}/outcomes`,
                 {
                   external_id: booking,
                   amount_minor: minor,
@@ -903,7 +916,7 @@ function LeadDetail({
               />
             </label>
           </div>
-          <button className="secondary" disabled={busy}>
+          <button className="secondary" disabled={busy || dirty}>
             <Plus size={15} /> Record booking
           </button>
         </form>
@@ -1094,8 +1107,8 @@ function Connections({ api, connection, refresh }: { api: Client; connection: Co
         <span className="eyebrow">COMING AFTER THE PILOT</span>
         <h3>More context, fewer gaps.</h3>
         <p>
-          Session number pools, website form capture, Google conversion
-          delivery, and VisiComms connections are planned next.
+          Website capture is available in Sites. Session number pools, Google
+          conversion delivery, and VisiComms connections are planned next.
         </p>
       </section>
     </div>
