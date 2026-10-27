@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub mod attribution;
+
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct ValidationError(pub &'static str);

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — website source classification
+
+- Shared source classification for hosted and self-hosted website forms and DNI calls: explicit UTMs, Google/Microsoft/Facebook click signals, and bounded referrer matching.
+- Preserve raw campaign evidence and highlight conflicts; multiple click providers without an explicit source remain unknown.
+- Immutable historical attribution and upgrade-safe session retries; no schema migration or conversion uploads.
+
 ## Unreleased — Google connection and destination checks
 
 - Shared owner/operator OAuth flow with PKCE, browser-bound single-use state, encrypted refresh tokens and reconnect/disconnect controls.

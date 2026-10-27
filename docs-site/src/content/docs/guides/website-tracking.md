@@ -48,7 +48,11 @@ Do not send passwords, payment details or free-text messages.
 
 - Landing page path (without query string), UTM tags, and `gclid`, `gbraid`, `wbraid`, `msclkid` or `fbclid` if present.
 - The referring site's origin only.
-- The lead's source is `utm_source` if present, otherwise the referring site, otherwise **Direct / unknown**.
+- Explicit `utm_source` takes priority. Without it, Google or Microsoft click IDs supply a source; `fbclid` identifies Facebook without assuming paid traffic.
+- Conflicting click IDs stay **Unknown / conflicting click IDs**. Conflicting UTMs and click IDs are highlighted in the lead’s evidence, with the original inputs preserved.
+- Otherwise recognized search/social referrers supply a source; other referring sites retain their origin. Missing evidence stays **Direct / unknown**.
+
+These are browser-reported hints, not proof of an ad click. The same classification applies to website forms and DNI calls. Existing leads keep their original source. Dedicated campaign numbers and the UTM-only URL preview are unchanged.
 
 A visit is a 30-minute session in one browser tab. There is no cross-device or multi-touch attribution.
 
@@ -60,4 +64,4 @@ Submit a real form on your site, then refresh **Sites**: it shows sessions and f
 
 Each site accepts up to 120 new sessions and forms per minute. Browser-reported forms can be spam, so qualify them in the inbox like any other lead.
 
-Full technical reference: [WEBSITE_TRACKING.md](https://github.com/VisiOffice/visiconvert/blob/6b76432bc1fde9686266cd5ec03449235d2a9685/docs/WEBSITE_TRACKING.md).
+Full technical reference: [WEBSITE_TRACKING.md](https://github.com/VisiOffice/visiconvert/blob/main/docs/WEBSITE_TRACKING.md).

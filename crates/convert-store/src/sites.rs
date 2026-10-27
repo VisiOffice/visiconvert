@@ -99,7 +99,9 @@ impl Store {
                 .fetch_optional(&mut *tx)
                 .await?;
         if let Some(previous) = previous {
-            return if previous == *evidence {
+            // Reclassification after an upgrade must not change a saved visit or
+            // reject an identical browser retry. Compare the supplied inputs.
+            return if session_inputs(&previous) == session_inputs(evidence) {
                 Ok(())
             } else {
                 Err(Error::Conflict)
@@ -189,6 +191,23 @@ impl Store {
             .bind(self.workspace).bind(lead).fetch_optional(&self.pool).await?)
     }
 }
+fn session_inputs(evidence: &Value) -> Value {
+    let mut inputs = evidence.clone();
+    if let Some(fields) = inputs.as_object_mut() {
+        for derived in [
+            "source",
+            "source_model",
+            "medium",
+            "source_basis",
+            "click_sources",
+            "source_warning",
+        ] {
+            fields.remove(derived);
+        }
+    }
+    inputs
+}
+
 pub(crate) async fn collection_site(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     site: Uuid,

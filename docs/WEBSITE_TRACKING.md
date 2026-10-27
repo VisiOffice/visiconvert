@@ -44,7 +44,19 @@ Captured evidence:
 - Referrer origin only, without path/query/fragment.
 - Reported consent `granted`, attribution model `session-entry-v1`, and confidence `browser-reported`.
 
-Lead source uses explicit `utm_source`, otherwise an external referrer origin, otherwise **Direct / unknown**. Missing evidence is not reconstructed. Click IDs do not imply verified ad delivery. The lead drawer shows the immutable source evidence and captured fields. Existing manual forms and call leads keep their current behavior.
+New sessions use `source-classification-v1` for source reporting:
+
+- Explicit, nonblank `utm_source` wins; surrounding whitespace is trimmed for reporting, while the original UTM remains in evidence. A supplied `utm_medium` is retained; no medium is invented for an explicit source.
+- Without a UTM source, Google `gclid`/`gbraid`/`wbraid` imply `google_ads` and `cpc`; `msclkid` implies `microsoft_ads` and `cpc`. `fbclid` alone implies `facebook`, with an unknown medium rather than an assumption of paid traffic.
+- Different click-ID providers on one visit produce **Unknown / conflicting click IDs** unless a UTM source was declared. Conflicting UTMs and click signals are retained and flagged, not silently overwritten. Duplicate campaign parameters with different values are rejected; identical repeats are accepted.
+- Otherwise an external referrer is classified using exact domains or their subdomains. Supported search hosts are google.com, google.co.uk, google.ca, google.com.au, google.de, google.fr, bing.com, duckduckgo.com and search.yahoo.com. Supported social hosts are facebook.com, instagram.com, linkedin.com, twitter.com, x.com, t.co, youtube.com and pinterest.com. Unknown hosts remain their origin with medium `referral`; lookalike domains do not match. Same-origin, invalid and credential-bearing referrers provide no signal.
+- Without usable evidence the source remains **Direct / unknown**, not proven direct traffic.
+
+The evidence includes the classifier version, selected source/medium, decision basis, click-provider names and any conflict warning alongside the original allowed parameters. These are browser-reported hints, not verified clicks, ad delivery, or caller identity. Forms and DNI calls share the session classification; manually assigned number sources are unchanged. Existing sessions/leads are never reclassified, including an identical collection retry after an upgrade. No migration is needed.
+
+The lead drawer shows immutable source evidence and highlights conflicts. The WASM URL tool remains a UTM-only preview; it does not simulate session classification.
+
+Provider references: [Google auto-tagging](https://support.google.com/google-ads/answer/3095550) and [Microsoft click IDs](https://learn.microsoft.com/en-us/advertising/guides/uet-conversion-api-integration).
 
 Sites shows received session/form counts and last-received timestamps. Refresh diagnostics after completing a real successful form. If no session arrives, check enabled status, exact origin, consent, CSP, blockers, and the browser network panel. Pausing a site rejects new collection immediately without deleting historical leads. Editing fields/origin affects future accepted requests; it does not erase previous evidence.
 

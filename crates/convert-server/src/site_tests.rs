@@ -264,6 +264,67 @@ async fn website_capture_isolated_atomic_and_consent_gated() {
         evidence["evidence"]["landing_url"],
         format!("{website}/quote")
     );
+    assert_eq!(
+        evidence["evidence"]["source_model"],
+        "source-classification-v1"
+    );
+    assert_eq!(evidence["evidence"]["source_basis"], "utm");
+    assert_eq!(evidence["evidence"]["click_sources"], "google");
+    assert_eq!(evidence["evidence"]["medium"], "cpc");
+    // A pre-upgrade snapshot must survive an identical retry unchanged.
+    let mut legacy = evidence["evidence"].clone();
+    for key in [
+        "source_model",
+        "source_basis",
+        "click_sources",
+        "medium",
+        "source_warning",
+    ] {
+        legacy.as_object_mut().unwrap().remove(key);
+    }
+    sqlx::query("UPDATE website_sessions SET evidence=$1 WHERE site_id=$2 AND id=$3")
+        .bind(&legacy)
+        .bind(site.parse::<Uuid>().unwrap())
+        .bind(session_id)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            app.clone(),
+            "POST",
+            &format!("{prefix}/sessions"),
+            "",
+            website,
+            visit.clone()
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let persisted: Value =
+        sqlx::query_scalar("SELECT evidence FROM website_sessions WHERE site_id=$1 AND id=$2")
+            .bind(site.parse::<Uuid>().unwrap())
+            .bind(session_id)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert_eq!(persisted, legacy);
+    let mut changed_visit = visit.clone();
+    changed_visit["landing_url"] = json!(format!("{website}/quote?utm_source=newsletter"));
+    assert_eq!(
+        call(
+            app.clone(),
+            "POST",
+            &format!("{prefix}/sessions"),
+            "",
+            website,
+            changed_visit
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
     assert!(!evidence.to_string().contains("excluded"));
     assert!(!evidence.to_string().contains("must-not-store"));
     assert_eq!(
