@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — remote MCP authorization
+
+- Hosted remote MCP over Streamable HTTP with VisiConvert sign-in, workspace selection, explicit scope approval, rotating tokens, and Connected agents revocation.
+- Share MCP schemas and handlers between stdio and HTTP; scope writes and preserve workspace isolation and billing/password-reset checks.
+- Requires a paired Rails/engine/gateway rollout; local stdio and API keys remain available.
+
 ## Unreleased — agent onboarding and setup API
 
 - Setup screen with manual links, a temporary scoped-key preset, local MCP configuration and a guided prompt; shared by hosted and self-hosted workspaces.

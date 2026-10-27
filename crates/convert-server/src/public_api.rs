@@ -77,6 +77,20 @@ pub async fn hosted_access(
     user: Uuid,
     version: i64,
 ) -> Result<(), ApiError> {
+    hosted_access_with_mcp(app, workspace, user, version, None).await
+}
+pub async fn hosted_access_with_mcp(
+    app: &App,
+    workspace: Uuid,
+    user: Uuid,
+    version: i64,
+    mcp: Option<(Uuid, &[String])>,
+) -> Result<(), ApiError> {
+    let mut body = json!({"workspace_id":workspace,"user_id":user,"credential_version":version});
+    if let Some((grant, scopes)) = mcp {
+        body["mcp_grant_id"] = json!(grant);
+        body["mcp_scopes"] = json!(scopes);
+    }
     let config = app.cloud.as_ref().ok_or(ApiError(
         StatusCode::SERVICE_UNAVAILABLE,
         "Hosted access checks unavailable".into(),
@@ -95,7 +109,7 @@ pub async fn hosted_access(
     let response = client
         .post(format!("{}/internal/api-access", config.cloud_origin))
         .bearer_auth(&config.service_key)
-        .json(&json!({"workspace_id":workspace,"user_id":user,"credential_version":version}))
+        .json(&body)
         .send()
         .await
         .map_err(|_| {
@@ -149,10 +163,18 @@ async fn auth(State(app): State<Shared>, mut request: Request, next: Next) -> Re
         )
         .into_response();
     }
-    if !token.starts_with("vc_key_") {
+    if !token.starts_with("vc_key_") && !token.starts_with("vc_mcp_") {
         return authenticate(State(app), request, next).await;
     }
-    let key = match app.store.authenticate_api_key(&token).await {
+    let key_result = if token.starts_with("vc_mcp_") {
+        match super::remote_mcp::authenticate(&app, &token).await {
+            Ok(key) => Ok(Some(key)),
+            Err(e) => return e.into_response(),
+        }
+    } else {
+        app.store.authenticate_api_key(&token).await
+    };
+    let key = match key_result {
         Ok(Some(key)) => key,
         Ok(None) => {
             return ApiError(
@@ -258,9 +280,7 @@ async fn bookings(
     Ok(Json(access.store.public_bookings(&page).await?))
 }
 fn actor(key: Option<Extension<KeyAccess>>) -> String {
-    key.map_or("authenticated public API".into(), |k| {
-        format!("API key {}", k.id)
-    })
+    key.map_or("authenticated public API".into(), |k| k.actor.clone())
 }
 async fn review_interaction(
     Extension(access): Extension<hosted::Access>,

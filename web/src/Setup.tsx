@@ -14,7 +14,7 @@ Install the public tracker using each site's ID, wire it to the site's actual co
 
 Verify a real campaign visit, successful form where applicable, and a call that rings the business line. Report observed evidence and remaining work per site and number. Do not create fake leads to complete the checklist or claim that Google Ads delivery is enabled. Suggest revoking this setup key when finished.`;
 
-export function Setup({ api, onNavigate, onKey }: { api: Client; onNavigate: (page: "Sites" | "Connections" | "Tracking numbers" | "Lead inbox" | "API keys") => void; onKey: () => void }) {
+export function Setup({ api, onNavigate, onKey, hosted = false }: { hosted?: boolean; api: Client; onNavigate: (page: "Sites" | "Connections" | "Tracking numbers" | "Lead inbox" | "API keys") => void; onKey: () => void }) {
   const [data, setData] = useState<Data | null>(null);
   const [providers, setProviders] = useState<[Provider, Provider] | null>(null);
   const [error, setError] = useState("");
@@ -50,6 +50,17 @@ export function Setup({ api, onNavigate, onKey }: { api: Client; onNavigate: (pa
     <section className="card site-panel" aria-label="Connect your agent">
       <span className="eyebrow">A GUIDED START</span><h2>Connect your agent</h2>
       <p>Let your agent help configure this workspace through MCP. You can also use the manual setup links below.</p>
+      {hosted && <div>
+        <ol className="setup-instructions"><li>Add a custom connector in your agent with this URL:</li></ol>
+        <input className="site-code" aria-label="Remote MCP URL" readOnly value={`${window.location.origin}/mcp`} />
+        <button className="secondary" onClick={() => void copy(`${window.location.origin}/mcp`)}>Copy remote MCP URL</button>
+        <p>For Claude, choose “Register automatically” if asked how to identify the OAuth client. Sign in to VisiConvert, choose this workspace, and approve only the permissions you need. No CLI or API key is required.</p>
+        <p>Start with read access. For an agent to configure websites, request <code>read setup:write</code> in the connector’s OAuth scopes. Add other write permissions only when needed.</p>
+        <p><a href="/connected-agents">Manage connected agents</a></p>
+        <textarea className="site-code" aria-label="Remote agent setup prompt" readOnly rows={8} value={prompt.replace("Suggest revoking this setup key when finished.", "Suggest revoking this connection in Connected agents when finished.")} />
+        <button className="primary" onClick={() => void copy(prompt.replace("Suggest revoking this setup key when finished.", "Suggest revoking this connection in Connected agents when finished."))}>Copy remote setup prompt</button>
+      </div>}
+      <details open={!hosted}><summary>Local CLI and API key setup</summary>
       <ol className="setup-instructions">
         <li><strong>Create a temporary setup key.</strong> Read and website/DNI setup permissions are selected. Add number registration only if needed. <button className="secondary" onClick={onKey}>Prepare setup key</button></li>
         <li><strong>Sign in privately on your agent’s machine.</strong> <a href="https://docs.visiconvert.com/cli/overview/" target="_blank" rel="noreferrer">Install the VisiConvert CLI</a>, then choose an absolute config file path unique to this workspace. The CLI prompts for your key and saves it locally; do not paste it into agent chat.
@@ -67,7 +78,7 @@ export function Setup({ api, onNavigate, onKey }: { api: Client; onNavigate: (pa
           <button className="primary" onClick={() => void copy(prompt)}>Copy setup prompt</button>
         </li>
       </ol>
-      <p className="muted">When finished, revoke the setup key in API keys or replace it with read-only access.</p>
+      <p className="muted">When finished, revoke the setup key in API keys or replace it with read-only access.</p></details>
     </section>
     <section className="card site-panel" aria-label="Setup checklist">
       <div className="section-heading"><h2>Setup checklist</h2><button className="secondary" disabled={busy} onClick={() => void refresh()}>Refresh setup status</button></div>
