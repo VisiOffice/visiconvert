@@ -132,6 +132,7 @@ async fn fixture() -> (Shared, Arc<Provider>, tokio::task::JoinHandle<()>) {
         }),
         vault: Some(secrets::Vault::from_hex(&"a".repeat(64)).unwrap()),
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: Some(google::Config {
             client_id: "test.apps.googleusercontent.com".into(),
             client_secret: "test-secret-not-for-production".into(),

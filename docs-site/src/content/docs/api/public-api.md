@@ -28,12 +28,12 @@ Permissions:
 
 | Scope | Operations |
 |---|---|
-| `read` | Workspace, inquiries, interactions, bookings, source reports, numbers, Twilio status/inventory |
+| `read` | Workspace, inquiries, interactions, bookings, source reports, numbers, Twilio and SignalWire status/inventory |
 | `leads:write` | Create form interactions; update shared inquiry qualification/notes |
 | `bookings:write` | Record, revise, cancel bookings |
-| `numbers:write` | Register an existing voice number in the connected Twilio account |
+| `numbers:write` | Register an existing voice number in the connected Twilio or SignalWire account |
 
-Keys cannot manage keys, billing, Twilio credentials, sites, DNI, inquiry grouping,
+Keys cannot manage keys, billing, provider credentials, sites, DNI, inquiry grouping,
 or conversion preparation. Use the workspace UI for those operations. Read-only
 keys remain read-only even if an MCP client enables change tools.
 
@@ -96,7 +96,7 @@ require a fresh scan from the first page.
 
 Interaction/inquiry filters: `since` (RFC3339 timestamp), `source` (case-insensitive
 exact match), `qualification` (unreviewed/qualified/unqualified/spam). Bookings
-accept only `limit` and `cursor`. Numbers and source reports return arrays. Twilio
+accept only `limit` and `cursor`. Numbers and source reports return arrays. Provider
 inventory returns one provider page with `has_more`; it is not a complete export.
 
 Each scoped key permits 120 requests per one-minute window. A 429 includes
@@ -150,3 +150,5 @@ key audit history, but not plaintext integration secrets. Protect backups: resto
 an older database can restore keys revoked after that backup; revoke affected keys
 before exposing a restored installation. Keep integration secrets in a separate
 secret manager. Existing operator/bootstrap access is unchanged.
+
+For SignalWire, read `/api/v1/connections/signalwire` and `/api/v1/connections/signalwire/numbers`. Include `"provider":"signalwire"` when registering a number; omission defaults to Twilio. Configure credentials in the [workspace UI](/start/connect-signalwire/).

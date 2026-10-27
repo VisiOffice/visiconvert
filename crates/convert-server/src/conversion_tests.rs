@@ -77,6 +77,7 @@ async fn conversion_routes_require_workspace_authentication() {
         }),
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
     });

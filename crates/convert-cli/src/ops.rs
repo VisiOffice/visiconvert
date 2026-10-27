@@ -15,6 +15,7 @@ pub struct Status {
     pub healthy: bool,
     pub workspace: Value,
     pub twilio: Value,
+    pub signalwire: Value,
     pub tracking_numbers: usize,
     pub next_steps: Vec<String>,
 }
@@ -29,6 +30,11 @@ pub async fn status(client: &Client) -> Result<Status> {
         }
         Err(error) => return Err(error.into()),
     };
+    let signalwire = match client.provider_connection(PhoneProvider::Signalwire).await {
+        Ok(value) => value,
+        Err(crate::client::Error::Forbidden(message)) => json!({"visible":false,"message":message}),
+        Err(error) => return Err(error.into()),
+    };
     let tracking = client
         .numbers()
         .await?
@@ -36,11 +42,11 @@ pub async fn status(client: &Client) -> Result<Status> {
         .filter(|n| !n.is_demo)
         .count();
     let mut next_steps = Vec::new();
-    if twilio["connected"] == false {
+    if twilio["connected"] == false && signalwire["connected"] == false {
         if let Some(message) = twilio["setup_message"].as_str() {
             next_steps.push(message.to_owned());
         } else {
-            next_steps.push(if client.public_key() { "Connect Twilio in the workspace UI. Scoped API keys cannot change provider credentials.".into() } else { "Connect Twilio: visiconvert connect twilio --account-sid AC… --token-stdin".into() });
+            next_steps.push(if client.public_key() { "Connect Twilio or SignalWire in the workspace UI. Scoped API keys cannot change provider credentials.".into() } else { "Connect Twilio: visiconvert connect twilio --account-sid AC… --token-stdin".into() });
         }
     } else if tracking == 0 {
         next_steps.push(
@@ -53,6 +59,7 @@ pub async fn status(client: &Client) -> Result<Status> {
         healthy,
         workspace,
         twilio,
+        signalwire,
         tracking_numbers: tracking,
         next_steps,
     })
@@ -72,7 +79,10 @@ pub async fn connect_twilio(client: &Client, account_sid: &str, auth_token: &str
 
 /// Numbers in the connected Twilio account that are not tracked yet.
 pub async fn available_numbers(client: &Client) -> Result<Value> {
-    let inventory = client.twilio_numbers().await?;
+    available_numbers_for(client, PhoneProvider::Twilio).await
+}
+pub async fn available_numbers_for(client: &Client, provider: PhoneProvider) -> Result<Value> {
+    let inventory = client.provider_numbers(provider).await?;
     let tracked: Vec<String> = client
         .numbers()
         .await?
@@ -88,6 +98,7 @@ pub async fn available_numbers(client: &Client) -> Result<Value> {
 }
 
 pub struct AddNumber {
+    pub provider: PhoneProvider,
     pub phone_number: String,
     pub forward_to: String,
     pub source: String,
@@ -97,6 +108,7 @@ pub struct AddNumber {
 
 pub async fn add_number(client: &Client, input: AddNumber) -> Result<Value> {
     let number = NewNumber {
+        provider: input.provider,
         label: input.label.unwrap_or_else(|| input.campaign.clone()),
         phone_number: normalize_phone(&input.phone_number)?,
         destination: normalize_phone(&input.forward_to)?,
@@ -105,22 +117,33 @@ pub async fn add_number(client: &Client, input: AddNumber) -> Result<Value> {
     };
     number.validate().map_err(|e| anyhow!(e.0))?;
     client.add_number(&number).await?;
-    let connection = client.connection().await.unwrap_or(Value::Null);
+    let connection = client
+        .provider_connection(input.provider)
+        .await
+        .unwrap_or(Value::Null);
     let voice_url = connection["voice_url"].as_str().unwrap_or("").to_owned();
     let status_url = connection["status_url"].as_str().unwrap_or("").to_owned();
-    let mut twilio_step = String::from(
-        "In the Twilio console, open this number and set \"A call comes in\" to the voice URL (HTTP POST) and \"Call status changes\" to the status URL.",
-    );
-    if voice_url.is_empty() {
-        twilio_step = "Run `visiconvert status` as the workspace owner to see the webhook URLs to set in Twilio.".into();
-    }
+    let provider_name = match input.provider {
+        PhoneProvider::Twilio => "Twilio",
+        PhoneProvider::Signalwire => "SignalWire",
+    };
+    let manual_step = if voice_url.is_empty() {
+        format!(
+            "Run `visiconvert status` as the workspace owner to see the webhook URLs to set in {provider_name}."
+        )
+    } else {
+        format!(
+            "In the {provider_name} console, configure incoming voice and call status webhooks as HTTP POST using the URLs below. For SignalWire select cXML handling. Preserve the old routing and test a call before moving production traffic."
+        )
+    };
     Ok(json!({
         "tracking_number": number.phone_number,
         "forwards_to": number.destination,
         "source": number.source,
         "campaign": number.campaign,
         "label": number.label,
-        "manual_step": twilio_step,
+        "provider": input.provider,
+        "manual_step": manual_step,
         "voice_url": voice_url,
         "status_url": status_url,
     }))

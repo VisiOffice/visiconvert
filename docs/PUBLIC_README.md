@@ -34,9 +34,9 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 - [Prepare Google Ads conversions](docs/CONVERSIONS.md) from qualified inquiries and bookings, with consent evidence and reviewed local staging. Google delivery is not connected yet.
 
-- Connect Twilio per workspace with encrypted credentials and verified number ownership
+- Connect Twilio or SignalWire per workspace with encrypted credentials and verified number ownership
   in both self-hosted and hosted modes. See [connection setup](docs/TWILIO_CONNECTIONS.md).
-- Register existing customer-owned Twilio campaign numbers and configure
+- Register existing customer-owned Twilio or SignalWire campaign numbers and configure
   forwarding destinations. Signed callbacks, deduplication, and call status
   handling are implemented; live carrier/fallback verification is outstanding.
 - [Group repeat calls and forms into inquiries](docs/INQUIRY_GROUPING.md), with shared reviews, source evidence, booking totals, and separation/history controls.
@@ -57,7 +57,7 @@ Self-hosted administration uses one operator key per workspace; integrations can
 separate scoped API keys. Local individual accounts,
 roles, native form-platform connectors,
 Google conversion delivery, recordings, and SMS are not yet implemented.
-Hosted billing is maintained in the separate Rails service. The application does not buy numbers or configure Twilio for you.
+Hosted billing is maintained in the separate Rails service. The application does not buy numbers or configure carrier routing for you.
 Booking totals represent recorded business outcomes, not settled payments.
 
 An optional [hosted account protocol](docs/HOSTED_PROTOCOL.md) supports separate
@@ -90,3 +90,5 @@ Manrope, whose font license is included in `assets/brand/FONT-LICENSE.txt`.
 ## Dynamic number insertion
 
 Hosted and self-hosted workspaces can assign dedicated tracking numbers to consenting website sessions, with fallback, cooldown, and explicit inferred call-source evidence. See [setup and limits](docs/DYNAMIC_NUMBERS.md).
+
+SignalWire setup: [connect an existing project and test a call](docs/SIGNALWIRE_CONNECTIONS.md).

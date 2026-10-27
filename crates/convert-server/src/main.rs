@@ -6,6 +6,7 @@ mod hosted;
 mod inquiries;
 mod public_api;
 mod secrets;
+mod signalwire;
 mod sites;
 use axum::{
     Extension, Json, Router,
@@ -46,6 +47,7 @@ struct App {
     cloud: Option<hosted::Config>,
     vault: Option<secrets::Vault>,
     twilio_client: convert_adapters::twilio_api::Client,
+    signalwire_client: convert_adapters::signalwire_api::Client,
     google: Option<google::Config>,
     google_client: convert_adapters::google_api::Client,
 }
@@ -137,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
         cloud,
         vault,
         twilio_client: convert_adapters::twilio_api::Client::new()?,
+        signalwire_client: convert_adapters::signalwire_api::Client::new()?,
         google,
         google_client: convert_adapters::google_api::Client::new()?,
     });
@@ -182,6 +185,7 @@ fn router(app: Shared) -> Router {
     }
     let api = Router::new()
         .merge(connections::routes())
+        .merge(signalwire::routes())
         .merge(sites::private_routes())
         .merge(inquiries::routes())
         .merge(conversions::routes())
@@ -208,6 +212,7 @@ fn router(app: Shared) -> Router {
         .route("/runtime.json", get(|State(app): State<Shared>| async move {
             Json(json!({"hosted_app_origin": app.cloud.as_ref().and_then(|config| config.app_origin.as_deref())}))
         }))
+        .route("/webhooks/signalwire/workspaces/{workspace}/{endpoint}", post(signalwire::webhook))
         .route("/webhooks/twilio/voice", post(voice))
         .route("/webhooks/twilio/dial-complete", post(dial_complete))
         .route("/webhooks/twilio/status", post(status))
@@ -436,6 +441,32 @@ async fn process_webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    process_provider_webhook(
+        store,
+        public_url,
+        prefix,
+        account,
+        token,
+        endpoint,
+        headers,
+        body,
+        PhoneProvider::Twilio,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_provider_webhook(
+    store: &Store,
+    public_url: &str,
+    prefix: &str,
+    account: &str,
+    token: &str,
+    endpoint: &str,
+    headers: HeaderMap,
+    body: Bytes,
+    provider: PhoneProvider,
+) -> Result<Response, ApiError> {
     let denied = || ApiError(StatusCode::FORBIDDEN, "Invalid webhook".into());
     let malformed = || ApiError(StatusCode::BAD_REQUEST, "Invalid call payload".into());
     if headers
@@ -457,8 +488,10 @@ async fn process_webhook(
     if field("AccountSid") != account {
         return Err(denied());
     }
-    if !twilio::valid_sid(field("CallSid"), "CA")
-        || us_number(field("To")).is_err()
+    if !(match provider {
+        PhoneProvider::Twilio => twilio::valid_sid(field("CallSid"), "CA"),
+        PhoneProvider::Signalwire => convert_adapters::signalwire_api::valid_id(field("CallSid")),
+    }) || us_number(field("To")).is_err()
         || field("From").is_empty()
         || field("From").len() > 200
     {
@@ -520,13 +553,16 @@ async fn process_webhook(
         }
     };
     let destination = store
-        .call_event(&CallEvent {
-            sid: field("CallSid").into(),
-            to: field("To").into(),
-            from: field("From").into(),
-            fingerprint: twilio::fingerprint(&path, &fields),
-            kind,
-        })
+        .call_event_for(
+            &CallEvent {
+                sid: field("CallSid").into(),
+                to: field("To").into(),
+                from: field("From").into(),
+                fingerprint: twilio::fingerprint(&path, &fields),
+                kind,
+            },
+            provider,
+        )
         .await?;
     let xml = if endpoint == "voice" {
         twilio::forward(&destination, &format!("{public_url}{prefix}/dial-complete"))
@@ -561,6 +597,7 @@ mod tests {
             cloud: None,
             vault: None,
             twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+            signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
             google: None,
             google_client: convert_adapters::google_api::Client::new().unwrap(),
             public_url: "https://convert.example.com".into(),
@@ -706,3 +743,6 @@ mod conversion_tests;
 mod google_tests;
 #[cfg(test)]
 mod public_api_tests;
+
+#[cfg(test)]
+mod signalwire_tests;

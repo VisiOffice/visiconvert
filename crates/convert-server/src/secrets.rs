@@ -34,6 +34,32 @@ impl Vault {
             token,
         )
     }
+    pub fn seal_signalwire(
+        &self,
+        workspace: Uuid,
+        space: &str,
+        project: Uuid,
+        purpose: &str,
+        value: &str,
+    ) -> Result<String, ()> {
+        self.seal_context(
+            &format!("visiconvert:signalwire:v1:{workspace}:{space}:{project}:{purpose}"),
+            value,
+        )
+    }
+    pub fn open_signalwire(
+        &self,
+        workspace: Uuid,
+        space: &str,
+        project: Uuid,
+        purpose: &str,
+        value: &str,
+    ) -> Result<String, ()> {
+        self.open_context(
+            &format!("visiconvert:signalwire:v1:{workspace}:{space}:{project}:{purpose}"),
+            value,
+        )
+    }
     fn seal_context(&self, context: &str, token: &str) -> Result<String, ()> {
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let encrypted = self

@@ -18,6 +18,7 @@ export type Lead = {
 };
 export type Inquiry = Lead & { primary_lead_id: string; interaction_count: number; search_text: string };
 export type TrackingNumber = {
+  provider: "twilio" | "signalwire";
   id: string;
   label: string;
   phone_number: string;
@@ -95,3 +96,9 @@ export const money = (amount: number) =>
     maximumFractionDigits: 2,
   }).format(amount / 100);
 export const label = (s: string) => s.replaceAll("_", " ").replaceAll("-", " ");
+
+export type SignalWireConnection = {
+  connected: boolean; space_host: string | null; project_id: string | null;
+  revision: number; last_webhook_at: string | null; setup_available: boolean;
+  setup_message: string | null; can_disconnect: boolean; voice_url: string; status_url: string;
+};

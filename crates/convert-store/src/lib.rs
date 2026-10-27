@@ -6,6 +6,7 @@ pub mod google;
 pub mod hosted;
 pub mod inquiries;
 pub mod public_api;
+pub mod signalwire;
 pub mod sites;
 use convert_domain::*;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
@@ -58,6 +59,11 @@ impl Store {
         Ok(rows
             .iter()
             .map(|r| TrackingNumber {
+                provider: if r.get::<String, _>("provider") == "signalwire" {
+                    PhoneProvider::Signalwire
+                } else {
+                    PhoneProvider::Twilio
+                },
                 id: r.get("id"),
                 label: r.get("label"),
                 phone_number: r.get("phone_number"),
@@ -82,12 +88,18 @@ impl Store {
             .bind(self.workspace)
             .fetch_one(&mut *tx)
             .await?;
-        let current: Option<i64> =
-            sqlx::query_scalar("SELECT revision FROM twilio_connections WHERE workspace_id=$1")
-                .bind(self.workspace)
-                .fetch_optional(&mut *tx)
-                .await?;
-        if current != revision {
+        let current: Option<i64> = sqlx::query_scalar(match n.provider {
+            PhoneProvider::Twilio => {
+                "SELECT revision FROM twilio_connections WHERE workspace_id=$1"
+            }
+            PhoneProvider::Signalwire => {
+                "SELECT revision FROM signalwire_connections WHERE workspace_id=$1"
+            }
+        })
+        .bind(self.workspace)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if current != revision || (n.provider == PhoneProvider::Signalwire && revision.is_none()) {
             return Err(Error::Conflict);
         }
         // Serialize registrations across workspaces: a destination must never be a tracked number.
@@ -98,8 +110,8 @@ impl Store {
         if conflict {
             return Err(Error::Conflict);
         }
-        sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign) VALUES($1,$2,$3,$4,$5,$6,$7)")
-            .bind(Uuid::new_v4()).bind(self.workspace).bind(n.label.trim()).bind(&n.phone_number).bind(&n.destination).bind(n.source.trim()).bind(n.campaign.trim()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign,provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+            .bind(Uuid::new_v4()).bind(self.workspace).bind(n.label.trim()).bind(&n.phone_number).bind(&n.destination).bind(n.source.trim()).bind(n.campaign.trim()).bind(n.provider.as_str()).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -282,17 +294,34 @@ impl Store {
     }
 
     pub async fn call_event(&self, event: &CallEvent) -> Result<String> {
+        self.call_event_for(event, PhoneProvider::Twilio).await
+    }
+    pub async fn call_event_for(
+        &self,
+        event: &CallEvent,
+        provider: PhoneProvider,
+    ) -> Result<String> {
+        let sid = match provider {
+            PhoneProvider::Twilio => event.sid.clone(),
+            PhoneProvider::Signalwire => format!("signalwire:{}", event.sid),
+        };
         let mut tx = self.pool.begin().await?;
-        lock(&mut tx, &format!("{}:call:{}", self.workspace, event.sid)).await?;
-        let existing=sqlx::query("SELECT id,destination FROM leads WHERE workspace_id=$1 AND channel='call' AND external_id=$2").bind(self.workspace).bind(&event.sid).fetch_optional(&mut *tx).await?;
+        lock(&mut tx, &format!("{}:call:{}", self.workspace, sid)).await?;
+        let existing=sqlx::query("SELECT id,destination,tracking_number,contact,provider FROM leads WHERE workspace_id=$1 AND channel='call' AND external_id=$2").bind(self.workspace).bind(&sid).fetch_optional(&mut *tx).await?;
         let (id, destination) = if let Some(r) = existing {
+            if r.get::<String, _>("tracking_number") != event.to
+                || r.get::<String, _>("contact") != event.from
+                || r.get::<Option<String>, _>("provider").as_deref() != Some(provider.as_str())
+            {
+                return Err(Error::Conflict);
+            }
             (r.get::<Uuid, _>("id"), r.get::<String, _>("destination"))
         } else {
-            let number=sqlx::query("SELECT * FROM tracking_numbers WHERE workspace_id=$1 AND phone_number=$2 AND NOT is_demo").bind(self.workspace).bind(&event.to).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+            let number=sqlx::query("SELECT * FROM tracking_numbers WHERE workspace_id=$1 AND phone_number=$2 AND provider=$3 AND NOT is_demo").bind(self.workspace).bind(&event.to).bind(provider.as_str()).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
             let id = Uuid::new_v4();
             let destination: String = number.get("destination");
-            sqlx::query("INSERT INTO leads(id,workspace_id,external_id,name,contact,channel,source,campaign,tracking_number,destination,call_status) VALUES($1,$2,$3,'Phone inquiry',$4,'call',$5,$6,$7,$8,'ringing')")
-                .bind(id).bind(self.workspace).bind(&event.sid).bind(&event.from).bind(number.get::<String,_>("source")).bind(number.get::<String,_>("campaign")).bind(&event.to).bind(&destination).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO leads(id,workspace_id,external_id,name,contact,channel,source,campaign,tracking_number,destination,call_status,provider) VALUES($1,$2,$3,'Phone inquiry',$4,'call',$5,$6,$7,$8,'ringing',$9)")
+                .bind(id).bind(self.workspace).bind(&sid).bind(&event.from).bind(number.get::<String,_>("source")).bind(number.get::<String,_>("campaign")).bind(&event.to).bind(&destination).bind(provider.as_str()).execute(&mut *tx).await?;
             self.attribute_dni_call(
                 &mut tx,
                 id,

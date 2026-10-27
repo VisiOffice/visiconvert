@@ -24,6 +24,11 @@ pub fn routes(app: Shared) -> Router<Shared> {
         .route("/bookings", get(bookings))
         .route("/reports/sources", get(summary))
         .route("/numbers", get(numbers).post(register_number))
+        .route("/connections/signalwire", get(signalwire::show))
+        .route(
+            "/connections/signalwire/numbers",
+            get(signalwire::inventory),
+        )
         .route("/connections/twilio", get(connections::show))
         .route("/connections/twilio/numbers", get(connections::inventory))
         .route_layer(middleware::from_fn_with_state(app, auth))

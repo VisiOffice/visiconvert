@@ -331,6 +331,7 @@ async fn inferred_calls_require_opt_in_and_consent_at_event_time() {
         .await
         .unwrap();
     let number = NewNumber {
+        provider: Default::default(),
         label: "Ads call".into(),
         phone_number: "+12025550178".into(),
         destination: "+12025550179".into(),

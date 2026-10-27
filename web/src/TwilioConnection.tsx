@@ -61,7 +61,7 @@ export function TwilioConnection({ api, connection, refresh }: {
         </ol>
         <p>Incoming voice webhook</p><code className="code-block">{connection.voice_url}</code>
         <p>Call status callback</p><code className="code-block">{connection.status_url}</code>
-        <p className="small muted">Connecting verifies account access; it does not change Twilio routing or prove that a call will connect. Recording is off. SMS, number purchases, and number pools are not enabled.</p>
+        <p className="small muted">Connecting verifies account access; it does not change Twilio routing or prove that a call will connect. Recording is off. SMS and number purchases are not enabled. Configure DNI number pools in Sites.</p>
         {connection.can_disconnect && <button className="text-button" disabled={busy} onClick={async () => {
           setBusy(true); setError(""); setNotice("");
           try { await api("/connections/twilio", { revision: connection.revision }, "DELETE"); await refresh(); setNotice("Disconnected. Saved credentials were removed."); }

@@ -78,6 +78,8 @@ async fn mock() -> (Client, Shared) {
         ));
     }
     let app = Router::new()
+        .route("/api/connections/signalwire", get(|| async { Json(json!({"connected":true,"voice_url":"https://convert.test/webhooks/signalwire/workspaces/w/voice","status_url":"https://convert.test/webhooks/signalwire/workspaces/w/status"})) }))
+        .route("/api/connections/signalwire/numbers", get(|| async { Json(json!({"has_more":false,"numbers":[{"sid":"fixture-id","phone_number":"+12025550311","friendly_name":"SignalWire fixture"}]})) }))
         .route("/health", get(|| async { Json(json!({"status": "ok"})) }))
         .route(
             "/api/bootstrap",
@@ -139,6 +141,7 @@ async fn add_number(
         return Err(fail(StatusCode::CONFLICT, "Already tracked"));
     }
     d.numbers.push(TrackingNumber {
+        provider: n.provider,
         id: Uuid::new_v4(),
         label: n.label,
         phone_number: n.phone_number,
@@ -328,6 +331,7 @@ async fn adding_numbers_reports_the_manual_twilio_step() {
     let added = ops::add_number(
         &client,
         ops::AddNumber {
+            provider: Default::default(),
             phone_number: "(512) 555-0142".into(),
             forward_to: "512.555.0100".into(),
             source: "Google Ads".into(),
@@ -498,4 +502,47 @@ fn client_enforces_secure_origins_for_all_credentials() {
     ] {
         assert!(Client::new(url, "test-key").is_ok(), "{url}");
     }
+}
+
+#[tokio::test]
+async fn signalwire_cli_and_mcp_select_provider_and_report_callbacks() {
+    let (client, data) = mock().await;
+    let status = ops::status(&client).await.unwrap();
+    assert_eq!(status.signalwire["connected"], true);
+    let reader = mcp::Server::new(Ok(client.clone()), false);
+    let listed = reader
+        .handle(rpc(
+            1,
+            "tools/call",
+            json!({"name":"list_signalwire_numbers","arguments":{}}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(listed["result"]["isError"], false);
+    assert!(listed.to_string().contains("+12025550311"));
+    let writer = mcp::Server::new(Ok(client), true);
+    let args = json!({"provider":"signalwire","phone_number":"+12025550311","forward_to":"+12025550398","source":"Yard signs","campaign":"Pilot"});
+    let blocked = reader
+        .handle(rpc(
+            2,
+            "tools/call",
+            json!({"name":"add_tracking_number","arguments":args}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(blocked["result"]["isError"], true);
+    let added = writer
+        .handle(rpc(
+            3,
+            "tools/call",
+            json!({"name":"add_tracking_number","arguments":args}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(added["result"]["isError"], false, "{added}");
+    assert!(added.to_string().contains("/signalwire/workspaces/w/voice"));
+    assert_eq!(
+        data.lock().unwrap().numbers[0].provider,
+        PhoneProvider::Signalwire
+    );
 }

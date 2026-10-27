@@ -43,7 +43,7 @@ impl Store {
             .as_ref()
             .is_some_and(|r| r.get::<String, _>("account_sid") != account)
         {
-            let used: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND NOT is_demo)")
+            let used: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND NOT is_demo AND provider='twilio')")
                 .bind(self.workspace).fetch_one(&mut *tx).await?;
             if used {
                 return Err(Error::Conflict);
@@ -64,7 +64,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         let used: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND NOT is_demo)",
+            "SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND NOT is_demo AND provider='twilio')",
         )
         .bind(self.workspace)
         .fetch_one(&mut *tx)

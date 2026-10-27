@@ -6,7 +6,7 @@ use http_body_util::BodyExt;
 use sha1::Sha1;
 use tower::ServiceExt;
 
-async fn api(
+pub(super) async fn api(
     app: Shared,
     method: &str,
     path: &str,
@@ -89,7 +89,7 @@ async fn mock_twilio(OriginalUri(uri): OriginalUri, headers: HeaderMap) -> Respo
     }
 }
 
-async fn bearer(store: &Store, workspace: Uuid) -> String {
+pub(super) async fn bearer(store: &Store, workspace: Uuid) -> String {
     let user = Uuid::new_v4();
     store
         .provision_hosted(workspace, user, "Connection test")
@@ -201,6 +201,7 @@ async fn shared_connections_verify_credentials_ownership_and_isolate_callbacks()
         }),
         vault: Some(secrets::Vault::from_hex(&"e".repeat(64)).unwrap()),
         twilio_client: convert_adapters::twilio_api::Client::for_test(mock_origin),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
@@ -637,6 +638,7 @@ async fn manual_browser_fixture() {
         }),
         vault: Some(secrets::Vault::from_hex(&"e".repeat(64)).unwrap()),
         twilio_client: convert_adapters::twilio_api::Client::for_test(origin),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
     });

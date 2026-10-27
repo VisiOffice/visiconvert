@@ -24,6 +24,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     let site = store.save_site(None, &site_input).await.unwrap();
     let second_site = store.save_site(None, &site_input).await.unwrap();
     let num = NewNumber {
+        provider: Default::default(),
         label: "DNI".into(),
         phone_number: "+12025550180".into(),
         destination: "+12025550181".into(),

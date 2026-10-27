@@ -77,6 +77,7 @@ async fn attribution_isolation_idempotency_and_ordering() {
     store.put_outcome(id, &outcome).await.unwrap();
     assert_eq!(store.summary().await.unwrap()[0].booked_minor, 0);
     let number = NewNumber {
+        provider: Default::default(),
         label: "Search".into(),
         phone_number: "+12025550101".into(),
         destination: "+12025550102".into(),
@@ -85,6 +86,7 @@ async fn attribution_isolation_idempotency_and_ordering() {
     };
     store.add_number(&number).await.unwrap();
     let loop_number = NewNumber {
+        provider: Default::default(),
         phone_number: number.destination.clone(),
         destination: "+12025550103".into(),
         ..number.clone()

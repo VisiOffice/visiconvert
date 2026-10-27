@@ -45,6 +45,7 @@ async fn cloud_handoff_enforces_membership_browser_binding_expiry_and_single_use
         twilio_token: None,
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         cloud: Some(hosted::Config {
@@ -474,6 +475,7 @@ async fn credential_revocation_is_monotonic_isolated_and_serializes_exchange_and
         twilio_token: None,
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         cloud: Some(hosted::Config {
@@ -625,6 +627,7 @@ async fn unified_handoff_requires_app_origin_cookie_owner_and_single_use() {
         twilio_token: None,
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         cloud: Some(hosted::Config {
