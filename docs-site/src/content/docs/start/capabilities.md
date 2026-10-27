@@ -3,7 +3,7 @@ title: What each tool can do
 description: Which tasks work in the web app, the CLI, the MCP server and the public API.
 ---
 
-The web app does everything. The command line, MCP server and public API cover the day-to-day work an integration or agent needs. Setup that changes how calls or websites are tracked stays in the web app on purpose.
+The web app provides guided setup and daily lead management. MCP and the public API can also configure websites and DNI with explicit setup permission. Provider credentials and key administration stay in the web app. The setup tools below require engine migration 0012 and a matching CLI.
 
 | Task | Web app | CLI | MCP | API v1 |
 |---|:-:|:-:|:-:|:-:|
@@ -19,8 +19,9 @@ The web app does everything. The command line, MCP server and public API cover t
 | Record, revise or cancel a booking | ✓ | ✓ | ✓ | ✓ |
 | Source report | ✓ | ✓ | ✓ | ✓ |
 | Combine or separate inquiries | ✓ | — | — | — |
-| Set up website tracking (Sites) | ✓ | — | — | — |
-| Set up dynamic number insertion | ✓ | — | — | — |
+| Configure website tracking (Sites) | ✓ | — | ✓ | ✓ |
+| Configure dynamic number insertion | ✓ | — | ✓ | ✓ |
+| Inspect setup activity per site and number | ✓ | ✓ | ✓ | ✓ |
 | Connect Google and validate destination actions | ✓ | — | — | — |
 | Prepare Google Ads conversions | ✓ | — | — | — |
 | Create, rotate or revoke API keys | ✓ | — | — | — |

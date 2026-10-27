@@ -6,6 +6,7 @@ pub mod google;
 pub mod hosted;
 pub mod inquiries;
 pub mod public_api;
+pub mod setup;
 pub mod signalwire;
 pub mod sites;
 use convert_domain::*;

@@ -194,6 +194,7 @@ hr {
   font-weight: 500;
 }
 .sidebar {
+  overflow-y: auto;
   position: fixed;
   inset: 0 auto 0 0;
   width: 232px;
@@ -1202,3 +1203,17 @@ footer button {
 .google-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; }
 .google-callback { overflow-wrap: anywhere; }
 .google-connection select { max-width: 100%; }
+
+/* Keep every navigation action reachable in short desktop windows. */
+.sidebar > * { flex-shrink: 0; }
+.setup-welcome { padding: 28px; margin-bottom: 24px; }
+.setup-welcome h2 { margin: 8px 0; }
+.setup-welcome p { color: #62705e; max-width: 65ch; }
+.setup-evidence { display: grid; gap: 12px; margin-top: 18px; }
+.setup-evidence article { border: 1px solid #e3e8df; border-radius: 8px; padding: 16px; min-width: 0; overflow-wrap: anywhere; }
+.setup-evidence h3 { margin-top: 0; }
+.setup-evidence ul { padding-left: 20px; line-height: 1.8; }
+.setup-instructions { padding-left: 22px; }
+.setup-instructions > li { padding: 8px 0; }
+.setup-instructions .site-code { width: 100%; }
+.setup-actions { display: flex; gap: 10px; flex-wrap: wrap; }

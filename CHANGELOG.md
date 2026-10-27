@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — agent onboarding and setup API
+
+- Setup screen with manual links, a temporary scoped-key preset, local MCP configuration and a guided prompt; shared by hosted and self-hosted workspaces.
+- Public setup evidence, website and DNI endpoints; explicit `setup:write` permission with additive migration 0012. Existing keys retain their scopes.
+- MCP site/pool tools preserve version checks and keep provider credentials and carrier routing outside the agent tools. CLI `setup` reports observed activity.
+- Per-site and per-number historical evidence distinguishes configuration from received visits, forms and calls; no automatic completion or conversion uploads.
+- Make sidebar navigation and workspace locking reachable in short desktop windows.
+
 ## Unreleased — SignalWire
 
 - Connect existing SignalWire projects using encrypted API tokens and separate webhook signing keys.

@@ -126,6 +126,35 @@ impl Client {
         format!("{}{path}", self.base)
     }
 
+    pub async fn setup(&self) -> Result<Value, Error> {
+        self.send(self.http.get(self.url("/api/setup"))).await
+    }
+    pub async fn sites(&self) -> Result<Value, Error> {
+        self.send(self.http.get(self.url("/api/sites"))).await
+    }
+    pub async fn save_site(&self, id: Option<Uuid>, input: &Value) -> Result<Value, Error> {
+        let request = match id {
+            Some(id) => self.http.patch(self.url(&format!("/api/sites/{id}"))),
+            None => self.http.post(self.url("/api/sites")),
+        };
+        self.send(request.json(input)).await
+    }
+    pub async fn site_pool(&self, id: Uuid) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .get(self.url(&format!("/api/sites/{id}/number-pool"))),
+        )
+        .await
+    }
+    pub async fn save_site_pool(&self, id: Uuid, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .put(self.url(&format!("/api/sites/{id}/number-pool")))
+                .json(input),
+        )
+        .await
+    }
+
     pub async fn health(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/health"))).await
     }

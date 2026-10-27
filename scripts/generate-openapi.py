@@ -32,6 +32,12 @@ provider=string(enum=['twilio','signalwire'],default='twilio')
 schemas['NumberInput']['properties']['provider']=provider
 schemas['Number']['properties']['provider']=provider
 schemas['SignalWireStatus']=obj({'connected':{'type':'boolean'},'space_host':{'type':['string','null']},'project_id':{'type':['string','null'],'format':'uuid'},'revision':integer(),'last_webhook_at':nullable_date,'setup_available':{'type':'boolean'},'setup_message':{'type':['string','null']},'can_disconnect':{'type':'boolean'},'voice_url':string(),'status_url':string()},['connected','revision','voice_url','status_url'])
+schemas['SiteInput']=obj({'name':string(minLength=1,maxLength=100),'origin':string(description='Exact HTTPS origin without path, query, fragment or wildcard; HTTP only for localhost.'),'allowed_fields':array(string(enum=['name','email','phone','company'])),'enabled':{'type':'boolean'},'version':integer(minimum=0,description='0 for creation; current list_sites version for updates. Stale updates return 409.')},['name','origin','allowed_fields','enabled','version'])
+schemas['Site']={'type':'object','description':'Website settings and historical session_count, form_count, last_session_at and last_form_at. Browser-reported activity is not proof of authenticity.','properties':{**schemas['SiteInput']['properties'],'id':uuid,'session_count':integer(),'form_count':integer(),'last_session_at':nullable_date,'last_form_at':nullable_date}}
+schemas['Sites']=obj({'sites':array(ref('Site')),'tracker_url':string()},['sites','tracker_url'])
+schemas['PoolInput']=obj({'fallback_phone':string(description='US E.164 business destination shared by every pool number; never a registered tracking number.'),'enabled':{'type':'boolean'},'version':integer(minimum=0,description='0 for absent pool; current pool version for updates.'),'number_ids':{'type':'array','items':uuid,'maxItems':50,'uniqueItems':True},'dedicated_numbers':{'type':'boolean','description':'Explicit acknowledgement required to enable a pool.'}},['fallback_phone','enabled','version','number_ids','dedicated_numbers'])
+schemas['Pool']={'type':'object','description':'Pool configuration (null if absent), available numbers and last 50 assignments. Use pool.version for updates; removed numbers revoke assignments.','required':['pool','numbers','history','lease_minutes','reuse_delay_minutes'],'properties':{'pool':{'type':['object','null']},'numbers':array({'type':'object'}),'history':array({'type':'object'}),'lease_minutes':integer(),'reuse_delay_minutes':integer()}}
+schemas['Setup']={'type':'object','description':'Historical setup evidence, not a live health guarantee. Sites include pool configuration and last assignment; numbers include call_count and last_call_at. No contact fields or provider credentials. get_status/connection endpoints separately report provider readiness.','required':['workspace_id','tracker_url','sites','numbers','google_uploads_enabled','evidence_note'],'properties':{'workspace_id':uuid,'tracker_url':string(),'sites':array({'type':'object'}),'numbers':array({'type':'object'}),'google_uploads_enabled':{'type':'boolean'},'evidence_note':string()}}
 for name in ['Interaction','Booking']:
  schemas[name+'Page']=obj({'data':array(ref(name)),'next_cursor':{'type':['string','null']}},['data','next_cursor'])
 def content(schema):return {'application/json':{'schema':schema}}
@@ -49,6 +55,12 @@ def route(path,method,summary,response,scope='read',body=None,paged=False,filter
  if body:op['requestBody']={'required':True,'content':content(ref(body))}
  paths.setdefault(path,{})[method]=op
 route('/workspace','get','Workspace and key permissions',ref('Workspace'))
+route('/setup','get','Per-site and per-number setup evidence',ref('Setup'))
+route('/sites','get','List sites, versions and public tracker URL',ref('Sites'))
+route('/sites','post','Create a site; not retry-safe: list sites after an uncertain response before retrying',ref('Created'),'setup:write','SiteInput')
+route('/sites/{id}','patch','Replace website settings at the current version; pausing or changing origin revokes assignments',ref('Created'),'setup:write','SiteInput')
+route('/sites/{id}/number-pool','get','DNI pool settings, registered numbers and recent assignments',ref('Pool'))
+route('/sites/{id}/number-pool','put','Replace DNI pool at current version; removing numbers revokes assignments',obj({'saved':{'type':'boolean'}},['saved']),'setup:write','PoolInput')
 for base in ['/interactions','/leads']:
  route(base,'get','List individual calls and form interactions',ref('InteractionPage'),paged=True,filters=True)
  route(base,'post','Create a form interaction; identical external_id and payload retries reuse the record',ref('Created'),'leads:write','NewInteraction')

@@ -6,6 +6,13 @@ use std::time::Duration;
 pub fn routes(app: Shared) -> Router<Shared> {
     Router::new()
         .route("/workspace", get(workspace))
+        .route("/setup", get(sites::setup))
+        .route("/sites", get(sites::list).post(sites::save_new))
+        .route("/sites/{id}", axum::routing::patch(sites::save_existing))
+        .route(
+            "/sites/{id}/number-pool",
+            get(sites::pool).put(sites::save_pool),
+        )
         .route("/leads", get(interactions).post(add_lead))
         .route("/leads/{id}", get(interaction).patch(review_interaction))
         .route("/leads/{id}/outcomes", get(outcomes).put(booking))
@@ -174,6 +181,8 @@ async fn auth(State(app): State<Shared>, mut request: Request, next: Next) -> Re
         || request.method() == axum::http::Method::HEAD
     {
         "read"
+    } else if path == "/api/v1/sites" || path.starts_with("/api/v1/sites/") {
+        "setup:write"
     } else if path.ends_with("/outcomes") {
         "bookings:write"
     } else if path.ends_with("/numbers") {

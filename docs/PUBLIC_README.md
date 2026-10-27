@@ -32,6 +32,8 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 ## What works
 
+- Start from a workspace setup checklist or connect an agent through local MCP. Configure sites/DNI with scoped keys and inspect real tracker, form and call evidence.
+
 - [Prepare Google Ads conversions](docs/CONVERSIONS.md) from qualified inquiries and bookings, with consent evidence and reviewed local staging. Google delivery is not connected yet.
 
 - Connect Twilio or SignalWire per workspace with encrypted credentials and verified number ownership

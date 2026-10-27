@@ -36,6 +36,14 @@ Server health, phone connections and what to do next.
 visiconvert status
 ```
 
+## `visiconvert setup`
+
+Website, DNI and call setup evidence (JSON)
+
+```sh
+visiconvert setup
+```
+
 ## `visiconvert connect twilio`
 
 Save Twilio credentials. The auth token is read from stdin, never from arguments.
@@ -178,4 +186,4 @@ visiconvert mcp [OPTIONS]
 
 | Argument | Required | Description |
 |---|---|---|
-| `--allow-changes` | No | Expose tools that add numbers and leads, qualify leads and record bookings. |
+| `--allow-changes` | No | Expose tools that configure sites/DNI, add numbers and leads, and update outcomes. |
