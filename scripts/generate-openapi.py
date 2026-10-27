@@ -28,6 +28,10 @@ schemas={
  'InquiryDetail':{'type':'object','description':'Inquiry, original interactions and latest 100 history entries; qualification/notes/version are shared by the inquiry.','required':['inquiry','interactions','history'],'properties':{'inquiry':{'type':'object'},'interactions':array({'type':'object'}),'history':array({'type':'object'})}},
  'TwilioStatus':{'type':'object','description':'Connection status, revision and callback URLs. Never includes provider secrets.','required':['connected','mode','voice_url','status_url'],'properties':{'connected':{'type':'boolean'},'mode':string(),'voice_url':string(),'status_url':string()}},
  'TwilioInventory':obj({'numbers':array(obj({'sid':string(),'phone_number':string(),'friendly_name':string()},['sid','phone_number','friendly_name'])),'has_more':{'type':'boolean'}},['numbers','has_more'])}
+provider=string(enum=['twilio','signalwire'],default='twilio')
+schemas['NumberInput']['properties']['provider']=provider
+schemas['Number']['properties']['provider']=provider
+schemas['SignalWireStatus']=obj({'connected':{'type':'boolean'},'space_host':{'type':['string','null']},'project_id':{'type':['string','null'],'format':'uuid'},'revision':integer(),'last_webhook_at':nullable_date,'setup_available':{'type':'boolean'},'setup_message':{'type':['string','null']},'can_disconnect':{'type':'boolean'},'voice_url':string(),'status_url':string()},['connected','revision','voice_url','status_url'])
 for name in ['Interaction','Booking']:
  schemas[name+'Page']=obj({'data':array(ref(name)),'next_cursor':{'type':['string','null']}},['data','next_cursor'])
 def content(schema):return {'application/json':{'schema':schema}}
@@ -60,7 +64,9 @@ route('/inquiries/{id}/outcomes','put','Record a booking on an inquiry; existing
 route('/bookings','get','List all workspace bookings, including canceled records',ref('BookingPage'),paged=True)
 route('/reports/sources','get','All-time inquiry counts and booked revenue by primary source',array(ref('SourceReport')))
 route('/numbers','get','List registered tracking numbers',array(ref('Number')))
-route('/numbers','post','Register a number already owned in connected Twilio; webhook configuration remains manual',ref('Ok'),'numbers:write','NumberInput')
+route('/numbers','post','Register a number already owned in connected Twilio or SignalWire (provider defaults to twilio); webhook configuration remains manual',ref('Ok'),'numbers:write','NumberInput')
+route('/connections/signalwire','get','Read SignalWire status and callback readiness; credential changes are not permitted',ref('SignalWireStatus'))
+route('/connections/signalwire/numbers','get','Read first SignalWire inventory page; check has_more',ref('TwilioInventory'))
 route('/connections/twilio','get','Read connection status; credential changes are not permitted',ref('TwilioStatus'))
 route('/connections/twilio/numbers','get','Read first Twilio inventory page; check has_more',ref('TwilioInventory'))
 spec={'openapi':'3.1.0','info':{'title':'VisiConvert public API','version':'1.0.0','description':'Workspace-scoped API for hosted and self-hosted integrations. Bearer keys are created in the workspace API keys screen. Keys cannot administer credentials, billing, or keys. Hosted requests fail closed when Rails access verification is unavailable. /leads aliases /interactions. Lists of inquiries, interactions and bookings use keyset pagination; numbers and source reports return arrays. No automatic request retries.'},'servers':[{'url':'/api/v1'}],'components':{'securitySchemes':{'workspaceKey':{'type':'http','scheme':'bearer','bearerFormat':'vc_key_...'}},'schemas':schemas},'paths':paths}

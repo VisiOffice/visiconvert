@@ -1,3 +1,5 @@
+import { SignalWireConnection } from "./SignalWireConnection";
+import type { SignalWireConnection as SignalWireStatus } from "./api";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { InquiryGrouping } from "./InquiryGrouping";
 import { ApiKeys } from "./ApiKeys";
@@ -56,6 +58,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   const [entry, setEntry] = useState("");
   const [page, setPage] = useState<Page>("Overview");
   const [boot, setBoot] = useState<Bootstrap | null>(null);
+  const [signalwire, setSignalwire] = useState<SignalWireStatus | null>(null);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [numbers, setNumbers] = useState<TrackingNumber[]>([]);
@@ -94,15 +97,17 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   }, []);
 
   async function refresh(request = api) {
-    const [b, l, n, s, c] = await Promise.all([
+    const [b, l, n, s, c, sw] = await Promise.all([
       request<Bootstrap>("/bootstrap"),
       request<Lead[]>("/inquiries"),
       request<TrackingNumber[]>("/numbers"),
       request<Summary[]>("/summary"),
       request<Connection>("/connections/twilio"),
+      request<SignalWireStatus>("/connections/signalwire"),
     ]);
     setBoot(b);
     setConnection(c);
+    setSignalwire(sw);
     setLeads(l);
     setNumbers(n);
     setSummary(s);
@@ -307,7 +312,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
             </div>
             {page !== "Sites" && page !== "Conversions" && page !== "API keys" && <button
               className="primary"
-              disabled={boot?.hosted && !connection?.connected && page === "Tracking numbers"}
+              disabled={boot?.hosted && !connection?.connected && !signalwire?.connected && page === "Tracking numbers"}
               onClick={() =>
                 setModal(page === "Tracking numbers" ? "number" : "lead")
               }
@@ -318,7 +323,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                 : "Add form lead"}
             </button>}
           </div>
-          {page === "Tracking numbers" && !connection?.connected && <p className="notice">Connect your Twilio account in Connections to receive calls. {boot?.hosted ? "Connect before registering a tracking number." : "Offline number registrations do not route calls."}</p>}
+          {page === "Tracking numbers" && !connection?.connected && !signalwire?.connected && <p className="notice">Connect Twilio or SignalWire in Connections to receive calls. {boot?.hosted ? "Connect before registering a tracking number." : "Offline number registrations do not route calls."}</p>}
           {error && (
             <p className="error" role="alert">
               {error}
@@ -531,7 +536,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                           <tr key={n.id}>
                             <td>
                               <strong>{n.label}</strong>
-                              <small>{n.phone_number}</small>
+                              <small>{n.phone_number} · {n.provider === "signalwire" ? "SignalWire" : "Twilio"}</small>
                             </td>
                             <td>
                               {n.source}
@@ -566,7 +571,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
           {page === "Sites" && <Sites api={api} />}
           {page === "Conversions" && <Conversions api={api} />}
           {page === "API keys" && <ApiKeys api={api} />}
-          {page === "Connections" && connection && <Connections api={api} connection={connection} refresh={refresh} />}
+          {page === "Connections" && connection && <Connections api={api} connection={connection} signalwire={signalwire} refresh={refresh} />}
           <footer>
             VisiConvert <span>Make the connection.</span>
             <a href="https://github.com/VisiOffice/visiconvert">Source</a>
@@ -606,6 +611,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
           kind={modal}
           api={api}
           connected={connection?.connected || false}
+          signalwireConnected={signalwire?.connected || false}
           close={() => setModal(null)}
           done={async () => {
             await refresh();
@@ -946,29 +952,33 @@ function CreateModal({
   close,
   done,
   connected,
+  signalwireConnected,
 }: {
   kind: "number" | "lead";
   api: Client;
   close: () => void;
   done: () => Promise<void>;
   connected: boolean;
+  signalwireConnected: boolean;
 }) {
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [provider, setProvider] = useState<"twilio" | "signalwire">(!connected && signalwireConnected ? "signalwire" : "twilio");
   const [inventory, setInventory] = useState<TwilioInventory | null>(null);
   useEffect(() => {
     let active = true;
-    if (kind === "number" && connected) {
-      api<TwilioInventory>("/connections/twilio/numbers").then(value => { if (active) setInventory(value); })
+    setInventory(null); setError("");
+    if (kind === "number" && (provider === "twilio" ? connected : signalwireConnected)) {
+      api<TwilioInventory>(`/connections/${provider}/numbers`).then(value => { if (active) setInventory(value); })
         .catch(error => { if (active) setError(error.message); });
     }
     return () => { active = false; };
-  }, [kind, connected, api]);
+  }, [kind, connected, signalwireConnected, provider, api]);
   const fields =
     kind === "number"
       ? [
           ["label", "Label", "Google search line"],
-          ["phone_number", "Twilio tracking number", "+12025550101"],
+          ["phone_number", provider === "twilio" ? "Twilio tracking number" : "SignalWire tracking number", "+12025550101"],
           ["destination", "Business destination", "+12025550102"],
           ["source", "Marketing source", "Google Ads"],
           ["campaign", "Campaign", "Spring campaign"],
@@ -996,7 +1006,7 @@ function CreateModal({
         </div>
         <p>
           {kind === "number"
-            ? "Register an existing Twilio number and where to forward calls."
+            ? "Register an existing provider number and where to forward calls."
             : "Record a submitted inquiry. The private API also accepts server-to-server form submissions."}
         </p>
         <form
@@ -1008,7 +1018,7 @@ function CreateModal({
             try {
               await api(
                 kind === "number" ? "/numbers" : "/leads",
-                kind === "number" ? data : { ...data, notes: "" },
+                kind === "number" ? { ...data, provider } : { ...data, notes: "" },
               );
               await done();
             } catch (e) {
@@ -1018,6 +1028,7 @@ function CreateModal({
             }
           }}
         >
+          {kind === "number" && <label>Phone provider<select aria-label="Phone provider" value={provider} onChange={e => setProvider(e.target.value as "twilio" | "signalwire")} disabled={busy}><option value="twilio">Twilio</option><option value="signalwire" disabled={!signalwireConnected}>SignalWire{!signalwireConnected ? " — connect first" : ""}</option></select></label>}
           {fields.map(([name, title, placeholder], i) => (
             <label key={name}>
               {title}
@@ -1050,7 +1061,7 @@ function CreateModal({
     </div>
   );
 }
-function Connections({ api, connection, refresh }: { api: Client; connection: Connection; refresh: () => Promise<void> }) {
+function Connections({ api, connection, signalwire, refresh }: { api: Client; connection: Connection; signalwire: SignalWireStatus | null; refresh: () => Promise<void> }) {
   const [url, setUrl] = useState(
       "https://example.com/?utm_source=google&utm_medium=cpc&utm_campaign=spring",
     ),
@@ -1064,6 +1075,7 @@ function Connections({ api, connection, refresh }: { api: Client; connection: Co
   return (
     <div className="connections">
       <TwilioConnection api={api} connection={connection} refresh={refresh} />
+      {signalwire && <SignalWireConnection api={api} connection={signalwire} refresh={refresh} />}
       <section className="card connection">
         <div className="card-header">
           <div>

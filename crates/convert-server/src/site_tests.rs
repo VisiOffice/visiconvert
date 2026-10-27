@@ -82,6 +82,7 @@ async fn website_capture_isolated_atomic_and_consent_gated() {
             app_origin: None,
         }),
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
@@ -490,6 +491,7 @@ async fn dni_routes_require_owner_origin_and_consent() {
             app_origin: None,
         }),
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
     });

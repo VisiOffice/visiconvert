@@ -30,7 +30,7 @@ visiconvert logout
 
 ## `visiconvert status`
 
-Server health, Twilio connection and what to do next.
+Server health, phone connections and what to do next.
 
 ```sh
 visiconvert status
@@ -59,15 +59,19 @@ visiconvert numbers list
 
 ## `visiconvert numbers available`
 
-Numbers in your Twilio account that are not tracked yet.
+Existing provider numbers that are not tracked yet.
 
 ```sh
-visiconvert numbers available
+visiconvert numbers available [OPTIONS]
 ```
+
+| Argument | Required | Description |
+|---|---|---|
+| `--provider <PROVIDER>` | No | Default: `twilio`. |
 
 ## `visiconvert numbers add`
 
-Track a Twilio number for one source and campaign.
+Track an existing provider number for one source and campaign.
 
 ```sh
 visiconvert numbers add <PHONE_NUMBER> --forward-to <FORWARD_TO> --source <SOURCE> --campaign <CAMPAIGN> [OPTIONS]
@@ -75,7 +79,8 @@ visiconvert numbers add <PHONE_NUMBER> --forward-to <FORWARD_TO> --source <SOURC
 
 | Argument | Required | Description |
 |---|---|---|
-| `<PHONE_NUMBER>` | Yes | The Twilio number, e.g. +15125550142. |
+| `--provider <PROVIDER>` | No | Provider that owns the number; connect it in the workspace UI first. Default: `twilio`. |
+| `<PHONE_NUMBER>` | Yes | The provider number, e.g. +15125550142. |
 | `--forward-to <FORWARD_TO>` | Yes | The business line calls ring through to. |
 | `--source <SOURCE>` | Yes | Marketing source, e.g. "Google Ads" or "Yard signs". |
 | `--campaign <CAMPAIGN>` | Yes | Campaign within the source. |

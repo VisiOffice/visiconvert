@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — SignalWire
+
+- Connect existing SignalWire projects using encrypted API tokens and separate webhook signing keys.
+- Verify number ownership, forward signed cXML calls, and share source attribution/DNI with Twilio.
+- Select providers in the web app, CLI, MCP and scoped public API; preserve existing Twilio numbers.
+- Show account verification separately from signed callback readiness. No carrier routing is changed automatically.
+
+
 ## Unreleased — website source classification
 
 - Shared source classification for hosted and self-hosted website forms and DNI calls: explicit UTMs, Google/Microsoft/Facebook click signals, and bounded referrer matching.

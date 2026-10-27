@@ -100,6 +100,7 @@ async fn grouping_preserves_interactions_isolation_retries_and_money() {
         }),
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
@@ -374,6 +375,7 @@ async fn call_callbacks_and_website_receipts_survive_grouping() {
     let phone = format!("+12025{:06}", Uuid::new_v4().as_u128() % 900000);
     store
         .add_number(&NewNumber {
+            provider: Default::default(),
             label: "Grouping call test".into(),
             phone_number: phone.clone(),
             destination: "+12025559998".into(),

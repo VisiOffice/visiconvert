@@ -21,7 +21,7 @@ export default defineConfig({
       customCss: ['@fontsource-variable/manrope', './src/styles/theme.css'],
       plugins: [starlightLlmsTxt()],
       sidebar: [
-        { label: 'Get started', items: ['start/introduction', 'start/hosted', 'start/self-host', 'start/connect-twilio', 'start/capabilities'] },
+        { label: 'Get started', items: ['start/introduction', 'start/hosted', 'start/self-host', 'start/connect-twilio', 'start/connect-signalwire', 'start/capabilities'] },
         { label: 'Guides', items: ['guides/website-tracking', 'guides/dynamic-numbers', 'guides/inquiries', 'guides/google-ads-preparation', 'guides/google-ads-connection', 'guides/troubleshooting'] },
         { label: 'Concepts', items: ['concepts/leads-and-bookings'] },
         { label: 'Command line', items: ['cli/overview', 'reference/cli'] },

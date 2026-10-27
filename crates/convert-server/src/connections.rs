@@ -11,7 +11,7 @@ pub fn routes() -> Router<Shared> {
         .route("/connections/twilio/numbers", get(inventory))
 }
 
-async fn authorize(access: &hosted::Access) -> Result<(), ApiError> {
+pub(super) async fn authorize(access: &hosted::Access) -> Result<(), ApiError> {
     if let Some(hash) = &access.session_hash
         && !access.store.manages_connection(hash).await?
     {
@@ -65,7 +65,7 @@ pub(super) async fn show(
         .numbers()
         .await?
         .iter()
-        .filter(|n| !n.is_demo)
+        .filter(|n| !n.is_demo && n.provider == PhoneProvider::Twilio)
         .count();
     Ok(Json(json!({
         "mode": mode, "connected": connection.is_some() || environment,
@@ -218,6 +218,9 @@ pub async fn register(a: &App, access: &hosted::Access, n: &NewNumber) -> Result
     authorize(access).await?;
     n.validate()
         .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    if n.provider == PhoneProvider::Signalwire {
+        return signalwire::register(a, access, n).await;
+    }
     if let Some(connection) = access.store.twilio_connection().await? {
         let token = decrypt(a, &access.store, &connection)?;
         a.twilio_client

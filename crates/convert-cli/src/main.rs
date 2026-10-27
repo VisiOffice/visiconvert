@@ -40,7 +40,7 @@ enum Command {
     },
     /// Forget the saved server URL and key
     Logout,
-    /// Server health, Twilio connection and what to do next
+    /// Server health, phone connections and what to do next
     Status,
     /// Connect a phone provider (workspace owners only)
     #[command(subcommand)]
@@ -88,11 +88,17 @@ enum Connect {
 enum Numbers {
     /// Tracking numbers in this workspace
     List,
-    /// Numbers in your Twilio account that are not tracked yet
-    Available,
-    /// Track a Twilio number for one source and campaign
+    /// Existing provider numbers that are not tracked yet
+    Available {
+        #[arg(long, default_value = "twilio", value_parser = ["twilio", "signalwire"])]
+        provider: String,
+    },
+    /// Track an existing provider number for one source and campaign
     Add {
-        /// The Twilio number, e.g. +15125550142
+        /// Provider that owns the number; connect it in the workspace UI first
+        #[arg(long, default_value = "twilio", value_parser = ["twilio", "signalwire"])]
+        provider: String,
+        /// The provider number, e.g. +15125550142
         phone_number: String,
         /// The business line calls ring through to
         #[arg(long)]
@@ -269,6 +275,24 @@ async fn run(cli: Cli) -> Result<()> {
                         lines.push(format!("Status URL {url}"));
                     }
                 }
+                let sw = &status.signalwire;
+                lines.push(format!(
+                    "SignalWire {}",
+                    sw["project_id"]
+                        .as_str()
+                        .unwrap_or(if sw["visible"] == false {
+                            "owner access required"
+                        } else {
+                            "not connected"
+                        })
+                ));
+                if sw["connected"] == true {
+                    for field in ["voice_url", "status_url"] {
+                        if let Some(url) = sw[field].as_str() {
+                            lines.push(format!("SignalWire {field}: {url}"));
+                        }
+                    }
+                }
                 lines.push(format!("Numbers    {} tracking", status.tracking_numbers));
                 lines.extend(status.next_steps.iter().map(|s| format!("Next       {s}")));
                 lines.join("\n")
@@ -315,8 +339,8 @@ async fn run(cli: Cli) -> Result<()> {
                 )
             })
         }
-        Command::Numbers(Numbers::Available) => {
-            let available = ops::available_numbers(&connect()?).await?;
+        Command::Numbers(Numbers::Available { provider }) => {
+            let available = ops::available_numbers_for(&connect()?, provider.parse()?).await?;
             output(json, &available, || {
                 let rows = available["untracked"]
                     .as_array()
@@ -332,19 +356,20 @@ async fn run(cli: Cli) -> Result<()> {
                     })
                     .unwrap_or_default();
                 let mut text = table(
-                    &["NUMBER", "TWILIO NAME"],
+                    &["NUMBER", "PROVIDER NAME"],
                     rows,
-                    "Every number in your Twilio account is already tracked.",
+                    "Every number in your selected provider account is already tracked.",
                 );
                 if available["has_more"] == true {
                     text.push_str(
-                        "\nTwilio has more numbers than one page; only the first page is shown.",
+                        "\nThe provider has more numbers than one page; only the first page is shown.",
                     );
                 }
                 text
             })
         }
         Command::Numbers(Numbers::Add {
+            provider,
             phone_number,
             forward_to,
             source,
@@ -354,6 +379,7 @@ async fn run(cli: Cli) -> Result<()> {
             let added = ops::add_number(
                 &connect()?,
                 ops::AddNumber {
+                    provider: provider.parse()?,
                     phone_number,
                     forward_to,
                     source,

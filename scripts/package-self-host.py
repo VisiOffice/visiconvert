@@ -9,7 +9,7 @@ import io
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ['docs/HOSTED_FRONTEND.md', 'docs/GOOGLE_CONNECTION.md', 'web/tests/verify-google.mjs', 'crates/convert-server/assets/openapi.json', 'scripts/generate-openapi.py', 'docs/PUBLIC_API.md', 'web/tests/verify-api-keys.mjs', 'Cargo.toml', 'Cargo.lock', 'Dockerfile', '.dockerignore', '.gitignore',
+FILES = ['docs/SIGNALWIRE_CONNECTIONS.md', 'web/tests/verify-signalwire.mjs', 'docs/HOSTED_FRONTEND.md', 'docs/GOOGLE_CONNECTION.md', 'web/tests/verify-google.mjs', 'crates/convert-server/assets/openapi.json', 'scripts/generate-openapi.py', 'docs/PUBLIC_API.md', 'web/tests/verify-api-keys.mjs', 'Cargo.toml', 'Cargo.lock', 'Dockerfile', '.dockerignore', '.gitignore',
          '.github/workflows/self-host.yml',
          '.github/workflows/dependency-audit.yml', 'scripts/audit-dependencies.py', 'tests/test_dependency_audit.py',
          'CONTRIBUTING.md', 'CHANGELOG.md', 'docs/PUBLIC_README.md',

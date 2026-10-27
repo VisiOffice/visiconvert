@@ -69,14 +69,43 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
     let counts=sqlx::query("SELECT (SELECT count(*) FROM leads) AS interactions,(SELECT count(*) FROM inquiries) AS inquiries").fetch_one(&pool).await.unwrap();
     assert_eq!(counts.get::<i64, _>("interactions"), 2);
     assert_eq!(counts.get::<i64, _>("inquiries"), 2);
+    let old_call = Uuid::new_v4();
+    sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign) VALUES($1,$2,'Legacy number','+12025550411','+12025550412','Legacy source','Legacy campaign')").bind(Uuid::new_v4()).bind(workspace).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO leads(id,workspace_id,external_id,name,contact,channel,source,campaign,tracking_number,destination) VALUES($1,$2,'legacy-call','Legacy caller','+12025550413','call','Legacy source','Legacy campaign','+12025550411','+12025550412')").bind(old_call).bind(workspace).execute(&pool).await.unwrap();
     for migration in [
         include_str!("../migrations/0007_dynamic_numbers.sql"),
         include_str!("../migrations/0008_conversion_preparation.sql"),
         include_str!("../migrations/0009_public_api.sql"),
         include_str!("../migrations/0010_google_connection.sql"),
+        include_str!("../migrations/0011_signalwire.sql"),
     ] {
         sqlx::raw_sql(migration).execute(&pool).await.unwrap();
     }
+    assert_eq!(
+        store.numbers().await.unwrap()[0].provider,
+        convert_domain::PhoneProvider::Twilio
+    );
+    assert_eq!(
+        store
+            .call_event(&convert_store::CallEvent {
+                sid: "legacy-call".into(),
+                to: "+12025550411".into(),
+                from: "+12025550413".into(),
+                fingerprint: "migration-retry".into(),
+                kind: convert_store::CallEventKind::Voice
+            })
+            .await
+            .unwrap(),
+        "+12025550412"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT provider FROM leads WHERE id=$1")
+            .bind(old_call)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "twilio"
+    );
     let after = store.inquiry(id).await.unwrap();
     assert_eq!(after.lead.notes, "Existing notes");
     assert_eq!(after.lead.version, 7);

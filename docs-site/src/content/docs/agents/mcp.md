@@ -43,12 +43,12 @@ Every tool carries MCP annotations that mark it as read-only or not, so clients 
 
 ## What it will not do
 
-- **Handle Twilio credentials.** No tool accepts them. Connect Twilio yourself in the workspace UI (or with the legacy self-hosted operator CLI), so your Auth Token never enters the agent's context.
+- **Handle provider credentials.** No tool accepts them. Connect Twilio or SignalWire yourself in the workspace UI (or with the legacy self-hosted operator CLI), so your provider secrets never enter the agent's context.
 - **Buy or release numbers**, or delete leads and bookings.
 
 ## Guided setup
 
-The server includes a prompt, `set_up_call_tracking`. In clients that support MCP prompts, it walks the agent through checking status, choosing which campaigns to track, assigning numbers and confirming a test call. It asks you before each change and tells you to connect Twilio yourself.
+The server includes a prompt, `set_up_call_tracking`. In clients that support MCP prompts, it walks the agent through checking status, choosing which campaigns to track, assigning numbers and confirming a test call. It asks you before each change and tells you to connect the provider yourself.
 
 You can also just ask, for example:
 

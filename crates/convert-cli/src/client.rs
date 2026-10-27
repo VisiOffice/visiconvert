@@ -134,6 +134,26 @@ impl Client {
         self.send(self.http.get(self.url("/api/bootstrap"))).await
     }
 
+    pub async fn provider_connection(
+        &self,
+        provider: convert_domain::PhoneProvider,
+    ) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .get(self.url(&format!("/api/connections/{}", provider.as_str()))),
+        )
+        .await
+    }
+    pub async fn provider_numbers(
+        &self,
+        provider: convert_domain::PhoneProvider,
+    ) -> Result<Inventory, Error> {
+        self.send(
+            self.http
+                .get(self.url(&format!("/api/connections/{}/numbers", provider.as_str()))),
+        )
+        .await
+    }
     pub async fn connection(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/api/connections/twilio")))
             .await
@@ -159,11 +179,6 @@ impl Client {
                 .json(&body),
         )
         .await
-    }
-
-    pub async fn twilio_numbers(&self) -> Result<Inventory, Error> {
-        self.send(self.http.get(self.url("/api/connections/twilio/numbers")))
-            .await
     }
 
     pub async fn numbers(&self) -> Result<Vec<TrackingNumber>, Error> {

@@ -1,3 +1,4 @@
+import { verifySignalWire } from "./verify-signalwire.mjs";
 import assert from "node:assert/strict";
 import { verifyGrouping } from "./verify-grouping.mjs";
 import { verifyApiKeys } from "./verify-api-keys.mjs";
@@ -229,6 +230,9 @@ try {
   });
   await check("Twilio connections: encrypted credentials, ownership, and workspace callback isolation", async () => {
     await command("cargo", ["test", "-p", "convert-server", "connection_tests::shared_connections", "--", "--ignored", "--test-threads=1"]);
+  });
+  await check("SignalWire connections: ownership, signatures, credential rotation, retries and isolation", async () => {
+    await command("cargo", ["test", "-p", "convert-server", "signalwire_tests::shared_signalwire", "--", "--ignored", "--test-threads=1"]);
   });
   await check("Website collection: consent, retries, rate limits, and workspace isolation", async () => {
     await command("cargo", ["test", "-p", "convert-server", "site_tests::", "--", "--ignored", "--test-threads=1"]);
@@ -506,6 +510,7 @@ try {
     await page.getByRole("article",{name:"Prepared booking ads-browser-booking",exact:true}).getByText("canceled",{exact:true}).waitFor();
   });
   await check("API keys browser and CLI/MCP: create, use, rotate, revoke and mobile layout", () => verifyApiKeys({page,api,origin,artifactDir,root}));
+  await check("SignalWire browser: connection, secret clearing, provider selection and mobile layout", () => verifySignalWire({page,api,apiKey,origin,artifactDir}));
   await check("Google connection browser: setup, popup, account/action selection and stale validation", () => verifyGoogle({page,api,origin,artifactDir}));
   assert.deepEqual(errors, [], "No uncaught browser errors after API keys");
   result.status = "passed";

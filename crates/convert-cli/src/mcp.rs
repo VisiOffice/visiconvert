@@ -32,7 +32,7 @@ fn lead_id() -> Value {
 const TOOLS: &[Tool] = &[
     Tool {
         name: "get_status",
-        description: "Server health, workspace, Twilio connection (including the webhook URLs to set on each Twilio number) and suggested next steps. Call this first.",
+        description: "Server health, workspace, Twilio and SignalWire connections (including provider webhook URLs) and suggested next steps. Call this first.",
         changes: false,
         idempotent: true,
         schema: none,
@@ -40,6 +40,13 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "list_numbers",
         description: "Tracking numbers in this workspace with their source, campaign and forwarding destination.",
+        changes: false,
+        idempotent: true,
+        schema: none,
+    },
+    Tool {
+        name: "list_signalwire_numbers",
+        description: "Existing US voice numbers in the connected SignalWire project that are not tracked yet. Connect credentials in the workspace UI first.",
         changes: false,
         idempotent: true,
         schema: none,
@@ -82,12 +89,13 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "add_tracking_number",
-        description: "Track a number already in the connected Twilio account for one source and campaign, forwarding calls to the business line. Afterwards the number's webhooks must be set in the Twilio console; the result says how.",
+        description: "Track a number already in the selected Twilio or SignalWire account for one source and campaign, forwarding calls to the business line. Afterwards the number's webhooks must be set in the provider console; the result says how.",
         changes: true,
         idempotent: false,
         schema: || {
             json!({"type": "object", "additionalProperties": false, "required": ["phone_number", "forward_to", "source", "campaign"], "properties": {
-                "phone_number": {"type": "string", "description": "The Twilio number to track, e.g. +15125550142"},
+                "provider": {"type": "string", "enum": ["twilio", "signalwire"], "default": "twilio"},
+            "phone_number": {"type": "string", "description": "The existing provider number to track, e.g. +15125550142"},
                 "forward_to": {"type": "string", "description": "The business line calls ring through to"},
                 "source": {"type": "string", "description": "Marketing source, e.g. Google Ads or Yard signs"},
                 "campaign": {"type": "string"},
@@ -142,11 +150,11 @@ const TOOLS: &[Tool] = &[
 
 const SETUP_PROMPT: &str = "Set up VisiConvert call tracking for this business.
 
-1. Call get_status. If Twilio is not connected, stop and ask the person to connect it in the workspace UI. Scoped API keys cannot change provider credentials. Self-hosted operators using a legacy operator key can also run `visiconvert connect twilio --account-sid AC… --token-stdin` themselves. Never ask them to paste credentials into this conversation.
+1. Call get_status. If the chosen provider (Twilio or SignalWire) is not connected, ask the owner to connect it in the workspace UI. Scoped API keys cannot change provider credentials. Self-hosted operators using a legacy operator key can also run `visiconvert connect twilio --account-sid AC… --token-stdin` themselves. Never ask them to paste credentials into this conversation.
 2. Ask which marketing sources and campaigns they want to track (for example Google Ads, Facebook, yard signs, the van), and which business line calls should ring through to.
-3. Call list_twilio_numbers. Propose one untracked number per campaign and confirm the plan with the person. If there are not enough numbers, tell them how many more to buy in Twilio; buying is not available from these tools yet.
-4. For each confirmed pair, call add_tracking_number.
-5. Give the person the voice URL and status URL from the results, and the exact Twilio console steps for each number. These have to be set by hand for now.
+3. Choose the phone provider with the person. For SignalWire, have the owner connect its Space, Project ID, API token, and separate signing key in the workspace UI; never request these secrets in chat. Call list_signalwire_numbers or list_twilio_numbers as appropriate. Propose one untracked number per campaign and confirm the plan with the person. If there are not enough numbers, tell them how many more to obtain from their provider; buying is not available from these tools yet.
+4. For each confirmed pair, call add_tracking_number with provider set to twilio or signalwire.
+5. Give the person the voice URL and status URL from the results, and the matching provider console steps for each number (SignalWire uses cXML handling). These have to be set by hand for now.
 6. Ask them to call one tracking number from their own phone, then call list_leads with since 15m and confirm the call arrived with the right source.
 7. Summarise what is tracked, and anything left to do.";
 
@@ -306,6 +314,9 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
             json!({"numbers": client.numbers().await?.into_iter().filter(|n| !n.is_demo).collect::<Vec<_>>()})
         }
         "list_twilio_numbers" => ops::available_numbers(client).await?,
+        "list_signalwire_numbers" => {
+            ops::available_numbers_for(client, convert_domain::PhoneProvider::Signalwire).await?
+        }
         "list_leads" => {
             let filter = ops::LeadFilter {
                 since: text(args, "since")
@@ -342,6 +353,9 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
             ops::add_number(
                 client,
                 ops::AddNumber {
+                    provider: text(args, "provider")
+                        .unwrap_or_else(|| "twilio".into())
+                        .parse()?,
                     phone_number: required(args, "phone_number")?,
                     forward_to: required(args, "forward_to")?,
                     source: required(args, "source")?,

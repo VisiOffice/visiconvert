@@ -48,8 +48,36 @@ impl Qualification {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PhoneProvider {
+    #[default]
+    Twilio,
+    Signalwire,
+}
+impl PhoneProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Twilio => "twilio",
+            Self::Signalwire => "signalwire",
+        }
+    }
+}
+impl std::str::FromStr for PhoneProvider {
+    type Err = ValidationError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "twilio" => Ok(Self::Twilio),
+            "signalwire" => Ok(Self::Signalwire),
+            _ => Err(ValidationError("Provider must be twilio or signalwire")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewNumber {
+    #[serde(default)]
+    pub provider: PhoneProvider,
     pub label: String,
     pub phone_number: String,
     pub destination: String,
@@ -134,6 +162,8 @@ impl OutcomeInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackingNumber {
+    #[serde(default)]
+    pub provider: PhoneProvider,
     pub id: Uuid,
     pub label: String,
     pub phone_number: String,
@@ -243,6 +273,7 @@ mod tests {
             assert!(us_number(n).is_err());
         }
         let n = NewNumber {
+            provider: Default::default(),
             label: "Test".into(),
             phone_number: "+12025550101".into(),
             destination: "+12025550101".into(),

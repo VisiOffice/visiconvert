@@ -7,9 +7,10 @@ The web app does everything. The command line, MCP server and public API cover t
 
 | Task | Web app | CLI | MCP | API v1 |
 |---|:-:|:-:|:-:|:-:|
-| See status and Twilio connection | ✓ | ✓ | ✓ | ✓ |
+| See Twilio and SignalWire status | ✓ | ✓ | ✓ | ✓ |
+| Connect SignalWire | ✓ | — | — | — |
 | Connect Twilio | ✓ | Self-hosted operator key only | — | — |
-| List tracking numbers and untracked Twilio numbers | ✓ | ✓ | ✓ | ✓ |
+| List tracking numbers and untracked provider numbers | ✓ | ✓ | ✓ | ✓ |
 | Register a tracking number | ✓ | ✓ | ✓ | ✓ |
 | List leads (interactions) | ✓ | ✓ | ✓ | ✓ |
 | List inquiries | ✓ | — | — | ✓ |
@@ -26,4 +27,4 @@ The web app does everything. The command line, MCP server and public API cover t
 
 What a CLI or MCP session can change also depends on the key it logged in with. A read-only [API key](/api/public-api/) stays read-only, even if the MCP server is started with `--allow-changes`.
 
-Not available anywhere yet: buying numbers, setting Twilio webhooks automatically, call recording, SMS, and sending conversions to Google.
+Not available anywhere yet: buying numbers, setting carrier webhooks automatically, call recording, SMS, and sending conversions to Google.

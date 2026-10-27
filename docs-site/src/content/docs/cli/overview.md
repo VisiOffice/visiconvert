@@ -52,9 +52,9 @@ visiconvert numbers add +15125550142 --forward-to +15125550100 \
   --source "Google Ads" --campaign "Spring HVAC"
 ```
 
-Connect Twilio in the workspace UI; scoped keys cannot change provider credentials. Number registration requires `numbers:write`.
+Connect Twilio or SignalWire in the workspace UI; scoped keys cannot change provider credentials. Number registration requires `numbers:write`.
 
-`status` shows the server, the Twilio connection and what to do next. After `numbers add`, set the printed webhook URLs on the number in Twilio. See [Connect Twilio](/start/connect-twilio/).
+`status` shows the server, both provider connections and what to do next. After `numbers add`, set the printed webhook URLs on the number in its provider console. See [Connect Twilio](/start/connect-twilio/) or [Connect SignalWire](/start/connect-signalwire/). Add `--provider signalwire` to `numbers available` and `numbers add` for SignalWire.
 
 ## Review leads and record bookings
 

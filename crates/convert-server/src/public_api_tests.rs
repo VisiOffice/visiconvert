@@ -64,6 +64,7 @@ fn app(store: Store, cloud: Option<hosted::Config>) -> Shared {
         cloud,
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
     })
@@ -547,6 +548,8 @@ fn openapi_covers_public_routes() {
         "/reports/sources",
         "/numbers",
         "/connections/twilio",
+        "/connections/signalwire",
+        "/connections/signalwire/numbers",
     ] {
         assert!(spec["paths"][path]["get"].is_object(), "{path}");
     }
