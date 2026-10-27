@@ -221,7 +221,13 @@ fn session_evidence(input: &SessionInput, origin: &str) -> Result<Value, ApiErro
         "msclkid",
         "fbclid",
     ] {
-        if let Some((_, v)) = landing.query_pairs().find(|(k, _)| k == key) {
+        let supplied: Vec<_> = landing.query_pairs().filter(|(k, _)| k == key).collect();
+        if let Some((_, v)) = supplied.first() {
+            if supplied.iter().any(|(_, other)| other != v) {
+                return Err(invalid(
+                    "Conflicting repeated campaign parameters are not accepted",
+                ));
+            }
             if v.len() > 200 || v.chars().any(char::is_control) {
                 return Err(invalid(
                     "Campaign values must be at most 200 bytes without control characters",
@@ -235,17 +241,32 @@ fn session_evidence(input: &SessionInput, origin: &str) -> Result<Value, ApiErro
     value["landing_url"] = json!(landing.as_str());
     let referrer = url::Url::parse(&input.referrer)
         .ok()
-        .filter(|u| matches!(u.scheme(), "https" | "http") && u.host_str().is_some())
+        .filter(|u| {
+            matches!(u.scheme(), "https" | "http")
+                && u.host_str().is_some()
+                && u.username().is_empty()
+                && u.password().is_none()
+        })
         .map(|u| u.origin().ascii_serialization());
     value["referrer_origin"] = json!(referrer);
-    value["source"] = json!(
-        value["utm_source"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-            .map(str::to_owned)
-            .or_else(|| referrer.filter(|r| r != origin))
-            .unwrap_or_else(|| "Direct / unknown".into())
-    );
+    let classification =
+        convert_domain::attribution::classify_source(&convert_domain::attribution::SourceContext {
+            utm_source: value["utm_source"].as_str(),
+            utm_medium: value["utm_medium"].as_str(),
+            gclid: value["gclid"].as_str(),
+            gbraid: value["gbraid"].as_str(),
+            wbraid: value["wbraid"].as_str(),
+            msclkid: value["msclkid"].as_str(),
+            fbclid: value["fbclid"].as_str(),
+            referrer: referrer.as_deref(),
+            site_origin: origin,
+        });
+    if let Value::Object(fields) = json!(classification) {
+        value
+            .as_object_mut()
+            .expect("session evidence is an object")
+            .extend(fields);
+    }
     Ok(value)
 }
 async fn session(
@@ -326,6 +347,41 @@ mod tests {
         assert!(!value.to_string().contains("private"));
         assert!(session_evidence(&input, "https://other.example").is_err());
     }
+    #[test]
+    fn classification_keeps_raw_inputs_and_rejects_conflicting_duplicates() {
+        let mut input = SessionInput {
+            id: Uuid::nil(),
+            consent: "granted".into(),
+            landing_url:
+                "https://example.com/?utm_source=Newsletter&utm_medium=email&gclid=opaque-click"
+                    .into(),
+            referrer: String::new(),
+        };
+        let v = session_evidence(&input, "https://example.com")
+            .ok()
+            .unwrap();
+        assert_eq!(v["source"], "Newsletter");
+        assert_eq!(v["utm_source"], "Newsletter");
+        assert_eq!(v["gclid"], "opaque-click");
+        assert_eq!(v["source_basis"], "utm");
+        assert!(v["source_warning"].as_str().unwrap().contains("differs"));
+        input.landing_url = "https://example.com/?gclid=a&gclid=b".into();
+        assert!(session_evidence(&input, "https://example.com").is_err());
+        input.landing_url = "https://example.com/?gclid=a&gclid=a".into();
+        let v = session_evidence(&input, "https://example.com")
+            .ok()
+            .unwrap();
+        assert_eq!(v["source"], "google_ads");
+        assert_eq!(v["source_basis"], "click_id");
+        input.referrer = "https://user:private@google.com/private".into();
+        assert!(
+            session_evidence(&input, "https://example.com")
+                .ok()
+                .unwrap()["referrer_origin"]
+                .is_null()
+        );
+    }
+
     #[test]
     fn origins_require_exact_secure_websites() {
         for bad in [

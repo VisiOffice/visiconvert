@@ -27,7 +27,7 @@ export async function verifySites({ browser, page, origin, api, artifactDir }) {
     const site = sites.sites.find(s => s.name === siteName);
     siteId = site.id;
     assert((await page.getByLabel('Installation snippet').inputValue()).includes(siteId));
-    await visitor.goto(`${business}/quote?utm_source=google&utm_medium=cpc&utm_campaign=website-check-${siteId}&gclid=click-123&password=private#secret`);
+    await visitor.goto(`${business}/quote?utm_source=newsletter&utm_medium=email&utm_campaign=website-check-${siteId}&gclid=click-123&password=private#secret`);
     await visitor.waitForFunction(()=>!!window.VisiConvert);
     assert.equal(collected.length,0,'Loading tracker must not collect before consent');
     await visitor.getByRole('button',{name:'Submit request'}).click();
@@ -43,10 +43,14 @@ export async function verifySites({ browser, page, origin, api, artifactDir }) {
     assert(!JSON.stringify(collected).includes('private'));
     let leads = (await api('/leads')).body.filter(l=>l.name==='Website browser customer' && l.campaign===`website-check-${siteId}`);
     assert.equal(leads.length,1,'Repeated success callback must create one lead');
-    assert.equal(leads[0].source,'google'); assert.equal(leads[0].campaign,`website-check-${siteId}`);
+    assert.equal(leads[0].source,'newsletter'); assert.equal(leads[0].campaign,`website-check-${siteId}`);
     const evidence = (await api(`/leads/${leads[0].id}/website-evidence`)).body;
     assert.equal(evidence.evidence.landing_url,`${business}/quote`);
     assert.equal(evidence.evidence.gclid,'click-123');
+    assert.equal(evidence.evidence.source_basis,'utm');
+    assert.equal(evidence.evidence.medium,'email');
+    assert.equal(evidence.evidence.click_sources,'google');
+    assert.match(evidence.evidence.source_warning,/UTM source differs/);
     await page.getByRole('button',{name:'Refresh diagnostics'}).click();
     await page.getByText('Visits received',{exact:true}).waitFor();
     const stats = (await api('/sites')).body.sites.find(s=>s.id===siteId);
@@ -63,6 +67,7 @@ export async function verifySites({ browser, page, origin, api, artifactDir }) {
     await page.getByRole('button',{name:/Website browser customer/}).first().click();
     await page.getByText('Website source evidence',{exact:true}).click();
     await page.getByText('click-123',{exact:true}).waitFor();
+    await page.getByText(/UTM source differs from click-ID evidence/).waitFor();
     await page.screenshot({path:path.join(artifactDir,'website-lead-evidence.png'),fullPage:true});
     await page.getByRole('button',{name:'Close details'}).click();
     await visitor.evaluate(()=>window.VisiConvert.setConsent(false));
