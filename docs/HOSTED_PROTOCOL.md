@@ -18,6 +18,11 @@ The service credential cannot access the private lead API. Operator credentials 
 
 ## Browser handoff
 
+The [unified hosted frontend](HOSTED_FRONTEND.md) optionally uses same-origin
+`POST /auth/prepare`, Rails JSON launch, then `/auth/exchange` with the same
+cookie-bound, single-use protections below. The original redirect flow remains
+available when the optional `VISICONVERT_APP_ORIGIN` is unset.
+
 1. The browser visits `/auth/start?workspace_id=<uuid>`. Rust creates a 5-minute HttpOnly SameSite=Lax cookie restricted to `/auth`, then redirects to the configured Cloud origin's `/workspaces/<uuid>/authorize?state=<SHA256 cookie secret>`.
 2. Cloud authenticates the user, checks membership, and asks them to continue using a CSRF-protected POST. Its server calls `POST /internal/cloud/launch` with `{workspace_id, user_id, state, credential_version}` and the service credential. The nonnegative integer version must match the engine identity. Omission means version zero for rollout compatibility; it never bypasses a later revocation.
 3. Rust requires enabled workspace membership and returns `{code, expires_in: 60}`. Cloud redirects to the fixed engine origin with `/#launch=<code>`; it must not log that Location header.
@@ -62,7 +67,7 @@ resolve the workspace and validate its provider signature independently of
 Rails and billing. The engine operator must configure its encryption key.
 Legacy environment callbacks remain scoped to the default operator workspace.
 
-Sessions expire after 15 minutes without refresh; reopen through Cloud after a reload or expiry. Completed password resets revoke engine access. Ordinary Rails logout and subscription cancellation do not yet revoke existing engine sessions; engine logout revokes its own session. Session refresh, invitations, email verification, and tenant deletion remain future work. Cloud owns billing and applies its entitlement checks before issuing launch requests.
+Sessions expire after 15 minutes without refresh. The unified UI reopens a workspace after reload and returns to workspace selection on expiry. Its sign out revokes the held engine token and Rails session; other tabs/devices retain their bounded session lifetime. Completed password resets revoke engine access across workspaces. Subscription cancellation does not immediately revoke existing browser sessions. Seamless refresh, invitations, and tenant deletion remain future work. Email verification is implemented in Cloud. Cloud owns billing and applies its entitlement checks before issuing launch requests.
 
 ## Verification
 

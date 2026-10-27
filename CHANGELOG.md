@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Google connection and destination checks
+
+- Shared owner/operator OAuth flow with PKCE, browser-bound single-use state, encrypted refresh tokens and reconnect/disconnect controls.
+- Read-only Google Ads account/action discovery and revision-bound destination checks; no conversion uploads.
+- Additive migration 0010, self-hosted OAuth configuration, popup flow, diagnostics and setup guides.
+
 ## Unreleased — dependency security update
 
 - Update the PostgreSQL client’s transitive `ctutils` dependency to 0.4.4, fixing RUSTSEC-2026-0385. No application or database schema changes.

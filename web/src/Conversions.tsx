@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { type Client, money, label } from "./api";
+import { GoogleConnection } from "./GoogleConnection";
 
-type Settings = { customer_id: string; qualified_action_id: string; booking_action_id: string; allow_inferred_calls: boolean; version: number };
+export type Settings = { customer_id: string; qualified_action_id: string; booking_action_id: string; allow_inferred_calls: boolean; version: number };
 type Decision = "unknown" | "granted" | "denied";
 type Consent = { ad_user_data: Decision; ad_personalization: Decision; effective_at: string | null; reference: string; version: number };
 type Snapshot = { lead_id: string; inquiry_id: string; channel: string; source: string; event_at: string | null; visit_at: string | null; amount_minor: number | null; confidence: string; consent: Consent; transaction_id: string };
@@ -26,10 +27,11 @@ export function Conversions({ api }: { api: Client }) {
   }
   const candidate = data?.candidates.find(c => identity(c) === selected) ?? data?.candidates[0];
   return <div className="conversion-layout">
-    <p className="notice"><strong>Preparation only.</strong> Google Ads is not connected. Staged conversions are saved for review and are never sent in this release.</p>
+    <p className="notice"><strong>Uploads disabled.</strong> Connect Google to check accounts and actions. Staged conversions stay local and are never sent in this release.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {!data ? <p>Loading conversion preparation…</p> : <>
+      <GoogleConnection api={api} settings={data.settings} onChange={refresh} />
       <Mapping key={data.settings.version} value={data.settings} busy={busy} save={s => mutate("/conversions/settings", s, "Destination saved. Prepared events require review.", "PUT")} />
       <section className="card site-panel">
         <div className="section-heading"><div><span className="eyebrow">GOOGLE ADS</span><h2>Conversion preview</h2></div><button className="secondary" disabled={busy} onClick={() => { setError(""); void refresh().catch(e => setError(e.message)); }}>Refresh conversions</button></div>
@@ -60,7 +62,7 @@ export function Conversions({ api }: { api: Client }) {
 }
 function Mapping({ value, busy, save }: { value: Settings; busy: boolean; save: (s: Settings) => Promise<void> }) {
   const [draft, setDraft] = useState(value);
-  return <section className="card site-panel"><h2>Conversion destination</h2><p className="muted">Use your Google Ads customer ID without dashes and existing import conversion action IDs. Map only the event types you want. These IDs are saved locally; account access and action compatibility are not verified yet.</p><form className="site-form" onSubmit={e => { e.preventDefault(); void save(draft); }}>
+  return <section className="card site-panel"><h2>Conversion destination</h2><p className="muted">Use your Google Ads customer ID without dashes and existing import conversion action IDs. Map only the event types you want. Saving IDs does not verify them; use the Google connection’s validation control to check the saved destination.</p><form className="site-form" onSubmit={e => { e.preventDefault(); void save(draft); }}>
     <div className="form-field"><label htmlFor="ads-customer">Google Ads customer ID</label><input id="ads-customer" required inputMode="numeric" pattern="[0-9]{10}" maxLength={10} value={draft.customer_id} onChange={e => setDraft({ ...draft, customer_id: e.target.value })} /></div>
     <div className="form-field"><label htmlFor="ads-qualified">Qualified inquiry action ID</label><input id="ads-qualified" inputMode="numeric" pattern="[0-9]{1,20}" maxLength={20} value={draft.qualified_action_id} onChange={e => setDraft({ ...draft, qualified_action_id: e.target.value })} /></div>
     <div className="form-field"><label htmlFor="ads-booking">Booking action ID</label><input id="ads-booking" inputMode="numeric" pattern="[0-9]{1,20}" maxLength={20} value={draft.booking_action_id} onChange={e => setDraft({ ...draft, booking_action_id: e.target.value })} /></div>

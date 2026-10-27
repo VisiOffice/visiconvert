@@ -79,8 +79,11 @@ async fn website_capture_isolated_atomic_and_consent_gated() {
         cloud: Some(hosted::Config {
             service_key: "service-key-long-enough-for-tests".into(),
             cloud_origin: "https://cloud.example".into(),
+            app_origin: None,
         }),
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
     let website = "https://business.example";
     let input = json!({"name":"Business","origin":website,"allowed_fields":["name","email"],"enabled":true,"version":0});
@@ -423,8 +426,11 @@ async fn dni_routes_require_owner_origin_and_consent() {
         cloud: Some(hosted::Config {
             service_key: "dni-service-key-long-enough-for-test".into(),
             cloud_origin: "https://cloud.example".into(),
+            app_origin: None,
         }),
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
     let origin = "https://dni.example";
     let created = call(

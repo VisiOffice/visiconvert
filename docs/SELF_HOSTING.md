@@ -212,3 +212,10 @@ explicit allowlist that excludes local configuration, backups, and dependencies.
 Transfer both files, verify with `sha256sum -c <archive>.sha256`, and
 extract the archive. Run the install commands inside its `visiconvert/` directory.
 Use `--release` to require license metadata. Building a bundle does not publish it.
+
+## Optional Google connection
+
+Google OAuth, account/action discovery and destination checks work in self-hosted
+installs. Follow [Google connection setup](GOOGLE_CONNECTION.md) to configure your
+own Web OAuth client in private `config.env`. Both client variables are optional;
+set them together with the existing encryption key. Uploads remain disabled.

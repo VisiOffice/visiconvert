@@ -50,8 +50,9 @@ const pages = [
   { name: "Conversions" as Page, icon: Check },
   { name: "API keys" as Page, icon: ShieldCheck },
 ];
-export default function App() {
-  const [key, setKey] = useState("");
+type HostedShell = { token: string; onManage: () => void; onSignOut: () => Promise<void>; onExpired: () => void };
+export default function App({ hosted }: { hosted?: HostedShell }) {
+  const [key, setKey] = useState(hosted?.token || "");
   const [entry, setEntry] = useState("");
   const [page, setPage] = useState<Page>("Overview");
   const [boot, setBoot] = useState<Bootstrap | null>(null);
@@ -65,7 +66,10 @@ export default function App() {
   const [modal, setModal] = useState<"number" | "lead" | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
-  const api = useMemo(() => client(key), [key]);
+  const api = useMemo(() => client(key, hosted?.onExpired), [key, hosted?.onExpired]);
+  useEffect(() => {
+    if (hosted) void refresh(client(hosted.token, hosted.onExpired)).catch(error => setError(error instanceof Error ? error.message : "Unable to load workspace"));
+  }, [hosted?.token]);
   useEffect(() => {
     const code = new URLSearchParams(window.location.hash.slice(1)).get("launch");
     if (!code) return;
@@ -242,6 +246,7 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
+          {hosted && <button className="signout" onClick={hosted.onManage}><Layers3 size={16} />Workspaces & billing</button>}
           <div className="pilot-note">
             <ShieldCheck size={19} />
             <strong>Your stack, connected.</strong>
@@ -254,6 +259,7 @@ export default function App() {
           <button
             className="signout"
             onClick={async () => {
+              if (hosted) { try { await hosted.onSignOut(); } catch (error) { setError(error instanceof Error ? error.message : "Unable to sign out"); } return; }
               if (key.startsWith("vc_session_")) {
                 try {
                   const response = await fetch("/api/session", { method: "DELETE", headers: { Authorization: `Bearer ${key}` } });
@@ -610,7 +616,7 @@ export default function App() {
     </div>
   );
 }
-function Brand() {
+export function Brand() {
   return (
     <div className="brand">
       <span className="brand-icon">

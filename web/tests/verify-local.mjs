@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { verifyGrouping } from "./verify-grouping.mjs";
 import { verifyApiKeys } from "./verify-api-keys.mjs";
 import { verifyConversions } from "./verify-conversions.mjs";
+import { verifyGoogle } from "./verify-google.mjs";
 import { verifyDni } from "./verify-dni.mjs";
 import { verifySites } from "./verify-sites.mjs";
 import { randomBytes } from "node:crypto";
@@ -47,6 +48,8 @@ const env = {
   VISICONVERT_CLOUD_ORIGIN: "",
   TWILIO_ACCOUNT_SID: "",
   TWILIO_AUTH_TOKEN: "",
+  VISICONVERT_GOOGLE_CLIENT_ID: "",
+  VISICONVERT_GOOGLE_CLIENT_SECRET: "",
   PGCONNECT_TIMEOUT: "5",
   PGPORT: "5432",
   PGUSER: userInfo().username,
@@ -239,6 +242,7 @@ try {
     await command("cargo", ["test", "-p", "convert-server", "conversion_tests::", "--", "--ignored", "--test-threads=1"]);
   });
   await check("Public API: scopes, pagination, key lifecycle, hosted billing and isolation", () => command("cargo", ["test", "-p", "convert-server", "public_api_tests::", "--", "--ignored", "--test-threads=1"]));
+  await check("Google connection: OAuth binding, ownership, encryption, discovery and validation", () => command("cargo", ["test", "-p", "convert-server", "google_tests::", "--", "--ignored", "--test-threads=1"]));
   await check("DNI allocation: concurrency, cooldown, reuse, callback evidence, and isolation", () => command("cargo", ["test", "-p", "convert-store", "--test", "dni", "--", "--ignored", "--test-threads=1"]));
   await check("Apply application migrations twice", async () => {
     await command(path.join(root, "target/debug/convert-server"), ["migrate"]);
@@ -502,6 +506,7 @@ try {
     await page.getByRole("article",{name:"Prepared booking ads-browser-booking",exact:true}).getByText("canceled",{exact:true}).waitFor();
   });
   await check("API keys browser and CLI/MCP: create, use, rotate, revoke and mobile layout", () => verifyApiKeys({page,api,origin,artifactDir,root}));
+  await check("Google connection browser: setup, popup, account/action selection and stale validation", () => verifyGoogle({page,api,origin,artifactDir}));
   assert.deepEqual(errors, [], "No uncaught browser errors after API keys");
   result.status = "passed";
 } catch (error) {

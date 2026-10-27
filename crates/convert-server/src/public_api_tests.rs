@@ -64,6 +64,8 @@ fn app(store: Store, cloud: Option<hosted::Config>) -> Shared {
         cloud,
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
     })
 }
 fn input(scopes: Value) -> Value {
@@ -455,6 +457,7 @@ async fn hosted_keys_require_billing_membership_and_current_owner_credentials() 
         Some(hosted::Config {
             service_key: "a".repeat(64),
             cloud_origin: format!("http://{address}"),
+            app_origin: None,
         }),
     );
     let (status, result) = call(

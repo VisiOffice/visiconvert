@@ -24,8 +24,8 @@ should upgrade the engine and CLI together. See [API keys and v1](/api/public-ap
 Open your workspace, choose **API keys**, and create a named key. Read-only is the
 default. Grant write permissions only when needed. Save the secret when shown;
 you cannot retrieve it later. Hosted keys do not expire with the browser session.
-Use the engine origin (`https://workspaces.visiconvert.com` for hosted), not the
-billing portal. The same workflow is available in self-hosted workspaces.
+Use the engine origin (`https://workspaces.visiconvert.com` for hosted).
+Existing CLI configurations continue to work with the unified hosted app. The same workflow is available in self-hosted workspaces.
 
 ## Log in
 

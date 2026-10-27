@@ -17,3 +17,19 @@ __pycache__/
 
 
 /cloud/
+
+# Local credentials, deployment state, and database copies
+.wrangler/
+.aws/
+.codex/
+.agents/
+*.pem
+*.key
+*.p12
+*.pfx
+*.dump
+*.sql.gz
+*.sqlite3
+*.sqlite3-*
+/config/master.key
+/config/credentials/

@@ -96,9 +96,12 @@ async fn grouping_preserves_interactions_isolation_retries_and_money() {
         cloud: Some(hosted::Config {
             service_key: "grouping-service-test-key-at-least-32".into(),
             cloud_origin: "https://cloud.example".into(),
+            app_origin: None,
         }),
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
     let a = tenant.add_lead(&lead("a", "Google")).await.unwrap();
     let b = tenant.add_lead(&lead("b", "Referral")).await.unwrap();

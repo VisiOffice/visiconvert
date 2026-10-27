@@ -45,9 +45,12 @@ async fn cloud_handoff_enforces_membership_browser_binding_expiry_and_single_use
         twilio_token: None,
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
         cloud: Some(hosted::Config {
             service_key: service.clone(),
             cloud_origin: "http://127.0.0.1:3200".into(),
+            app_origin: None,
         }),
     });
     let first = Uuid::new_v4();
@@ -471,9 +474,12 @@ async fn credential_revocation_is_monotonic_isolated_and_serializes_exchange_and
         twilio_token: None,
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
         cloud: Some(hosted::Config {
             service_key: service.clone(),
             cloud_origin: "http://127.0.0.1:3200".into(),
+            app_origin: None,
         }),
     });
     let payload = json!({"user_id":owner,"credential_version":1});
@@ -595,5 +601,167 @@ async fn credential_revocation_is_monotonic_isolated_and_serializes_exchange_and
             .issue_hosted_code(future_workspace, future_user, "challenge", &key("new"), 3)
             .await
             .unwrap()
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires VISICONVERT_TEST_DATABASE_URL pointing to a disposable Postgres database"]
+async fn unified_handoff_requires_app_origin_cookie_owner_and_single_use() {
+    let database = std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap();
+    let store = Store::connect(&database, Uuid::new_v4()).await.unwrap();
+    store.migrate().await.unwrap();
+    let workspace = Uuid::new_v4();
+    let owner = Uuid::new_v4();
+    store
+        .provision_hosted(workspace, owner, "Unified workspace")
+        .await
+        .unwrap();
+    let service = "c".repeat(64);
+    let app = Arc::new(App {
+        store,
+        api_key: "a".repeat(64),
+        public_url: "https://legacy.example".into(),
+        twilio_account: None,
+        twilio_token: None,
+        vault: None,
+        twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
+        cloud: Some(hosted::Config {
+            service_key: service.clone(),
+            cloud_origin: "https://cloud.example".into(),
+            app_origin: Some("https://cloud.example".into()),
+        }),
+    });
+    assert_eq!(
+        value(call(app.clone(), "GET", "/runtime.json", "", Value::Null, &[]).await).await["hosted_app_origin"],
+        "https://cloud.example"
+    );
+    let payload = json!({"workspace_id":workspace});
+    for origin in ["https://evil.example", "https://legacy.example", "null", ""] {
+        assert_eq!(
+            call(
+                app.clone(),
+                "POST",
+                "/auth/prepare",
+                "",
+                payload.clone(),
+                &[("origin", origin)]
+            )
+            .await
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    let prepared = call(
+        app.clone(),
+        "POST",
+        "/auth/prepare",
+        "",
+        payload,
+        &[("origin", "https://cloud.example")],
+    )
+    .await;
+    assert_eq!(prepared.status(), StatusCode::OK);
+    let cookie_header = prepared.headers()["set-cookie"].to_str().unwrap();
+    assert!(
+        cookie_header.contains("HttpOnly")
+            && cookie_header.contains("Secure")
+            && cookie_header.contains("Path=/auth")
+    );
+    let cookie = cookie_header.split(';').next().unwrap().to_owned();
+    let state = value(prepared).await["state"].as_str().unwrap().to_owned();
+    assert!(!state.contains(cookie.split('=').nth(1).unwrap()));
+    let launch_payload = json!({"workspace_id":workspace,"user_id":owner,"state":state});
+    let launch = call(
+        app.clone(),
+        "POST",
+        "/internal/cloud/launch",
+        &service,
+        launch_payload,
+        &[],
+    )
+    .await;
+    assert_eq!(launch.status(), StatusCode::OK);
+    let code = value(launch).await["code"].as_str().unwrap().to_owned();
+    for (origin, binding) in [
+        ("https://evil.example", cookie.as_str()),
+        ("https://cloud.example", ""),
+    ] {
+        assert_eq!(
+            call(
+                app.clone(),
+                "POST",
+                "/auth/exchange",
+                "",
+                json!({"code":code}),
+                &[("origin", origin), ("cookie", binding)]
+            )
+            .await
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let headers = [
+        ("origin", "https://cloud.example"),
+        ("cookie", cookie.as_str()),
+    ];
+    let exchange = call(
+        app.clone(),
+        "POST",
+        "/auth/exchange",
+        "",
+        json!({"code":code}),
+        &headers,
+    )
+    .await;
+    assert_eq!(exchange.status(), StatusCode::OK);
+    let token = value(exchange).await["token"].as_str().unwrap().to_owned();
+    assert_eq!(
+        value(
+            call(
+                app.clone(),
+                "GET",
+                "/api/bootstrap",
+                &token,
+                Value::Null,
+                &[]
+            )
+            .await
+        )
+        .await["id"],
+        workspace.to_string()
+    );
+    assert_eq!(
+        call(
+            app.clone(),
+            "POST",
+            "/auth/exchange",
+            "",
+            json!({"code":code}),
+            &headers
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            app.clone(),
+            "DELETE",
+            "/api/session",
+            &token,
+            Value::Null,
+            &[]
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(app, "GET", "/api/bootstrap", &token, Value::Null, &[])
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
     );
 }

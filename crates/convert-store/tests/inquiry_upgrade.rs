@@ -73,6 +73,7 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
         include_str!("../migrations/0007_dynamic_numbers.sql"),
         include_str!("../migrations/0008_conversion_preparation.sql"),
         include_str!("../migrations/0009_public_api.sql"),
+        include_str!("../migrations/0010_google_connection.sql"),
     ] {
         sqlx::raw_sql(migration).execute(&pool).await.unwrap();
     }
