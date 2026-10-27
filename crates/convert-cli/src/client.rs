@@ -60,20 +60,26 @@ impl Client {
                 && parsed.password().is_none(),
             "Use an HTTPS server origin; HTTP is permitted only for exact loopback hosts"
         );
+        let builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .user_agent(concat!("visiconvert-cli/", env!("CARGO_PKG_VERSION")));
+        // Delegations are engine-local credentials and must never use an ambient proxy.
+        let builder = if key.starts_with("vc_mcp_") {
+            builder.no_proxy()
+        } else {
+            builder
+        };
         Ok(Self {
-            http: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(Duration::from_secs(5))
-                .timeout(Duration::from_secs(30))
-                .user_agent(concat!("visiconvert-cli/", env!("CARGO_PKG_VERSION")))
-                .build()?,
+            http: builder.build()?,
             base: parsed.origin().ascii_serialization(),
             key: key.to_owned(),
         })
     }
 
     pub fn public_key(&self) -> bool {
-        self.key.starts_with("vc_key_")
+        self.key.starts_with("vc_key_") || self.key.starts_with("vc_mcp_")
     }
     pub async fn lead(&self, id: Uuid) -> Result<Lead, Error> {
         self.send(self.http.get(self.url(&format!("/api/leads/{id}"))))

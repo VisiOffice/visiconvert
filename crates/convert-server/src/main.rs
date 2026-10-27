@@ -5,6 +5,7 @@ mod google;
 mod hosted;
 mod inquiries;
 mod public_api;
+mod remote_mcp;
 mod secrets;
 mod signalwire;
 mod sites;
@@ -202,6 +203,7 @@ fn router(app: Shared) -> Router {
     Router::new()
         .merge(browser)
         .merge(hosted::routes(app.clone()))
+        .route("/mcp", axum::routing::any(remote_mcp::remote))
         .merge(sites::public_routes(app.clone()))
         .nest("/api/v1", public_api::routes(app.clone()))
         .nest("/api", api)

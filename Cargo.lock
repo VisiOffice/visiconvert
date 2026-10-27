@@ -410,6 +410,7 @@ dependencies = [
  "chrono",
  "clap",
  "convert-adapters",
+ "convert-cli",
  "convert-domain",
  "convert-store",
  "dotenvy",

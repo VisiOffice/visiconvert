@@ -6,11 +6,12 @@ use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
+const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 pub struct Server {
     client: Result<Client, String>,
     allow_changes: bool,
+    scopes: Option<Vec<String>>,
 }
 
 struct Tool {
@@ -254,7 +255,31 @@ impl Server {
         Self {
             client,
             allow_changes,
+            scopes: None,
         }
+    }
+
+    /// Remote requests carry only the permissions approved by the workspace owner.
+    pub fn scoped(client: Result<Client, String>, scopes: Vec<String>) -> Self {
+        Self {
+            client,
+            allow_changes: scopes.iter().any(|s| s != "read"),
+            scopes: Some(scopes),
+        }
+    }
+    fn permitted(&self, tool: &Tool) -> bool {
+        let scope = match tool.name {
+            "create_site" | "update_site" | "configure_site_pool" => "setup:write",
+            "add_tracking_number" => "numbers:write",
+            "record_outcome" => "bookings:write",
+            _ if tool.changes => "leads:write",
+            _ => "read",
+        };
+        self.scopes
+            .as_ref()
+            .map_or(self.allow_changes || !tool.changes, |s| {
+                s.iter().any(|v| v == scope)
+            })
     }
 
     pub async fn run(self) -> Result<()> {
@@ -309,7 +334,9 @@ impl Server {
             .iter()
             .find(|v| **v == requested)
             .unwrap_or(&PROTOCOL_VERSIONS[0]);
-        let mode = if self.allow_changes {
+        let mode = if self.scopes.is_some() {
+            "Only tools allowed by this connection are available. Change permissions by reconnecting and approving in VisiConvert."
+        } else if self.allow_changes {
             "Tools can read and change this workspace."
         } else {
             "Tools are read-only. Restart with `visiconvert mcp --allow-changes` to add numbers, leads, qualifications and bookings."
@@ -325,7 +352,7 @@ impl Server {
     fn tools(&self) -> Vec<Value> {
         TOOLS
             .iter()
-            .filter(|tool| self.allow_changes || !tool.changes)
+            .filter(|tool| self.permitted(tool))
             .map(|tool| {
                 json!({
                     "name": tool.name,
@@ -348,8 +375,8 @@ impl Server {
         let args = params.get("arguments").unwrap_or(&empty);
         let outcome = match TOOLS.iter().find(|tool| tool.name == name) {
             None => Err(anyhow!("Unknown tool {name}")),
-            Some(tool) if tool.changes && !self.allow_changes => Err(anyhow!(
-                "{name} changes data. Restart the server with `visiconvert mcp --allow-changes` to use it."
+            Some(tool) if !self.permitted(tool) => Err(anyhow!(
+                "{name} is not permitted by this connection. Approve the required scope, or use `visiconvert mcp --allow-changes` for local stdio."
             )),
             Some(_) => match &self.client {
                 Err(message) => Err(anyhow!("{message}")),
@@ -520,4 +547,41 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
         }
         _ => bail!("Unknown tool {name}"),
     })
+}
+
+#[cfg(test)]
+mod scoped_tests {
+    use super::*;
+    #[tokio::test]
+    async fn remote_tools_and_calls_enforce_each_scope() {
+        for (scope, allowed) in [
+            (
+                "setup:write",
+                vec!["create_site", "update_site", "configure_site_pool"],
+            ),
+            ("numbers:write", vec!["add_tracking_number"]),
+            ("leads:write", vec!["add_lead", "qualify_lead"]),
+            ("bookings:write", vec!["record_outcome"]),
+        ] {
+            let server =
+                Server::scoped(Err("no network".into()), vec!["read".into(), scope.into()]);
+            let tools = server.tools();
+            for tool in TOOLS.iter().filter(|t| t.changes) {
+                assert_eq!(
+                    tools.iter().any(|v| v["name"] == tool.name),
+                    allowed.contains(&tool.name)
+                );
+                if !allowed.contains(&tool.name) {
+                    let result = server.call(&json!({"name":tool.name,"arguments":{}})).await;
+                    assert_eq!(result["isError"], true);
+                    assert!(
+                        result["content"][0]["text"]
+                            .as_str()
+                            .unwrap()
+                            .contains("not permitted")
+                    );
+                }
+            }
+        }
+    }
 }

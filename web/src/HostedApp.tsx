@@ -1,3 +1,4 @@
+import { McpAuthorization, McpConnections } from "./McpAuthorization";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import App, { Brand } from "./App";
 import { ArrowRight, Layers3, LogOut, Plus, ShieldCheck } from "./icons";
@@ -97,20 +98,22 @@ export default function HostedApp() {
     done={(value, text) => {
       if (value) setSession(value);
       setNotice(text || "");
-      if (value?.user) navigate(value.user.email_verified ? (workspaceId ? path : "/workspaces") : "/email_verification", true);
+      if (value?.user) navigate(value.user.email_verified ? (path === "/mcp/authorize" ? route : workspaceId ? path : "/workspaces") : "/email_verification", true);
       else navigate("/session/new", true);
     }} />;
 
   const detail = path.match(new RegExp(`^/workspaces/(${uuid})(/billing|/authorize)?$`));
   return <div className="app cloud-app">
     <aside className="sidebar"><Brand /><div className="workspace"><span className="workspace-avatar">A</span><div><strong>Your account</strong><small>{session.user.email}</small></div></div>
-      <span className="nav-label">ACCOUNT</span><nav><Link className="cloud-nav active" to="/workspaces"><Layers3 size={18} />Workspaces</Link></nav>
+      <span className="nav-label">ACCOUNT</span><nav><Link className={`cloud-nav ${path !== "/connected-agents" && path !== "/mcp/authorize" ? "active" : ""}`} to="/workspaces"><Layers3 size={18} />Workspaces</Link><Link className={`cloud-nav ${path === "/connected-agents" || path === "/mcp/authorize" ? "active" : ""}`} to="/connected-agents"><ShieldCheck size={18} />Connected agents</Link></nav>
       <div className="sidebar-bottom"><div className="pilot-note"><ShieldCheck size={19} /><strong>Your business, connected.</strong><p>Manage your workspaces and billing in one place.</p></div><button className="signout" onClick={() => void signOut().catch(() => {})}><LogOut size={16} />Sign out</button></div>
     </aside>
     <main className="main"><header className="topbar"><span>VisiConvert · Account</span><Link to="/workspaces/new">New workspace</Link></header>
       <div className="content cloud-content">{notice && <p role="status" className="notice">{notice}</p>}{error && <p role="alert" className="error">{error}</p>}
         {!session.user.email_verified && path !== "/email_verification" && <p className="notice">Verify your email before creating a workspace. <Link to="/email_verification">Check verification</Link></p>}
-        {workspaceId ? <section className="card cloud-panel"><h1>Opening your workspace</h1><p role="status">{opening ? "Signing you in securely…" : "The workspace could not be opened."}</p><Link className="primary" to={`/workspaces/${workspaceId}`}>Back to workspace</Link></section>
+        {path === "/mcp/authorize" ? <McpAuthorization key={route} request={request} verified={session.user.email_verified} />
+          : path === "/connected-agents" ? <McpConnections request={request} />
+          : workspaceId ? <section className="card cloud-panel"><h1>Opening your workspace</h1><p role="status">{opening ? "Signing you in securely…" : "The workspace could not be opened."}</p><Link className="primary" to={`/workspaces/${workspaceId}`}>Back to workspace</Link></section>
           : path === "/email_verification" ? <Verification request={request} session={session} refresh={async () => { const value = await request<CloudSession>("/session"); setSession(value); if (value.user?.email_verified) navigate("/workspaces/new"); }} />
           : path === "/workspaces/new" ? <NewWorkspace request={request} verified={session.user.email_verified} />
           : detail ? <WorkspaceDetail key={route} id={detail[1]} billing={detail[2] === "/billing"} authorize={detail[2] === "/authorize"} request={request} beforeOpen={revokeEngine} />

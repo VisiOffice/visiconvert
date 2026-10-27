@@ -1,8 +1,5 @@
-mod client;
+use convert_cli::{client, mcp, ops, reference};
 mod config;
-mod mcp;
-mod ops;
-mod reference;
 #[cfg(test)]
 mod tests;
 

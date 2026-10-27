@@ -1217,3 +1217,10 @@ footer button {
 .setup-instructions > li { padding: 8px 0; }
 .setup-instructions .site-code { width: 100%; }
 .setup-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* OAuth callbacks and permission descriptions must fit narrow account screens. */
+.cloud-panel .site-code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.cloud-panel fieldset { min-width: 0; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+.cloud-panel fieldset .site-toggle { margin: 12px 0; align-items: flex-start; }
+
+.cloud-panel fieldset .site-toggle input { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; }

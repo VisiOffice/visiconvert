@@ -347,7 +347,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
             <p>Your agent can help set up websites and call tracking. Follow the same steps yourself if you prefer.</p>
             <button className="primary" onClick={() => setPage("Setup")}>Set up this workspace</button>
           </section>}
-          {page === "Setup" && <Setup api={api} onNavigate={setPage} onKey={() => { setSetupKey(true); setPage("API keys"); }} />}
+          {page === "Setup" && <Setup hosted={!!hosted} api={api} onNavigate={setPage} onKey={() => { setSetupKey(true); setPage("API keys"); }} />}
           {page === "Overview" && (
             <>
               <div className="section-heading">

@@ -3,9 +3,25 @@ title: Set up an AI agent
 description: Connect Claude or another MCP client to VisiConvert so an agent can check setup, qualify leads and record bookings.
 ---
 
+## Hosted: connect with a URL
+
+The remote MCP feature requires the paired OAuth engine/Rails release and gateway update. Once your hosted installation has that release, add this custom connector URL:
+
+```text
+https://cloud.visiconvert.com/mcp
+```
+
+In Claude, choose **Register automatically** for the OAuth client if prompted. Sign in with your **VisiConvert** account, choose one workspace, and approve permissions. No CLI installation or API key is required. This release supports automatic registration, not Claude’s published client identity option.
+
+Read access includes customer contact information. Write permissions start unchecked on the approval page. For website setup, the client must request `read setup:write`; approve website/DNI changes explicitly. Add `numbers:write`, `leads:write`, or `bookings:write` only if needed. The server only offers tools allowed by your approval. A workspace must be ready and have billing or complimentary access.
+
+Revoke access anytime under **Account → Connected agents**. Connections expire after 90 days; password resets and loss of workspace access also block them. This is VisiConvert account authorization, independent of connecting Google Ads.
+
+## Local: CLI and API key
+
 `visiconvert mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio. It uses the same API and saved login as the command line. An agent can inspect setup evidence, configure websites and DNI pools, register tracking numbers, review leads and record bookings. The [tool reference](/reference/mcp/) lists every tool.
 
-## Before you start
+### Before you start
 
 Open **Setup → Connect your agent** in your workspace. It provides a temporary-key preset, a login command, MCP configuration and a copyable setup prompt. These features require the engine and CLI containing migration **0012**; upgrade both together.
 
@@ -18,7 +34,7 @@ VISICONVERT_CONFIG=/home/you/.config/visiconvert/business.json visiconvert login
 
 Replace the path and server origin for your installation. Enter the API key at the private CLI prompt, never in agent chat. Read access includes customer contact information. For setup, grant `read` + `setup:write`; add `numbers:write` only to register owned numbers. The UI preset expires after seven days. Revoke it when finished.
 
-In the MCP configuration, set the same `VISICONVERT_CONFIG` path and server origin. Clear any inherited `VISICONVERT_API_KEY` override (an empty value uses the saved key). Do not share one config file between workspaces. The server is local **stdio**, not a hosted remote MCP URL.
+In the MCP configuration, set the same `VISICONVERT_CONFIG` path and server origin. Clear any inherited `VISICONVERT_API_KEY` override (an empty value uses the saved key). Do not share one config file between workspaces. This alternative runs over local **stdio**; it does not use the remote MCP URL or OAuth.
 
 ## Claude Code
 
@@ -53,9 +69,9 @@ Add the server to the client's MCP configuration. For Claude Desktop, that is `c
 | Tier | Tools | When |
 |---|---|---|
 | **Read** | `get_status`, `get_setup_status`, `list_sites`, `get_site_pool`, `list_numbers`, `list_twilio_numbers`, `list_signalwire_numbers`, `list_leads`, `get_lead_outcomes`, `source_report` | Always |
-| **Change** | `create_site`, `update_site`, `configure_site_pool`, `add_tracking_number`, `add_lead`, `qualify_lead`, `record_outcome` | Only with `--allow-changes` |
+| **Change** | `create_site`, `update_site`, `configure_site_pool`, `add_tracking_number`, `add_lead`, `qualify_lead`, `record_outcome` | With approved OAuth write scopes, or local `--allow-changes` plus key scopes |
 
-Every tool carries MCP annotations that mark it as read-only or not, so clients can ask before changes. Without `--allow-changes`, the change tools are not listed at all.
+Every tool carries MCP annotations that mark it as read-only or not, so clients can ask before changes. For local stdio, without `--allow-changes` the change tools are not listed. Remote MCP independently filters tools by the scopes you approved.
 
 ## What it will not do
 

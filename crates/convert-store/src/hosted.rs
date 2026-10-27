@@ -147,3 +147,17 @@ impl Store {
         Ok(current)
     }
 }
+
+impl Store {
+    /// Remote MCP delegation must satisfy the same engine-side membership and
+    /// credential-version fences as a durable hosted API key.
+    pub async fn mcp_identity(
+        &self,
+        workspace: Uuid,
+        user: Uuid,
+        version: i64,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar("SELECT w.name FROM workspaces w JOIN hosted_workspaces h ON h.workspace_id=w.id JOIN hosted_memberships m ON m.workspace_id=w.id JOIN hosted_users u ON u.user_id=m.user_id WHERE w.id=$1 AND m.user_id=$2 AND u.credential_version=$3 AND h.enabled AND m.enabled AND m.role='owner'")
+            .bind(workspace).bind(user).bind(version).fetch_optional(&self.pool).await?)
+    }
+}

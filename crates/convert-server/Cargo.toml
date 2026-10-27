@@ -7,6 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+convert-cli = { path = "../convert-cli" }
+hmac.workspace = true
 convert-domain.workspace = true
 convert-adapters.workspace = true
 convert-store.workspace = true
@@ -34,6 +36,5 @@ convert-adapters = { path = "../convert-adapters", features = ["test-support"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 sqlx.workspace = true
-hmac.workspace = true
 sha1.workspace = true
 
