@@ -42,6 +42,8 @@ enum Command {
     Logout,
     /// Server health, phone connections and what to do next
     Status,
+    /// Website, DNI and call setup evidence (JSON)
+    Setup,
     /// Connect a phone provider (workspace owners only)
     #[command(subcommand)]
     Connect(Connect),
@@ -56,7 +58,7 @@ enum Command {
     Report(Report),
     /// Run as an MCP server on stdio for AI agents
     Mcp {
-        /// Expose tools that add numbers and leads, qualify leads and record bookings
+        /// Expose tools that configure sites/DNI, add numbers and leads, and update outcomes
         #[arg(long)]
         allow_changes: bool,
     },
@@ -240,6 +242,11 @@ async fn run(cli: Cli) -> Result<()> {
                     "Nothing saved.".into()
                 }
             })
+        }
+        Command::Setup => {
+            let result = connect()?.setup().await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
         }
         Command::Status => {
             let status = ops::status(&connect()?).await?;

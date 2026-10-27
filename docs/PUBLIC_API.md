@@ -25,12 +25,13 @@ Permissions:
 
 | Scope | Operations |
 |---|---|
-| `read` | Workspace, inquiries, interactions, bookings, source reports, numbers, Twilio status/inventory |
+| `read` | Workspace, inquiries, interactions, bookings, source reports, numbers, Twilio and SignalWire status/inventory, setup evidence and site/DNI settings |
 | `leads:write` | Create form interactions; update shared inquiry qualification/notes |
 | `bookings:write` | Record, revise, cancel bookings |
-| `numbers:write` | Register an existing voice number in the connected Twilio account |
+| `numbers:write` | Register an existing voice number in the connected Twilio or SignalWire account |
+| `setup:write` | Create/update website settings and DNI pools (engine migration 0012) |
 
-Keys cannot manage keys, billing, Twilio credentials, sites, DNI, inquiry grouping,
+Keys cannot manage keys, billing, provider credentials, inquiry grouping,
 or conversion preparation. Use the workspace UI for those operations. Read-only
 keys remain read-only even if an MCP client enables change tools.
 
@@ -152,3 +153,25 @@ secret manager. Existing operator/bootstrap access is unchanged.
 ## SignalWire
 
 Read project status and callback readiness at `GET /api/v1/connections/signalwire`, and owned voice-number inventory at `GET /api/v1/connections/signalwire/numbers`. Both require `read`. Register a number with `POST /api/v1/numbers`, `numbers:write`, and `provider: "signalwire"`. Omitted provider remains `twilio`. Provider secrets are configured only in the workspace UI. See [SignalWire setup](SIGNALWIRE_CONNECTIONS.md).
+
+## Agent onboarding and website setup
+
+With engine migration 0012, `GET /api/v1/setup` returns per-site tracker/form activity,
+DNI configuration and assignment evidence, and per-number call receipts. This is
+historical evidence, not proof of current forwarding or correct attribution.
+`GET /api/v1/sites` lists settings, current versions and the public tracker URL.
+`GET /api/v1/sites/{id}/number-pool` returns pool configuration and recent assignments.
+These reads require `read`.
+
+`setup:write` grants `POST /api/v1/sites`, `PATCH /api/v1/sites/{id}` and
+`PUT /api/v1/sites/{id}/number-pool`. Existing keys do not gain this permission.
+Use version 0 for a new site/pool; use the current version for updates. Creation
+is not retry-safe: inspect the site list after an uncertain response. A 409 on
+update requires reviewing the current settings before trying again. Pausing a site
+or changing its origin revokes active DNI assignments. Pool replacement can revoke
+assignments for removed numbers. No operation purchases numbers or changes carrier routing.
+
+The **Setup** screen provides a key preset (read + setup:write, seven-day expiry),
+a local stdio MCP configuration and a guided prompt. Registering owned numbers
+also requires `numbers:write`. Provider credentials remain in Connections; never
+send secrets to agent chat. Revoke temporary setup keys after acceptance checks.

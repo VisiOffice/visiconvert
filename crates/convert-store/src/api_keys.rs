@@ -32,9 +32,16 @@ impl KeyInput {
             || self.name.chars().count() > 80
             || self.name.chars().any(char::is_control)
             || !self.scopes.iter().any(|s| s == "read")
-            || self.scopes.len() > 4
+            || self.scopes.len() > 5
             || self.scopes.iter().any(|s| {
-                !["read", "leads:write", "bookings:write", "numbers:write"].contains(&s.as_str())
+                ![
+                    "read",
+                    "leads:write",
+                    "bookings:write",
+                    "numbers:write",
+                    "setup:write",
+                ]
+                .contains(&s.as_str())
             })
             || self.expires_at.is_some_and(|d| d <= Utc::now())
         {

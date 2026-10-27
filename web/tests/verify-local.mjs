@@ -1,3 +1,4 @@
+import { verifySetup } from "./verify-setup.mjs";
 import { verifySignalWire } from "./verify-signalwire.mjs";
 import assert from "node:assert/strict";
 import { verifyGrouping } from "./verify-grouping.mjs";
@@ -294,6 +295,7 @@ try {
     await page.getByRole("heading", { name: "See what’s working." }).waitFor();
     await page.getByRole("heading", { name: "No inquiries to show" }).waitFor();
   });
+  await check("Setup onboarding: scoped agent key, site/pool API, evidence and short-window navigation", () => verifySetup({page,api,apiKey,artifactDir}));
   let lead;
   await check("Create a form lead through the browser", async () => {
     await page

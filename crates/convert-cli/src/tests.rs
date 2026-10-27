@@ -448,7 +448,7 @@ async fn mcp_is_read_only_unless_allowed() {
         prompt["result"]["messages"][0]["content"]["text"]
             .as_str()
             .unwrap()
-            .contains("Never ask them to paste credentials into this conversation")
+            .contains("Never request secrets in chat")
     );
 }
 
@@ -545,4 +545,79 @@ async fn signalwire_cli_and_mcp_select_provider_and_report_callbacks() {
         data.lock().unwrap().numbers[0].provider,
         PhoneProvider::Signalwire
     );
+}
+
+#[tokio::test]
+async fn mcp_setup_tools_use_public_routes_and_preserve_versions() {
+    let seen: Arc<Mutex<Vec<(String, Value)>>> = Arc::default();
+    let recorded = seen.clone();
+    let api = Router::new().fallback(move |request: axum::extract::Request| {
+        let recorded = recorded.clone();
+        async move {
+            let path = request.uri().path().to_owned();
+            let method = request.method().to_string();
+            let bytes = axum::body::to_bytes(request.into_body(), 8192)
+                .await
+                .unwrap();
+            let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            recorded
+                .lock()
+                .unwrap()
+                .push((format!("{method} {path}"), body));
+            Json(json!({"ok":true}))
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
+    let client = Client::new(
+        &format!("http://{address}"),
+        &format!("vc_key_{}", Uuid::new_v4().simple()),
+    )
+    .unwrap();
+    let reader = mcp::Server::new(Ok(client.clone()), false);
+    let writer = mcp::Server::new(Ok(client), true);
+    let site = Uuid::new_v4().to_string();
+    let input = json!({"name":"Pilot","origin":"https://pilot.example","allowed_fields":["email"],"enabled":true});
+    for name in ["create_site", "update_site", "configure_site_pool"] {
+        let blocked = reader
+            .handle(rpc(1, "tools/call", json!({"name":name,"arguments":input})))
+            .await
+            .unwrap();
+        assert_eq!(blocked["result"]["isError"], true);
+    }
+    assert!(seen.lock().unwrap().is_empty());
+    for (name, args) in [
+        ("get_setup_status", json!({})),
+        ("list_sites", json!({})),
+        ("get_site_pool", json!({"site_id":site})),
+        ("create_site", input.clone()),
+        (
+            "update_site",
+            json!({"site_id":site,"version":7,"name":"Pilot","origin":"https://pilot.example","allowed_fields":["email"],"enabled":false}),
+        ),
+        (
+            "configure_site_pool",
+            json!({"site_id":site,"version":4,"fallback_phone":"+12025550111","enabled":false,"number_ids":[],"dedicated_numbers":false}),
+        ),
+    ] {
+        let result = writer
+            .handle(rpc(2, "tools/call", json!({"name":name,"arguments":args})))
+            .await
+            .unwrap();
+        assert_eq!(result["result"]["isError"], false, "{result}");
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].0, "GET /api/v1/setup");
+    assert_eq!(seen[1].0, "GET /api/v1/sites");
+    assert_eq!(seen[2].0, format!("GET /api/v1/sites/{site}/number-pool"));
+    assert_eq!(seen[3].0, "POST /api/v1/sites");
+    assert_eq!(seen[3].1["version"], 0);
+    assert_eq!(seen[4].0, format!("PATCH /api/v1/sites/{site}"));
+    assert_eq!(seen[4].1["version"], 7);
+    assert!(seen[4].1.get("site_id").is_none());
+    assert_eq!(seen[5].0, format!("PUT /api/v1/sites/{site}/number-pool"));
+    assert_eq!(seen[5].1["version"], 4);
+    assert!(seen[5].1.get("site_id").is_none());
+    task.abort();
 }

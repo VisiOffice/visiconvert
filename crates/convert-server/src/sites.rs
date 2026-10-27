@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 pub fn private_routes() -> Router<Shared> {
     Router::new()
+        .route("/setup", get(setup))
         .route("/sites", get(list).post(save_new))
         .route("/sites/{id}", patch(save_existing))
         .route("/sites/{id}/number-pool", get(pool).put(save_pool))
@@ -46,11 +47,24 @@ async fn owner(access: &hosted::Access) -> Result<(), ApiError> {
     }
     Ok(())
 }
-async fn list(State(a): State<Shared>, Extension(access): Extension<hosted::Access>) -> Api<Value> {
+pub(super) async fn list(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+) -> Api<Value> {
     owner(&access).await?;
     Ok(Json(
         json!({"sites":access.store.sites().await?,"tracker_url":format!("{}/tracker.js",a.public_url)}),
     ))
+}
+pub(super) async fn setup(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+) -> Api<Value> {
+    owner(&access).await?;
+    let mut value = access.store.setup_status().await?;
+    value["workspace_id"] = json!(access.store.workspace);
+    value["tracker_url"] = json!(format!("{}/tracker.js", a.public_url));
+    Ok(Json(value))
 }
 fn invalid(message: &'static str) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, message.into())
@@ -95,7 +109,7 @@ fn validate_site(input: &mut SiteInput) -> Result<(), ApiError> {
     }
     Ok(())
 }
-async fn save_new(
+pub(super) async fn save_new(
     Extension(access): Extension<hosted::Access>,
     Json(mut input): Json<SiteInput>,
 ) -> Api<Value> {
@@ -105,7 +119,7 @@ async fn save_new(
         json!({"id":access.store.save_site(None, &input).await?}),
     ))
 }
-async fn save_existing(
+pub(super) async fn save_existing(
     Extension(access): Extension<hosted::Access>,
     Path(id): Path<Uuid>,
     Json(mut input): Json<SiteInput>,
@@ -402,11 +416,14 @@ mod tests {
     }
 }
 
-async fn pool(Extension(access): Extension<hosted::Access>, Path(id): Path<Uuid>) -> Api<Value> {
+pub(super) async fn pool(
+    Extension(access): Extension<hosted::Access>,
+    Path(id): Path<Uuid>,
+) -> Api<Value> {
     owner(&access).await?;
     Ok(Json(access.store.dni_pool(id).await?))
 }
-async fn save_pool(
+pub(super) async fn save_pool(
     Extension(access): Extension<hosted::Access>,
     Path(id): Path<Uuid>,
     Json(input): Json<convert_store::dni::PoolInput>,

@@ -2,12 +2,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { type Client } from "./api";
 type Key = { id: string; name: string; prefix: string; scopes: string[]; expires_at: string | null; revoked_at: string | null; last_used_at: string | null; version: number };
 type Data = { keys: Key[]; history: { id: number; kind: string; actor: string; created_at: string }[] };
-const writeScopes = [["leads:write", "Create interactions and review inquiries"], ["bookings:write", "Record, revise, and cancel bookings"], ["numbers:write", "Register existing Twilio numbers"]];
-export function ApiKeys({ api }: { api: Client }) {
+const writeScopes = [["leads:write", "Create interactions and review inquiries"], ["bookings:write", "Record, revise, and cancel bookings"], ["numbers:write", "Register existing Twilio or SignalWire numbers"], ["setup:write", "Create and update websites and DNI pools"]];
+export function ApiKeys({ api, setup = false }: { api: Client; setup?: boolean }) {
   const [data, setData] = useState<Data | null>(null);
-  const [name, setName] = useState("");
-  const [scopes, setScopes] = useState(["read"]);
-  const [expires, setExpires] = useState("");
+  const [name, setName] = useState(setup ? "Agent setup" : "");
+  const [scopes, setScopes] = useState(setup ? ["read", "setup:write"] : ["read"]);
+  const [expires, setExpires] = useState(setup ? new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 19) : "");
   const [secret, setSecret] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -27,6 +27,7 @@ export function ApiKeys({ api }: { api: Client }) {
     {notice && <p className="notice" role="status">{notice}</p>}
     {secret && <section className="card site-panel"><h2>Save your new API key</h2><p>This secret cannot be retrieved again. Store it in your password or secret manager. Leaving this page clears it from the screen.</p><textarea aria-label="New API key" className="site-code" readOnly value={secret} rows={3} /><button className="secondary" onClick={() => { setSecret(""); setNotice(""); }}>I saved the key</button></section>}
     <section className="card site-panel"><h2>Create an API key</h2><p className="muted">One key belongs to this workspace. Read access includes customer contact information and notes. Grant only the write permissions the integration needs. Keys cannot manage other keys, billing, or provider credentials.</p>
+      {setup && <p className="notice">Temporary setup key: read + website/DNI setup, expiring in seven days. Add number registration only if your agent will register owned numbers. Save the key privately with the CLI; never paste it into agent chat. Revoke it here when setup is finished.</p>}
       <form className="site-form" onSubmit={create}>
         <div className="form-field"><label htmlFor="key-name">Key name</label><input id="key-name" required maxLength={80} value={name} onChange={e => setName(e.target.value)} placeholder="CRM integration" /></div>
         <div className="form-field"><label htmlFor="key-expiration">Expires at (UTC, optional)</label><input id="key-expiration" type="datetime-local" step="1" value={expires} onChange={e => setExpires(e.target.value)} /></div>

@@ -558,3 +558,274 @@ fn openapi_covers_public_routes() {
         "Management endpoints must stay outside the integration API"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn setup_scope_sites_pool_versions_evidence_and_tenant_isolation() {
+    let db = std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap();
+    let store = Store::connect(&db, Uuid::new_v4()).await.unwrap();
+    store.migrate().await.unwrap();
+    let app = app(store.clone(), None);
+    let operator = &app.api_key;
+    let site = json!({"name":"Setup pilot","origin":"https://setup.example","allowed_fields":["email"],"enabled":true,"version":0});
+    let mut writer = String::new();
+    for scopes in [
+        json!(["read"]),
+        json!(["read", "leads:write", "bookings:write", "numbers:write"]),
+        json!(["read", "setup:write"]),
+    ] {
+        let (status, key) = call(
+            app.clone(),
+            "POST",
+            "/api/api-keys",
+            operator,
+            input(scopes.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{key}");
+        let secret = key["secret"].as_str().unwrap();
+        let (status, evidence) =
+            call(app.clone(), "GET", "/api/v1/setup", secret, Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{evidence}");
+        assert_eq!(evidence["sites"], json!([]));
+        assert_eq!(evidence["numbers"], json!([]));
+        assert_eq!(evidence["google_uploads_enabled"], false);
+        assert_eq!(evidence["workspace_id"], store.workspace.to_string());
+        if scopes.as_array().unwrap().contains(&json!("setup:write")) {
+            writer = secret.into();
+        } else {
+            let result = call(app.clone(), "POST", "/api/v1/sites", secret, site.clone()).await;
+            assert_eq!(result.0, StatusCode::FORBIDDEN, "{:?}", result);
+            assert!(result.1["error"].as_str().unwrap().contains("setup:write"));
+            for (method, path) in [
+                ("PATCH", format!("/api/v1/sites/{}", Uuid::new_v4())),
+                (
+                    "PUT",
+                    format!("/api/v1/sites/{}/number-pool", Uuid::new_v4()),
+                ),
+            ] {
+                assert_eq!(
+                    call(app.clone(), method, &path, secret, site.clone())
+                        .await
+                        .0,
+                    StatusCode::FORBIDDEN
+                );
+            }
+        }
+    }
+    for (method, path) in [
+        ("POST", "/api/v1/numbers"),
+        ("POST", "/api/v1/leads"),
+        ("PUT", "/api/connections/signalwire"),
+        ("POST", "/api/api-keys"),
+    ] {
+        assert_ne!(
+            call(app.clone(), method, path, &writer, json!({})).await.0,
+            StatusCode::OK
+        );
+    }
+    let mut invalid = site.clone();
+    invalid["origin"] = json!("https://setup.example/path");
+    assert_eq!(
+        call(app.clone(), "POST", "/api/v1/sites", &writer, invalid)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, result) = call(app.clone(), "POST", "/api/v1/sites", &writer, site.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let id: Uuid = result["id"].as_str().unwrap().parse().unwrap();
+    let site_path = format!("/api/v1/sites/{id}");
+    let pool_path = format!("{site_path}/number-pool");
+    let listed = call(app.clone(), "GET", "/api/v1/sites", &writer, Value::Null)
+        .await
+        .1;
+    assert_eq!(listed["sites"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["sites"][0]["version"], 1);
+    assert_eq!(listed["tracker_url"], "https://api.example/tracker.js");
+    assert_eq!(
+        call(app.clone(), "PATCH", &site_path, &writer, site.clone())
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    let mut edited = site.clone();
+    edited["version"] = json!(1);
+    edited["name"] = json!("Edited pilot");
+    assert_eq!(
+        call(app.clone(), "PATCH", &site_path, &writer, edited.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(app.clone(), "PATCH", &site_path, &writer, edited)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    let pool = json!({"fallback_phone":"+12025550978","enabled":false,"version":0,"number_ids":[],"dedicated_numbers":false});
+    assert!(
+        call(app.clone(), "GET", &pool_path, &writer, Value::Null)
+            .await
+            .1["pool"]
+            .is_null()
+    );
+    assert_eq!(
+        call(app.clone(), "PUT", &pool_path, &writer, pool.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(app.clone(), "PUT", &pool_path, &writer, pool.clone())
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    let mut bad_pool = pool.clone();
+    bad_pool["version"] = json!(1);
+    bad_pool["enabled"] = json!(true);
+    assert_eq!(
+        call(app.clone(), "PUT", &pool_path, &writer, bad_pool)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let before = call(app.clone(), "GET", "/api/v1/setup", &writer, Value::Null)
+        .await
+        .1;
+    assert!(before["sites"][0]["last_session_at"].is_null());
+    assert!(before["sites"][0]["last_form_at"].is_null());
+    assert_eq!(before["sites"][0]["pool_configured"], true);
+    assert_eq!(before["sites"][0]["pool_enabled"], false);
+    let session = Uuid::new_v4();
+    store
+        .capture_session(
+            id,
+            "https://setup.example",
+            session,
+            &json!({"source":"Newsletter","utm_campaign":"Setup","landing_url":"https://setup.example/quote"}),
+        )
+        .await
+        .unwrap();
+    store
+        .capture_form(
+            id,
+            "https://setup.example",
+            session,
+            "setup-confirmed-form",
+            &std::collections::BTreeMap::from([("email".into(), "private@example.test".into())]),
+        )
+        .await
+        .unwrap();
+    let after = call(app.clone(), "GET", "/api/v1/setup", &writer, Value::Null)
+        .await
+        .1;
+    assert!(after["sites"][0]["last_session_at"].is_string());
+    assert!(after["sites"][0]["last_form_at"].is_string());
+    assert!(!after.to_string().contains("private@example.test"));
+    store
+        .add_number(&NewNumber {
+            provider: PhoneProvider::Twilio,
+            label: "Setup line".into(),
+            phone_number: "+12025550976".into(),
+            destination: "+12025550978".into(),
+            source: "Offline".into(),
+            campaign: "Setup".into(),
+        })
+        .await
+        .unwrap();
+    let number_id = store.numbers().await.unwrap()[0].id;
+    let mut enabled_pool = json!({"fallback_phone":"+12025550978","enabled":true,"version":1,"number_ids":[number_id],"dedicated_numbers":false});
+    assert_eq!(
+        call(
+            app.clone(),
+            "PUT",
+            &pool_path,
+            &writer,
+            enabled_pool.clone()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    enabled_pool["dedicated_numbers"] = json!(true);
+    assert_eq!(
+        call(app.clone(), "PUT", &pool_path, &writer, enabled_pool)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    store
+        .allocate_dni(id, "https://setup.example", session)
+        .await
+        .unwrap();
+    store
+        .call_event(&convert_store::CallEvent {
+            sid: Uuid::new_v4().to_string(),
+            to: "+12025550976".into(),
+            from: "+12025550977".into(),
+            fingerprint: Uuid::new_v4().to_string(),
+            kind: convert_store::CallEventKind::Voice,
+        })
+        .await
+        .unwrap();
+    let received = call(app.clone(), "GET", "/api/v1/setup", &writer, Value::Null)
+        .await
+        .1;
+    assert_eq!(received["sites"][0]["pool_enabled"], true);
+    assert_eq!(received["sites"][0]["assignment_count"], 1);
+    assert!(received["sites"][0]["last_assignment_at"].is_string());
+    assert_eq!(received["numbers"][0]["call_count"], 1);
+    assert!(received["numbers"][0]["last_call_at"].is_string());
+    assert!(!received.to_string().contains("+12025550977"));
+
+    let other = Store::connect(&db, Uuid::new_v4()).await.unwrap();
+    other.migrate().await.unwrap();
+    let key = other
+        .issue_api_key(
+            &convert_store::api_keys::KeyInput {
+                name: "Other tenant".into(),
+                scopes: vec!["read".into(), "setup:write".into()],
+                expires_at: None,
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let other_key = key["secret"].as_str().unwrap();
+    assert_eq!(
+        call(app.clone(), "GET", "/api/v1/sites", other_key, Value::Null)
+            .await
+            .1["sites"],
+        json!([])
+    );
+    assert_eq!(
+        call(app.clone(), "GET", "/api/v1/setup", other_key, Value::Null)
+            .await
+            .1["sites"],
+        json!([])
+    );
+    assert_eq!(
+        call(app.clone(), "GET", &pool_path, other_key, Value::Null)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let mut foreign = pool;
+    foreign["version"] = json!(1);
+    assert_eq!(
+        call(app.clone(), "PUT", &pool_path, other_key, foreign)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(app.clone(), "PATCH", &site_path, other_key, site)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+}

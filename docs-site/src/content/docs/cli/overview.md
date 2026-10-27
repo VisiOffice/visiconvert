@@ -12,7 +12,7 @@ Build the version matching the deployed API. You need Git and a current Rust too
 ```sh
 git clone https://github.com/VisiOffice/visiconvert.git
 cd visiconvert
-git checkout 6b76432bc1fde9686266cd5ec03449235d2a9685
+# Check out the source release matching your deployed engine before installing.
 cargo install --locked --path crates/convert-cli
 ```
 
@@ -24,7 +24,7 @@ should upgrade the engine and CLI together. See [API keys and v1](/api/public-ap
 Open your workspace, choose **API keys**, and create a named key. Read-only is the
 default. Grant write permissions only when needed. Save the secret when shown;
 you cannot retrieve it later. Hosted keys do not expire with the browser session.
-Use the engine origin (`https://workspaces.visiconvert.com` for hosted).
+Use your workspace origin (`https://cloud.visiconvert.com` for the unified hosted app). The hosted engine origin `https://workspaces.visiconvert.com` also accepts scoped keys.
 Existing CLI configurations continue to work with the unified hosted app. The same workflow is available in self-hosted workspaces.
 
 ## Log in
@@ -47,6 +47,7 @@ The key is saved to `~/.config/visiconvert/config.json` with mode 0600. For scri
 
 ```sh
 visiconvert status
+visiconvert setup
 visiconvert numbers available
 visiconvert numbers add +15125550142 --forward-to +15125550100 \
   --source "Google Ads" --campaign "Spring HVAC"
@@ -55,6 +56,8 @@ visiconvert numbers add +15125550142 --forward-to +15125550100 \
 Connect Twilio or SignalWire in the workspace UI; scoped keys cannot change provider credentials. Number registration requires `numbers:write`.
 
 `status` shows the server, both provider connections and what to do next. After `numbers add`, set the printed webhook URLs on the number in its provider console. See [Connect Twilio](/start/connect-twilio/) or [Connect SignalWire](/start/connect-signalwire/). Add `--provider signalwire` to `numbers available` and `numbers add` for SignalWire.
+
+`setup` requires engine migration 0012 and reports historical tracker/form, DNI assignment and call activity. It does not claim routing is working or send conversions. Use the workspace **Setup** screen for a separate config path per workspace and an [agent setup prompt](/agents/mcp/).
 
 ## Review leads and record bookings
 

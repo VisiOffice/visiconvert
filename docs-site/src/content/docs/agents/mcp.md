@@ -3,11 +3,22 @@ title: Set up an AI agent
 description: Connect Claude or another MCP client to VisiConvert so an agent can check setup, qualify leads and record bookings.
 ---
 
-`visiconvert mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio. It offers the same operations as the command line, so an agent can check your setup, register tracking numbers, review leads and record bookings. The [tool reference](/reference/mcp/) lists every tool.
+`visiconvert mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio. It uses the same API and saved login as the command line. An agent can inspect setup evidence, configure websites and DNI pools, register tracking numbers, review leads and record bookings. The [tool reference](/reference/mcp/) lists every tool.
 
 ## Before you start
 
-Install the CLI and log in. The MCP server uses the same saved login. See [The visiconvert command line](/cli/overview/).
+Open **Setup → Connect your agent** in your workspace. It provides a temporary-key preset, a login command, MCP configuration and a copyable setup prompt. These features require the engine and CLI containing migration **0012**; upgrade both together.
+
+Install the CLI and log in. See [The visiconvert command line](/cli/overview/).
+Use a separate absolute `VISICONVERT_CONFIG` path for each workspace, on the machine running the agent:
+
+```sh
+VISICONVERT_CONFIG=/home/you/.config/visiconvert/business.json visiconvert login --url https://cloud.visiconvert.com
+```
+
+Replace the path and server origin for your installation. Enter the API key at the private CLI prompt, never in agent chat. Read access includes customer contact information. For setup, grant `read` + `setup:write`; add `numbers:write` only to register owned numbers. The UI preset expires after seven days. Revoke it when finished.
+
+In the MCP configuration, set the same `VISICONVERT_CONFIG` path and server origin. Clear any inherited `VISICONVERT_API_KEY` override (an empty value uses the saved key). Do not share one config file between workspaces. The server is local **stdio**, not a hosted remote MCP URL.
 
 ## Claude Code
 
@@ -26,7 +37,12 @@ Add the server to the client's MCP configuration. For Claude Desktop, that is `c
   "mcpServers": {
     "visiconvert": {
       "command": "visiconvert",
-      "args": ["mcp"]
+      "args": ["mcp"],
+      "env": {
+        "VISICONVERT_CONFIG": "/home/you/.config/visiconvert/business.json",
+        "VISICONVERT_URL": "https://cloud.visiconvert.com",
+        "VISICONVERT_API_KEY": ""
+      }
     }
   }
 }
@@ -36,8 +52,8 @@ Add the server to the client's MCP configuration. For Claude Desktop, that is `c
 
 | Tier | Tools | When |
 |---|---|---|
-| **Read** | `get_status`, `list_numbers`, `list_twilio_numbers`, `list_leads`, `get_lead_outcomes`, `source_report` | Always |
-| **Change** | `add_tracking_number`, `add_lead`, `qualify_lead`, `record_outcome` | Only with `--allow-changes` |
+| **Read** | `get_status`, `get_setup_status`, `list_sites`, `get_site_pool`, `list_numbers`, `list_twilio_numbers`, `list_signalwire_numbers`, `list_leads`, `get_lead_outcomes`, `source_report` | Always |
+| **Change** | `create_site`, `update_site`, `configure_site_pool`, `add_tracking_number`, `add_lead`, `qualify_lead`, `record_outcome` | Only with `--allow-changes` |
 
 Every tool carries MCP annotations that mark it as read-only or not, so clients can ask before changes. Without `--allow-changes`, the change tools are not listed at all.
 
@@ -48,7 +64,7 @@ Every tool carries MCP annotations that mark it as read-only or not, so clients 
 
 ## Guided setup
 
-The server includes a prompt, `set_up_call_tracking`. In clients that support MCP prompts, it walks the agent through checking status, choosing which campaigns to track, assigning numbers and confirming a test call. It asks you before each change and tells you to connect the provider yourself.
+The server includes a prompt, `set_up_call_tracking`. In clients that support MCP prompts, it walks the agent through checking status, choosing websites and campaigns, configuring consent/form hooks and DNI pools, and confirming real visits, forms and test calls. It asks you before each change and tells you to connect the provider yourself.
 
 You can also just ask, for example:
 
@@ -56,9 +72,13 @@ You can also just ask, for example:
 
 ## Current coverage
 
-The tools cover numbers, individual interactions, qualification, bookings and source
-reports. Site installation, DNI pools, inquiry combine/split, conversion preparation,
-and API-key administration currently require the workspace UI. Reviewing a grouped
+The tools cover sites, DNI pools, numbers, individual interactions, qualification, bookings and source reports. An agent with access to your website repository can install the tracker; MCP itself cannot edit your website. Inquiry combine/split, conversion preparation, API-key administration and provider credentials still require the workspace UI.
+
+Creating a site is not retry-safe: list sites after an uncertain response before retrying. Site and pool updates require the current version; a conflict means re-read and review, not blind retry. Changing a site's origin or pausing collection revokes active assignments. Pool numbers must be dedicated to one site's DNI and share the business fallback destination. Enabling `--allow-changes` exposes all write tools, but the key's permissions remain authoritative.
+
+**Setup checklist** reports historical activity separately for each site and number. Configuration alone does not verify installation or forwarding. Form activity is reported by the website and must be wired to actual backend success. After a real call, verify the destination rings and inspect attribution evidence in the inbox. Do not create fake leads or count widget opens to make setup appear complete. Carrier routing changes and purchases need explicit owner approval and are not available through these MCP tools. Google Ads uploads are still disabled.
+
+Use `visiconvert setup` for the same evidence from your terminal. Reviewing a grouped
 interaction updates its inquiry's shared qualification and notes. Read access exposes
 customer contacts and notes to the connected agent; choose an appropriate client.
 

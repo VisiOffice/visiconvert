@@ -2,6 +2,7 @@ import { SignalWireConnection } from "./SignalWireConnection";
 import type { SignalWireConnection as SignalWireStatus } from "./api";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { InquiryGrouping } from "./InquiryGrouping";
+import { Setup } from "./Setup";
 import { ApiKeys } from "./ApiKeys";
 import { Conversions } from "./Conversions";
 import { Sites } from "./Sites";
@@ -42,8 +43,9 @@ import initWasm, {
   preview_attribution,
 } from "./generated/attribution/convert_wasm";
 
-type Page = "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys";
+type Page = "Setup" | "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys";
 const pages = [
+  { name: "Setup" as Page, icon: Sparkles },
   { name: "Overview" as Page, icon: BarChart3 },
   { name: "Lead inbox" as Page, icon: Users },
   { name: "Tracking numbers" as Page, icon: Phone },
@@ -55,6 +57,7 @@ const pages = [
 type HostedShell = { token: string; onManage: () => void; onSignOut: () => Promise<void>; onExpired: () => void };
 export default function App({ hosted }: { hosted?: HostedShell }) {
   const [key, setKey] = useState(hosted?.token || "");
+  const [setupKey, setSetupKey] = useState(false);
   const [entry, setEntry] = useState("");
   const [page, setPage] = useState<Page>("Overview");
   const [boot, setBoot] = useState<Bootstrap | null>(null);
@@ -239,6 +242,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
               className={page === p.name ? "active" : ""}
               onClick={() => {
                 setPage(p.name);
+                setSetupKey(false);
                 setError("");
               }}
             >
@@ -258,7 +262,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
             <p>
               {boot?.hosted
                 ? "Add inquiries, qualify opportunities, and connect bookings to their source."
-                : "Track with Twilio. Answer calls in the phone system you already use."}
+                : "Track with Twilio or SignalWire. Answer calls in the phone system you already use."}
             </p>
           </div>
           <button
@@ -310,7 +314,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                         : "Start with your numbers and the tools you already use."}
               </p>
             </div>
-            {page !== "Sites" && page !== "Conversions" && page !== "API keys" && <button
+            {page !== "Setup" && page !== "Sites" && page !== "Conversions" && page !== "API keys" && <button
               className="primary"
               disabled={boot?.hosted && !connection?.connected && !signalwire?.connected && page === "Tracking numbers"}
               onClick={() =>
@@ -338,6 +342,12 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
               </span>
             </div>
           )}
+          {page === "Overview" && !leads.some(l => !l.is_demo) && <section className="card setup-welcome">
+            <span className="eyebrow">START HERE</span><h2>Let’s connect your first source.</h2>
+            <p>Your agent can help set up websites and call tracking. Follow the same steps yourself if you prefer.</p>
+            <button className="primary" onClick={() => setPage("Setup")}>Set up this workspace</button>
+          </section>}
+          {page === "Setup" && <Setup api={api} onNavigate={setPage} onKey={() => { setSetupKey(true); setPage("API keys"); }} />}
           {page === "Overview" && (
             <>
               <div className="section-heading">
@@ -570,7 +580,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
           )}
           {page === "Sites" && <Sites api={api} />}
           {page === "Conversions" && <Conversions api={api} />}
-          {page === "API keys" && <ApiKeys api={api} />}
+          {page === "API keys" && <ApiKeys api={api} setup={setupKey} />}
           {page === "Connections" && connection && <Connections api={api} connection={connection} signalwire={signalwire} refresh={refresh} />}
           <footer>
             VisiConvert <span>Make the connection.</span>
