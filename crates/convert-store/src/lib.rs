@@ -2,6 +2,7 @@ pub mod api_keys;
 pub mod connections;
 pub mod conversions;
 pub mod dni;
+pub mod google;
 pub mod hosted;
 pub mod inquiries;
 pub mod public_api;

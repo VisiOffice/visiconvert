@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_KEYS = {'COMPOSE_PROJECT_NAME', 'VISICONVERT_POSTGRES_PASSWORD', 'VISICONVERT_API_KEY',
         'VISICONVERT_WORKSPACE_ID', 'VISICONVERT_HOST_PORT', 'PUBLIC_URL',
         'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'}
-KEYS = REQUIRED_KEYS | {'VISICONVERT_ENCRYPTION_KEY'}
+KEYS = REQUIRED_KEYS | {'VISICONVERT_ENCRYPTION_KEY', 'VISICONVERT_GOOGLE_CLIENT_ID', 'VISICONVERT_GOOGLE_CLIENT_SECRET'}
 
 
 def require(condition, message):
@@ -66,6 +66,13 @@ def validate(v):
     require(u.scheme == 'https' or u.hostname in ('127.0.0.1', 'localhost', '::1'),
             'Use HTTPS for a public domain; HTTP is supported only for local access.')
     account, token = v['TWILIO_ACCOUNT_SID'], v['TWILIO_AUTH_TOKEN']
+    google_id, google_secret = v.get('VISICONVERT_GOOGLE_CLIENT_ID', ''), v.get('VISICONVERT_GOOGLE_CLIENT_SECRET', '')
+    require(bool(google_id) == bool(google_secret), 'Set both Google OAuth values or leave both empty.')
+    if google_id:
+        require(v.get('VISICONVERT_ENCRYPTION_KEY') and len(google_id) < 256
+                and re.fullmatch(r'[A-Za-z0-9._-]+\.apps\.googleusercontent\.com', google_id)
+                and re.fullmatch(r'[A-Za-z0-9_-]{16,256}', google_secret),
+                'Google OAuth requires a Web client ID, client secret, and the existing encryption key.')
     require(bool(account) == bool(token), 'Set both Twilio values or leave both empty.')
     if account:
         require(re.fullmatch(r'AC[0-9a-fA-F]{32}', account) and re.fullmatch(r'[0-9a-fA-F]{32}', token)

@@ -29,6 +29,6 @@ description: Fixes for common problems with calls, website tracking, the CLI and
 
 **429 Too many requests.** Each key allows 120 requests a minute. Wait 60 seconds.
 
-**The CLI won't accept the URL.** It must be `https://`, except for `localhost`, `127.0.0.1` or `[::1]`, with no path. Use the server's origin, such as `https://workspaces.visiconvert.com`, not the billing site.
+**The CLI won't accept the URL.** It must be `https://`, except for `localhost`, `127.0.0.1` or `[::1]`, with no path. Use the server's origin, such as `https://workspaces.visiconvert.com`. Existing integrations can keep this origin when the hosted account interface changes.
 
 **The agent can't make changes.** Start the MCP server with `--allow-changes`, and log in with a key that has the write permissions it needs.

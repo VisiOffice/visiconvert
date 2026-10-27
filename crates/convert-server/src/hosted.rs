@@ -8,6 +8,13 @@ use sha2::{Digest, Sha256};
 pub struct Config {
     pub service_key: String,
     pub cloud_origin: String,
+    pub app_origin: Option<String>,
+}
+pub fn browser_origin(app: &App) -> &str {
+    app.cloud
+        .as_ref()
+        .and_then(|config| config.app_origin.as_deref())
+        .unwrap_or(&app.public_url)
 }
 #[derive(Clone)]
 pub struct Access {
@@ -46,21 +53,40 @@ pub fn configuration(public_url: &str, operator_key: &str) -> anyhow::Result<Opt
     let cloud = std::env::var("VISICONVERT_CLOUD_ORIGIN")
         .ok()
         .filter(|s| !s.is_empty());
+    let app_origin = std::env::var("VISICONVERT_APP_ORIGIN")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|value| origin(&value))
+        .transpose()?;
     match (key, cloud) {
-        (None, None) => Ok(None),
+        (None, None) => {
+            anyhow::ensure!(
+                app_origin.is_none(),
+                "VISICONVERT_APP_ORIGIN requires hosted Cloud configuration"
+            );
+            Ok(None)
+        }
         (Some(service_key), Some(cloud)) => {
             anyhow::ensure!(
                 hex64(&service_key) && service_key != operator_key,
                 "Use an independent 64-character hex cloud service key"
             );
             let cloud_origin = origin(&cloud)?;
-            anyhow::ensure!(
-                origin(public_url)? != cloud_origin,
-                "Cloud and engine must use separate origins"
-            );
+            if let Some(app_origin) = &app_origin {
+                anyhow::ensure!(
+                    app_origin == &cloud_origin,
+                    "The unified app origin must equal VISICONVERT_CLOUD_ORIGIN"
+                );
+            } else {
+                anyhow::ensure!(
+                    origin(public_url)? != cloud_origin,
+                    "Set VISICONVERT_APP_ORIGIN for a same-origin hosted app"
+                );
+            }
             Ok(Some(Config {
                 service_key,
                 cloud_origin,
+                app_origin,
             }))
         }
         _ => anyhow::bail!(
@@ -75,7 +101,46 @@ pub fn routes(app: Shared) -> Router<Shared> {
         .route("/internal/cloud/revoke-user", post(revoke_user))
         .route_layer(middleware::from_fn_with_state(app, service_auth))
         .route("/auth/start", get(start))
+        .route("/auth/prepare", post(prepare))
         .route("/auth/exchange", post(exchange))
+}
+async fn prepare(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<Start>,
+) -> Result<Response, ApiError> {
+    let Some(config) = &app.cloud else {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Not found".into()));
+    };
+    if config.app_origin.is_none() {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Not found".into()));
+    }
+    if headers.get("origin").and_then(|v| v.to_str().ok()) != Some(browser_origin(&app)) {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "Open the workspace from VisiConvert.".into(),
+        ));
+    }
+    if !app.store.hosted_exists(input.workspace_id).await? {
+        return Err(ApiError(
+            StatusCode::NOT_FOUND,
+            "Workspace not available".into(),
+        ));
+    }
+    let secret = random_secret();
+    let secure = if browser_origin(&app).starts_with("https:") {
+        "; Secure"
+    } else {
+        ""
+    };
+    Ok((
+        [(
+            header::SET_COOKIE,
+            format!("vc_handoff={secret}; HttpOnly; SameSite=Lax; Path=/auth; Max-Age=300{secure}"),
+        )],
+        Json(json!({"state":digest(&secret)})),
+    )
+        .into_response())
 }
 async fn service_auth(State(app): State<Shared>, request: Request, next: Next) -> Response {
     let Some(config) = &app.cloud else {
@@ -226,7 +291,8 @@ async fn exchange(
     let fail = || {
         ApiError(StatusCode::UNAUTHORIZED,"This sign-in link expired or belongs to another browser. Open the workspace again from VisiConvert Cloud.".into())
     };
-    if headers.get("origin").and_then(|v| v.to_str().ok()) != Some(app.public_url.as_str()) {
+    let origin = headers.get("origin").and_then(|v| v.to_str().ok());
+    if origin != Some(browser_origin(&app)) && origin != Some(app.public_url.as_str()) {
         return Err(fail());
     }
     let secret = headers

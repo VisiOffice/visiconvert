@@ -17,12 +17,12 @@ export default defineConfig({
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/VisiOffice/visiconvert' },
       ],
-      editLink: { baseUrl: 'https://github.com/VisiOffice/visiconvert/edit/workspace-api-keys/docs-site/' },
+      editLink: { baseUrl: 'https://github.com/VisiOffice/visiconvert/edit/main/docs-site/' },
       customCss: ['@fontsource-variable/manrope', './src/styles/theme.css'],
       plugins: [starlightLlmsTxt()],
       sidebar: [
-        { label: 'Get started', items: ['start/introduction', 'start/self-host', 'start/connect-twilio', 'start/capabilities'] },
-        { label: 'Guides', items: ['guides/website-tracking', 'guides/dynamic-numbers', 'guides/inquiries', 'guides/google-ads-preparation', 'guides/troubleshooting'] },
+        { label: 'Get started', items: ['start/introduction', 'start/hosted', 'start/self-host', 'start/connect-twilio', 'start/capabilities'] },
+        { label: 'Guides', items: ['guides/website-tracking', 'guides/dynamic-numbers', 'guides/inquiries', 'guides/google-ads-preparation', 'guides/google-ads-connection', 'guides/troubleshooting'] },
         { label: 'Concepts', items: ['concepts/leads-and-bookings'] },
         { label: 'Command line', items: ['cli/overview', 'reference/cli'] },
         { label: 'AI agents', items: ['agents/mcp', 'reference/mcp'] },

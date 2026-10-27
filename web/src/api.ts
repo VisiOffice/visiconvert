@@ -63,7 +63,7 @@ export type TwilioInventory = {
   numbers: { sid: string; phone_number: string; friendly_name: string }[];
   has_more: boolean;
 };
-export function client(key: string) {
+export function client(key: string, onUnauthorized?: () => void) {
   return async function request<T>(
     path: string,
     body?: unknown,
@@ -78,6 +78,7 @@ export function client(key: string) {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) {
+      if (response.status === 401) onUnauthorized?.();
       const value = await response
         .json()
         .catch(() => ({ error: `Request failed (${response.status})` }));

@@ -54,8 +54,7 @@ check returns 503, without a grace period. Self-hosted keys have no Rails depend
 
 ## Authentication
 
-Base URL: `https://workspaces.visiconvert.com/api/v1` for hosted workspaces; your own engine origin plus `/api/v1` for self-hosting. The hosted billing
-site `cloud.visiconvert.com` is not the engine API.
+Base URL: `https://workspaces.visiconvert.com/api/v1` for hosted workspaces; your own engine origin plus `/api/v1` for self-hosting. Existing integrations can keep this address when the hosted browser app moves to the unified account interface.
 
 ```sh
 export VISICONVERT_URL=https://workspaces.visiconvert.com

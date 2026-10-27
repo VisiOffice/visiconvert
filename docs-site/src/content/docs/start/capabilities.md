@@ -20,6 +20,7 @@ The web app does everything. The command line, MCP server and public API cover t
 | Combine or separate inquiries | ✓ | — | — | — |
 | Set up website tracking (Sites) | ✓ | — | — | — |
 | Set up dynamic number insertion | ✓ | — | — | — |
+| Connect Google and validate destination actions | ✓ | — | — | — |
 | Prepare Google Ads conversions | ✓ | — | — | — |
 | Create, rotate or revoke API keys | ✓ | — | — | — |
 

@@ -1,15 +1,17 @@
 # Google Ads conversion preparation
 
 This shared Rust/Vite feature is available in both hosted and self-hosted builds.
-It prepares qualified inquiries and bookings for review. **Google is not connected:
-nothing is sent, validated, accepted, or attributed by Google in this release.**
-There is no OAuth setup, provider delivery worker, retry scheduler, or retraction yet.
+It prepares qualified inquiries and bookings for review. **Uploads are disabled:
+nothing is uploaded, accepted for delivery, or attributed by Google in this release.**
+There is no provider delivery worker, retry scheduler, or retraction yet. Google OAuth and
+read-only destination validation are available; see [Google connection](GOOGLE_CONNECTION.md).
 
 ## Workflow
 
 1. Open **Conversions**. Save your 10-digit Google Ads customer ID without dashes.
    Map qualification and/or bookings to distinct existing numeric conversion action
-   IDs. Account access and action compatibility are not checked yet. Choose your
+   IDs. Use the Google connection controls to check account access and action compatibility.
+   Saving IDs alone does not validate them. Choose your
    primary optimization action in Google Ads to avoid counting both funnel stages
    as separate sales.
 2. Select a candidate. Qualified inquiries use their primary interaction; bookings
@@ -83,8 +85,8 @@ mutations. No provider token, API request, or outbound network action occurs.
 
 ## Next provider slice
 
-Connect Google credentials, discover/validate conversion actions and permissions,
-map internal records to Data Manager requests, validate without sending, then add
+Google OAuth and read-only account/action validation are implemented. Next,
+map internal records to Data Manager requests, validate event requests without sending, then add
 explicit enablement and a worker with retries, request-status diagnostics, and
 clear distinctions between submitted, processed, and attributed. Pin destinations
 once actually sent; handle revisions, grouping/supersession, and cancellations

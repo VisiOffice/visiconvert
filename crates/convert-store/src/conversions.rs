@@ -266,6 +266,10 @@ fn candidate(
     )
 }
 impl Store {
+    pub async fn google_conversion_settings(&self) -> Result<Settings> {
+        let mut conn = self.pool.acquire().await?;
+        settings(&mut conn, self.workspace).await
+    }
     pub async fn conversion_preview(&self) -> Result<Value> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")

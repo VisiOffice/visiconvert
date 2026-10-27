@@ -18,6 +18,24 @@ spec.loader.exec_module(host)
 
 
 class SelfHostTest(unittest.TestCase):
+    def test_google_configuration_is_paired_private_and_preserved(self):
+        values = dict(self.install.values)
+        values['VISICONVERT_GOOGLE_CLIENT_ID'] = '123-test.apps.googleusercontent.com'
+        with self.assertRaisesRegex(ValueError, 'both Google'):
+            host.validate(values)
+        values['VISICONVERT_GOOGLE_CLIENT_SECRET'] = 'fixture-google-secret-not-a-credential'
+        host.write_config(self.install.config, values)
+        before = self.install.config.read_bytes()
+        subprocess.run(self.command + ['init'], check=True, stdout=subprocess.DEVNULL)
+        self.assertEqual(before, self.install.config.read_bytes())
+        self.assertEqual(self.install.config.stat().st_mode & 0o777, 0o600)
+        with patch.dict(os.environ, {'VISICONVERT_GOOGLE_CLIENT_SECRET':'external-secret'}):
+            install = host.Installation(self.directory)
+            self.assertEqual(install.env['VISICONVERT_GOOGLE_CLIENT_SECRET'], values['VISICONVERT_GOOGLE_CLIENT_SECRET'])
+        values['VISICONVERT_ENCRYPTION_KEY'] = ''
+        with self.assertRaisesRegex(ValueError, 'encryption key'):
+            host.validate(values)
+
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)

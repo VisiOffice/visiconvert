@@ -6,6 +6,22 @@
   font-size: 14px;
   font-weight: 400;
 }
+.login-story a { color: #c8d6bd; }
+.cloud-loading { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 28px; }
+.cloud-panel { padding: 30px; display: flex; flex-direction: column; gap: 20px; max-width: 680px; }
+.cloud-panel .primary { align-self: flex-start; }
+.cloud-workspaces { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 20px; }
+.cloud-workspaces .cloud-panel { max-width: none; }
+.cloud-actions, .cloud-form-links { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.cloud-form-links { margin-top: 20px; }
+.cloud-nav { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 8px; text-decoration: none; }
+.cloud-nav.active { background: #e6eddf; color: #284d37; font-weight: 650; }
+.cloud-app .workspace > div { min-width: 0; flex: 1; }
+.cloud-app .workspace-avatar { flex-shrink: 0; }
+.cloud-app .workspace small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.cloud-app a, .login-form a { color: #365c3b; }
+.cloud-app a.primary, .login-form a.primary { color: white; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+@media (max-width: 700px) { .cloud-panel { padding: 22px; } .cloud-form-links { align-items: flex-start; flex-direction: column; } .cloud-content .page-title { flex-wrap: wrap; gap: 16px; } }
 * {
   box-sizing: border-box;
 }
@@ -1183,3 +1199,6 @@ footer button {
 .conversion-job .badge, .conversion-job button { justify-self: start; }
 .conversion-layout .site-diagnostics dd { font-size: 16px; overflow-wrap: anywhere; }
 .conversion-layout .site-code { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.google-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; }
+.google-callback { overflow-wrap: anywhere; }
+.google-connection select { max-width: 100%; }

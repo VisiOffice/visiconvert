@@ -26,6 +26,15 @@ impl Vault {
         format!("visiconvert:twilio:v1:{workspace}:{account}")
     }
     pub fn seal(&self, workspace: Uuid, account: &str, token: &str) -> Result<String, ()> {
+        self.seal_context(&Self::context(workspace, account), token)
+    }
+    pub fn seal_google(&self, workspace: Uuid, purpose: &str, token: &str) -> Result<String, ()> {
+        self.seal_context(
+            &format!("visiconvert:google:v1:{workspace}:{purpose}"),
+            token,
+        )
+    }
+    fn seal_context(&self, context: &str, token: &str) -> Result<String, ()> {
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let encrypted = self
             .0
@@ -33,7 +42,7 @@ impl Vault {
                 &nonce,
                 Payload {
                     msg: token.as_bytes(),
-                    aad: Self::context(workspace, account).as_bytes(),
+                    aad: context.as_bytes(),
                 },
             )
             .map_err(|_| ())?;
@@ -42,6 +51,20 @@ impl Vault {
         Ok(format!("v1.{}", STANDARD.encode(bytes)))
     }
     pub fn open(&self, workspace: Uuid, account: &str, encrypted: &str) -> Result<String, ()> {
+        self.open_context(&Self::context(workspace, account), encrypted)
+    }
+    pub fn open_google(
+        &self,
+        workspace: Uuid,
+        purpose: &str,
+        encrypted: &str,
+    ) -> Result<String, ()> {
+        self.open_context(
+            &format!("visiconvert:google:v1:{workspace}:{purpose}"),
+            encrypted,
+        )
+    }
+    fn open_context(&self, context: &str, encrypted: &str) -> Result<String, ()> {
         let bytes = STANDARD
             .decode(encrypted.strip_prefix("v1.").ok_or(())?)
             .map_err(|_| ())?;
@@ -54,7 +77,7 @@ impl Vault {
                 Nonce::from_slice(&bytes[..12]),
                 Payload {
                     msg: &bytes[12..],
-                    aad: Self::context(workspace, account).as_bytes(),
+                    aad: context.as_bytes(),
                 },
             )
             .map_err(|_| ())?;

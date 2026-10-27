@@ -8,6 +8,15 @@ import urllib.request
 from pathlib import Path
 
 
+def reviewed_nonapplicable(finding):
+    # OSV's imported range omits the lower bound. The maintainer advisory says
+    # >=0.11.0,<0.12.1; our 0.10.4 has a separate cursor, not inline storage.
+    # https://github.com/RustCrypto/utils/security/advisories/GHSA-qwgh-2vcv-g2f7
+    # Reviewed 2026-10-27. Scope this correction to the exact locked version;
+    # other versions/advisories must still fail the audit.
+    return finding == ("crates.io", "block-buffer", "0.10.4", "GHSA-qwgh-2vcv-g2f7")
+
+
 def packages(path):
     source = path.read_text()
     if path.name == "Cargo.lock":
@@ -52,8 +61,11 @@ def main():
             if result.get("next_page_token"):
                 more.append({**query, "page_token": result["next_page_token"]})
         pending = more
-    print(json.dumps({"packages_checked": len(queries), "advisory_matches": sorted(findings)}, indent=2))
-    return 1 if findings else 0
+    nonapplicable = {f for f in findings if reviewed_nonapplicable(f)}
+    actionable = findings - nonapplicable
+    print(json.dumps({"packages_checked": len(queries), "advisory_matches": sorted(actionable),
+                      "reviewed_nonapplicable": sorted(nonapplicable)}, indent=2))
+    return 1 if actionable else 0
 
 
 if __name__ == "__main__":

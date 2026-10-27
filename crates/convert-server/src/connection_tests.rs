@@ -197,9 +197,12 @@ async fn shared_connections_verify_credentials_ownership_and_isolate_callbacks()
         cloud: Some(hosted::Config {
             service_key: "d".repeat(64),
             cloud_origin: "https://cloud.example.com".into(),
+            app_origin: None,
         }),
         vault: Some(secrets::Vault::from_hex(&"e".repeat(64)).unwrap()),
         twilio_client: convert_adapters::twilio_api::Client::for_test(mock_origin),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
     let standalone = Arc::new(App {
         cloud: None,
@@ -630,9 +633,12 @@ async fn manual_browser_fixture() {
         cloud: Some(hosted::Config {
             service_key: "d".repeat(64),
             cloud_origin: "https://cloud.example.com".into(),
+            app_origin: None,
         }),
         vault: Some(secrets::Vault::from_hex(&"e".repeat(64)).unwrap()),
         twilio_client: convert_adapters::twilio_api::Client::for_test(origin),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(

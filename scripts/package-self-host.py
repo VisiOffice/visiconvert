@@ -9,8 +9,9 @@ import io
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ['crates/convert-server/assets/openapi.json', 'scripts/generate-openapi.py', 'docs/PUBLIC_API.md', 'web/tests/verify-api-keys.mjs', 'Cargo.toml', 'Cargo.lock', 'Dockerfile', '.dockerignore', '.gitignore',
+FILES = ['docs/HOSTED_FRONTEND.md', 'docs/GOOGLE_CONNECTION.md', 'web/tests/verify-google.mjs', 'crates/convert-server/assets/openapi.json', 'scripts/generate-openapi.py', 'docs/PUBLIC_API.md', 'web/tests/verify-api-keys.mjs', 'Cargo.toml', 'Cargo.lock', 'Dockerfile', '.dockerignore', '.gitignore',
          '.github/workflows/self-host.yml',
+         '.github/workflows/dependency-audit.yml', 'scripts/audit-dependencies.py', 'tests/test_dependency_audit.py',
          'CONTRIBUTING.md', 'CHANGELOG.md', 'docs/PUBLIC_README.md',
          'compose.yaml', 'docs/SELF_HOSTING.md', 'docs/HOSTED_PROTOCOL.md', 'docs/TWILIO_CONNECTIONS.md', 'docs/WEBSITE_TRACKING.md', 'docs/INQUIRY_GROUPING.md', 'docs/DYNAMIC_NUMBERS.md', 'docs/CONVERSIONS.md', 'web/tests/verify-conversions.mjs', 'web/tests/verify-dni.mjs', 'web/tests/verify-grouping.mjs', 'web/tests/tracker.test.mjs', 'web/tests/verify-sites.mjs', 'scripts/self-host.sh', 'scripts/self_host.py',
          'scripts/verify-self-host.py', 'scripts/package-self-host.py', 'scripts/sync-brand.py',

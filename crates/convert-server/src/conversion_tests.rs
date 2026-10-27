@@ -73,9 +73,12 @@ async fn conversion_routes_require_workspace_authentication() {
         cloud: Some(hosted::Config {
             service_key: "conversion-service-key-at-least-32".into(),
             cloud_origin: "https://cloud.example".into(),
+            app_origin: None,
         }),
         vault: None,
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
     });
     let config = json!({"customer_id":"1234567890","qualified_action_id":"123","booking_action_id":"456","allow_inferred_calls":false,"version":0});
     for credential in ["", "wrong", "conversion-service-key-at-least-32"] {

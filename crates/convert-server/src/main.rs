@@ -1,6 +1,7 @@
 mod api_keys;
 mod connections;
 mod conversions;
+mod google;
 mod hosted;
 mod inquiries;
 mod public_api;
@@ -45,6 +46,8 @@ struct App {
     cloud: Option<hosted::Config>,
     vault: Option<secrets::Vault>,
     twilio_client: convert_adapters::twilio_api::Client,
+    google: Option<google::Config>,
+    google_client: convert_adapters::google_api::Client,
 }
 type Shared = Arc<App>;
 
@@ -120,6 +123,11 @@ async fn main() -> anyhow::Result<()> {
             secrets::Vault::from_hex(&key)
         })
         .transpose()?;
+    let browser_origin = cloud
+        .as_ref()
+        .and_then(|config| config.app_origin.as_deref())
+        .unwrap_or(&public_url);
+    let google = google::Config::from_env(browser_origin, vault.is_some())?;
     let app = Arc::new(App {
         store,
         api_key,
@@ -129,6 +137,8 @@ async fn main() -> anyhow::Result<()> {
         cloud,
         vault,
         twilio_client: convert_adapters::twilio_api::Client::new()?,
+        google,
+        google_client: convert_adapters::google_api::Client::new()?,
     });
     let address: SocketAddr = std::env::var("LISTEN_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3100".into())
@@ -144,11 +154,38 @@ async fn main() -> anyhow::Result<()> {
 }
 fn router(app: Shared) -> Router {
     let secure_origin = app.public_url.starts_with("https://");
+    let mut browser = Router::new();
+    if app
+        .cloud
+        .as_ref()
+        .is_some_and(|config| config.app_origin.is_some())
+    {
+        for path in [
+            "/session/new",
+            "/registration/new",
+            "/passwords/new",
+            "/password_reset/edit",
+            "/email_verification",
+            "/email_verification/edit",
+            "/workspaces",
+            "/workspaces/new",
+            "/workspaces/{id}",
+            "/workspaces/{id}/billing",
+            "/workspaces/{id}/authorize",
+            "/app/{id}",
+        ] {
+            browser = browser.route_service(
+                path,
+                tower_http::services::ServeFile::new("web/dist/index.html"),
+            );
+        }
+    }
     let api = Router::new()
         .merge(connections::routes())
         .merge(sites::private_routes())
         .merge(inquiries::routes())
         .merge(conversions::routes())
+        .merge(google::routes())
         .merge(api_keys::routes())
         .route("/bootstrap", get(bootstrap))
         .route("/leads", get(leads).post(add_lead))
@@ -159,11 +196,18 @@ fn router(app: Shared) -> Router {
         .route("/session", axum::routing::delete(hosted::logout))
         .route_layer(middleware::from_fn_with_state(app.clone(), authenticate));
     Router::new()
+        .merge(browser)
         .merge(hosted::routes(app.clone()))
         .merge(sites::public_routes(app.clone()))
         .nest("/api/v1", public_api::routes(app.clone()))
         .nest("/api", api)
+        .route("/auth/google/callback", get(google::callback))
+        .route("/auth/google/result", get(google::result))
+        .route("/auth/google/result.js", get(google::result_script))
         .route("/health", get(|| async { Json(json!({"status":"ok"})) }))
+        .route("/runtime.json", get(|State(app): State<Shared>| async move {
+            Json(json!({"hosted_app_origin": app.cloud.as_ref().and_then(|config| config.app_origin.as_deref())}))
+        }))
         .route("/webhooks/twilio/voice", post(voice))
         .route("/webhooks/twilio/dial-complete", post(dial_complete))
         .route("/webhooks/twilio/status", post(status))
@@ -517,6 +561,8 @@ mod tests {
             cloud: None,
             vault: None,
             twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+            google: None,
+            google_client: convert_adapters::google_api::Client::new().unwrap(),
             public_url: "https://convert.example.com".into(),
             twilio_account: configured.then(|| format!("AC{}", "1".repeat(32))),
             twilio_token: configured.then(|| "test-token".into()),
@@ -656,5 +702,7 @@ mod inquiry_tests;
 #[cfg(test)]
 mod conversion_tests;
 
+#[cfg(test)]
+mod google_tests;
 #[cfg(test)]
 mod public_api_tests;

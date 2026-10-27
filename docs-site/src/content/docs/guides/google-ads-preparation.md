@@ -4,7 +4,7 @@ description: Map qualified leads and bookings to Google Ads conversion actions a
 ---
 
 :::caution[Preview]
-Nothing is sent to Google yet. This release only prepares and reviews conversions. Connecting a Google Ads account and uploading are the next step.
+Nothing is sent to Google yet. This release only prepares and reviews conversions. You can [connect Google and check destination actions](/guides/google-ads-connection/). Uploading is the next step.
 :::
 
 The goal is to tell Google Ads which clicks became qualified leads and booked jobs, so it can bid towards revenue rather than just calls.
