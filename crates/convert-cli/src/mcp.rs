@@ -91,7 +91,7 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "configure_site_pool",
-        description: "Replace a site's DNI pool using its current version (0 for a new pool). Requires setup:write. Confirm dedicated number IDs and business fallback first; removing numbers revokes assignments. Does not purchase numbers or change carrier routing.",
+        description: "Replace a site's DNI pool using its current version (0 for a new pool). Requires setup:write. Confirm dedicated number IDs, published website number and forwarding destination first; removing numbers revokes assignments. Does not purchase numbers or change carrier routing.",
         changes: true,
         idempotent: false,
         schema: || {
@@ -100,7 +100,8 @@ const TOOLS: &[Tool] = &[
             "properties":{
                 "site_id":{"type":"string","format":"uuid"},
                 "version":{"type":"integer","minimum":0},
-                "fallback_phone":{"type":"string","description":"Business destination in US E.164, shared by every pool number; never a tracking number."},
+                "fallback_phone":{"type":"string","description":"Published website number to replace in US E.164; keep outside all pools."},
+                "destination_phone":{"type":"string","description":"Forwarding destination in US E.164 shared by pool numbers; not a tracking number. Omission preserves an existing destination or defaults to fallback_phone for a new pool."},
                 "enabled":{"type":"boolean"},
                 "number_ids":{"type":"array","maxItems":50,"uniqueItems":true,"items":{"type":"string","format":"uuid"}},
                 "dedicated_numbers":{"type":"boolean","description":"True only after owner confirms these numbers are dedicated to this website's DNI, not static/offline campaigns."}
@@ -232,7 +233,7 @@ const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
 3. Reuse existing sites. With approval, call create_site for missing exact origins and agreed allowed form fields. Call list_sites after an uncertain creation before retrying. Use update_site with the current version only after reviewing changes; pausing or changing origin revokes active DNI assignments.
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
-6. For DNI, call get_site_pool. Confirm dedicated numbers, common business fallback and explicit data-visiconvert-phone markup before configure_site_pool. Supply the current version (0 if absent); on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool.
+6. For DNI, call get_site_pool. Confirm the published website number (fallback_phone), common forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before configure_site_pool. Supply the current version (0 if absent); on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
 7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. Google Ads delivery is not enabled in this release.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.";
 

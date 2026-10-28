@@ -35,6 +35,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     let number_id = store.numbers().await.unwrap()[0].id;
     let mut input = PoolInput {
         fallback_phone: num.destination.clone(),
+        destination_phone: None,
         enabled: true,
         version: 0,
         number_ids: vec![number_id],
@@ -47,13 +48,101 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     input.dedicated_numbers = true;
     input.fallback_phone = "+12025550182".into();
     assert!(store.save_dni_pool(site, &input).await.is_err());
-    input.fallback_phone = num.destination.clone();
+    // A published static number may differ from the forwarding destination.
+    input.destination_phone = Some(num.destination.clone());
+    let static_number = NewNumber {
+        phone_number: input.fallback_phone.clone(),
+        label: "Published website line".into(),
+        ..num.clone()
+    };
+    store.add_number(&static_number).await.unwrap();
     store.save_dni_pool(site, &input).await.unwrap();
     assert!(matches!(
         store.save_dni_pool(site, &input).await,
         Err(Error::Conflict)
     ));
     assert!(store.save_dni_pool(second_site, &input).await.is_err());
+    // A published fallback cannot also be pooled, even for another site.
+    let static_id = store
+        .numbers()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|n| n.phone_number == static_number.phone_number)
+        .unwrap()
+        .id;
+    let mut invalid = PoolInput {
+        fallback_phone: num.destination.clone(),
+        destination_phone: Some(num.destination.clone()),
+        enabled: true,
+        version: 0,
+        number_ids: vec![static_id],
+        dedicated_numbers: true,
+    };
+    assert!(store.save_dni_pool(second_site, &invalid).await.is_err());
+    invalid.fallback_phone = num.phone_number.clone();
+    invalid.number_ids.clear();
+    invalid.enabled = false;
+    assert!(store.save_dni_pool(second_site, &invalid).await.is_err());
+    invalid.fallback_phone = num.destination.clone();
+    invalid.destination_phone = Some(num.phone_number.clone());
+    assert!(store.save_dni_pool(second_site, &invalid).await.is_err());
+    assert!(
+        other
+            .save_dni_pool(
+                other.save_site(None, &site_input).await.unwrap(),
+                &PoolInput {
+                    fallback_phone: static_number.phone_number.clone(),
+                    destination_phone: Some(num.destination.clone()),
+                    enabled: false,
+                    version: 0,
+                    number_ids: vec![],
+                    dedicated_numbers: false
+                }
+            )
+            .await
+            .is_err()
+    );
+    // Number registration must respect pools configured before numbers arrive.
+    store
+        .save_dni_pool(
+            second_site,
+            &PoolInput {
+                fallback_phone: "+12025550188".into(),
+                destination_phone: Some("+12025550187".into()),
+                enabled: false,
+                version: 0,
+                number_ids: vec![],
+                dedicated_numbers: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .add_number(&NewNumber {
+                phone_number: "+12025550187".into(),
+                ..num.clone()
+            })
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .add_number(&NewNumber {
+                phone_number: "+12025550188".into(),
+                ..num.clone()
+            })
+            .await
+            .is_err()
+    );
+    let reserved_fallback = NewNumber {
+        phone_number: "+12025550188".into(),
+        destination: "+12025550187".into(),
+        ..num.clone()
+    };
+    assert!(other.add_number(&reserved_fallback).await.is_err());
+    store.add_number(&reserved_fallback).await.unwrap();
     let a = Uuid::new_v4();
     let b = Uuid::new_v4();
     for (id, source) in [(a, "google"), (b, "bing")] {
@@ -101,6 +190,36 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
         .await
         .unwrap();
     assert_eq!(lease, if winner == a { first } else { second });
+    assert_eq!(lease["fallback_phone"], static_number.phone_number);
+    assert!(lease.get("destination_phone").is_none());
+    // An older client omitting the new field must not reset the saved destination.
+    input.version = 1;
+    input.destination_phone = None;
+    store.save_dni_pool(site, &input).await.unwrap();
+    assert_eq!(
+        store.dni_pool(site).await.unwrap()["pool"]["destination_phone"],
+        num.destination
+    );
+    let before_change = store.dni_pool(site).await.unwrap()["history"][0].clone();
+    input.version = 2;
+    input.fallback_phone = "+12025550185".into();
+    store.save_dni_pool(site, &input).await.unwrap();
+    let after_change = store.dni_pool(site).await.unwrap()["history"][0].clone();
+    assert!(after_change["revoked_at"].is_string());
+    assert_eq!(before_change["reusable_at"], after_change["reusable_at"]);
+    assert_eq!(
+        store
+            .allocate_dni(site, &site_input.origin, winner)
+            .await
+            .unwrap()["status"],
+        "expired"
+    );
+    // Restore the test lease for the existing call evidence scenarios below.
+    sqlx::query("UPDATE dni_assignments SET revoked_at=NULL WHERE site_id=$1")
+        .bind(site)
+        .execute(&store.pool)
+        .await
+        .unwrap();
     let sid = format!("CA{}", Uuid::new_v4().simple());
     let event = |sid: &str, fp: &str, kind| CallEvent {
         sid: sid.into(),
@@ -247,7 +366,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     site_input.version = 2;
     site_input.origin = "https://dni.example".into();
     store.save_site(Some(site), &site_input).await.unwrap();
-    input.version = 1;
+    input.version = 3;
     input.enabled = false;
     store.save_dni_pool(site, &input).await.unwrap();
     assert_eq!(
@@ -257,7 +376,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
             .unwrap()["status"],
         "disabled"
     );
-    input.version = 2;
+    input.version = 4;
     input.enabled = true;
     store.save_dni_pool(site, &input).await.unwrap();
     assert_eq!(
@@ -284,6 +403,38 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
             .unwrap()["status"],
         "exhausted"
     );
+    // Listing calls retain static source/campaign and never invent a visitor click ID.
+    let listing = NewNumber {
+        phone_number: "+12025550186".into(),
+        label: "LA listing".into(),
+        source: "Google Business Profile".into(),
+        campaign: "Los Angeles".into(),
+        ..num.clone()
+    };
+    store.add_number(&listing).await.unwrap();
+    let listing_sid = format!("CA{}", Uuid::new_v4().simple());
+    assert_eq!(
+        store
+            .call_event(&CallEvent {
+                sid: listing_sid.clone(),
+                to: listing.phone_number,
+                from: "+12025550183".into(),
+                fingerprint: "listing-call".into(),
+                kind: CallEventKind::Voice
+            })
+            .await
+            .unwrap(),
+        num.destination
+    );
+    let listing_lead = store
+        .leads()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|l| l.source == "Google Business Profile")
+        .unwrap();
+    assert_eq!(listing_lead.campaign, "Los Angeles");
+    assert!(store.dni_evidence(listing_lead.id).await.unwrap().is_none());
     let mut tx = store.pool.begin().await.unwrap();
     for ws in [store.workspace, other.workspace] {
         for sql in [

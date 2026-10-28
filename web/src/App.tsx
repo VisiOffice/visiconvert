@@ -70,6 +70,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Lead | null>(null);
   const [modal, setModal] = useState<"number" | "lead" | null>(null);
+  const [businessProfile, setBusinessProfile] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const api = useMemo(() => client(key, hosted?.onExpired), [key, hosted?.onExpired]);
@@ -317,9 +318,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
             {page !== "Setup" && page !== "Sites" && page !== "Conversions" && page !== "API keys" && <button
               className="primary"
               disabled={boot?.hosted && !connection?.connected && !signalwire?.connected && page === "Tracking numbers"}
-              onClick={() =>
-                setModal(page === "Tracking numbers" ? "number" : "lead")
-              }
+              onClick={() => { setBusinessProfile(false); setModal(page === "Tracking numbers" ? "number" : "lead"); }}
             >
               <Plus size={16} />
               {page === "Tracking numbers"
@@ -347,7 +346,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
             <p>Your agent can help set up websites and call tracking. Follow the same steps yourself if you prefer.</p>
             <button className="primary" onClick={() => setPage("Setup")}>Set up this workspace</button>
           </section>}
-          {page === "Setup" && <Setup hosted={!!hosted} api={api} onNavigate={setPage} onKey={() => { setSetupKey(true); setPage("API keys"); }} />}
+          {page === "Setup" && <Setup hosted={!!hosted} api={api} onBusinessProfile={() => { setPage("Tracking numbers"); setBusinessProfile(true); if (!boot?.hosted || connection?.connected || signalwire?.connected) setModal("number"); }} onNavigate={setPage} onKey={() => { setSetupKey(true); setPage("API keys"); }} />}
           {page === "Overview" && (
             <>
               <div className="section-heading">
@@ -507,9 +506,16 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
           )}
           {page === "Tracking numbers" && (
             <>
+              <section className="card business-profile-guide" aria-label="Google Business Profile setup">
+                <h2>Google Business Profile tracking</h2>
+                <p>One dedicated static number per listing. No website tracker or pool is needed for calls made directly from the listing.</p>
+                <ol><li>Register an owned number with source <strong>Google Business Profile</strong>, a location name, and the line where calls should ring. Confirm the number is available before replacing any existing carrier route.</li><li>Configure its voice and status callbacks in your carrier using Connections. Call it and confirm the business answers and the lead appears in VisiConvert.</li><li>In your Google Business Profile, set the tracking number as the primary phone and keep your business number as an additional phone. Keep the tracking number outside all website pools.</li></ol>
+                <p className="muted">VisiConvert does not edit your Google listing. Calls get listing-level attribution, without a visitor click ID. Ads using this listing’s phone number can also reach it, so this source does not prove a call was organic.</p>
+                <button className="secondary" disabled={boot?.hosted && !connection?.connected && !signalwire?.connected} onClick={() => { setBusinessProfile(true); setModal("number"); }}>Add Business Profile number</button>
+              </section>
               <div className="routing-diagram">
                 <span>
-                  <Phone size={18} /> Twilio tracking number
+                  <Phone size={18} /> Tracking number
                 </span>
                 <ArrowRight size={19} />
                 <span>
@@ -525,7 +531,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                   <div>
                     <h2>Campaign numbers</h2>
                     <p>
-                      Register numbers you already own in Twilio. This does not
+                      Register numbers you already own in Twilio or SignalWire. This does not
                       purchase a number.
                     </p>
                   </div>
@@ -557,7 +563,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                               <small>
                                 {n.is_demo
                                   ? "Demo only"
-                                  : "Configure webhook in Twilio"}
+                                  : `Configure webhook in ${n.provider === "signalwire" ? "SignalWire" : "Twilio"}`}
                               </small>
                             </td>
                           </tr>
@@ -568,13 +574,13 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                 ) : (
                   <Empty
                     title="Your first campaign starts here"
-                    text="Add a Twilio number and the Quo, RingCentral, or business number that should receive its calls."
+                    text="Add an owned Twilio or SignalWire number and the business or call center line that should receive its calls."
                   />
                 )}
               </section>
               <p className="footnote">
-                Pilot accepts +1 (NANP) number format. SMS, number purchasing,
-                and session number pools are not enabled.
+                Tracking accepts +1 (NANP) numbers. Configure website pools in Sites.
+                SMS and number purchasing are not included.
               </p>
             </>
           )}
@@ -619,6 +625,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
       {modal && (
         <CreateModal
           kind={modal}
+          businessProfile={businessProfile && modal === "number"}
           api={api}
           connected={connection?.connected || false}
           signalwireConnected={signalwire?.connected || false}
@@ -963,6 +970,7 @@ function CreateModal({
   done,
   connected,
   signalwireConnected,
+  businessProfile = false,
 }: {
   kind: "number" | "lead";
   api: Client;
@@ -970,6 +978,7 @@ function CreateModal({
   done: () => Promise<void>;
   connected: boolean;
   signalwireConnected: boolean;
+  businessProfile?: boolean;
 }) {
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -987,11 +996,11 @@ function CreateModal({
   const fields =
     kind === "number"
       ? [
-          ["label", "Label", "Google search line"],
+          ["label", "Label", businessProfile ? "LA Google Business Profile" : "Google search line"],
           ["phone_number", provider === "twilio" ? "Twilio tracking number" : "SignalWire tracking number", "+12025550101"],
           ["destination", "Business destination", "+12025550102"],
           ["source", "Marketing source", "Google Ads"],
-          ["campaign", "Campaign", "Spring campaign"],
+          ["campaign", businessProfile ? "Business Profile location" : "Campaign", businessProfile ? "Los Angeles" : "Spring campaign"],
         ]
       : [
           ["external_id", "Submission ID", "form-1042"],
@@ -1006,17 +1015,17 @@ function CreateModal({
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label={kind === "number" ? "Add tracking number" : "Add form lead"}
+        aria-label={kind === "number" ? businessProfile ? "Add Business Profile number" : "Add tracking number" : "Add form lead"}
       >
         <div className="drawer-top">
-          <h2>{kind === "number" ? "Add tracking number" : "Add form lead"}</h2>
+          <h2>{kind === "number" ? businessProfile ? "Add Business Profile number" : "Add tracking number" : "Add form lead"}</h2>
           <button aria-label="Close form" onClick={close}>
             <X size={20} />
           </button>
         </div>
         <p>
           {kind === "number"
-            ? "Register an existing provider number and where to forward calls."
+            ? businessProfile ? "Register a dedicated static number for one Google listing. Keep it outside website pools. This does not change carrier routing or your Google listing." : "Register an existing provider number and where to forward calls."
             : "Record a submitted inquiry. The private API also accepts server-to-server form submissions."}
         </p>
         <form
@@ -1046,6 +1055,8 @@ function CreateModal({
                 name={name}
                 list={name === "phone_number" ? "twilio-owned-numbers" : undefined}
                 placeholder={placeholder}
+                defaultValue={businessProfile && name === "source" ? "Google Business Profile" : undefined}
+                readOnly={businessProfile && name === "source"}
                 required={!(kind === "lead" && name === "campaign")}
                 autoFocus={i === 0}
                 maxLength={name === "contact" ? 200 : 150}

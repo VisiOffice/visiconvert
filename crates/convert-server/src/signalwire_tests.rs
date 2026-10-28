@@ -379,6 +379,7 @@ async fn shared_signalwire_connections_and_calls() {
             site,
             &convert_store::dni::PoolInput {
                 fallback_phone: "+12025550398".into(),
+                destination_phone: None,
                 enabled: true,
                 version: 0,
                 number_ids: vec![number_id],

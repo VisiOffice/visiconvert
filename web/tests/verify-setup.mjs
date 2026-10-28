@@ -46,6 +46,26 @@ export async function verifySetup({page, api, apiKey, artifactDir}) {
   await page.getByLabel('Workspace API key',{exact:true}).fill(apiKey);
   await page.getByRole('button',{name:'Open workspace',exact:true}).click();
   await page.setViewportSize({width:1440,height:1000});
+  // The listing flow presets a static source and location; it never edits a provider or Google.
+  await page.getByRole('button',{name:'Setup',exact:true}).click();
+  await page.getByRole('button',{name:'Set up a Business Profile number',exact:true}).click();
+  const profile = page.getByRole('dialog',{name:'Add Business Profile number',exact:true});
+  await profile.waitFor();
+  assert.equal(await profile.getByLabel('Marketing source',{exact:true}).inputValue(),'Google Business Profile');
+  assert.equal(await profile.getByLabel('Marketing source',{exact:true}).getAttribute('readonly'),'');
+  await profile.getByLabel('Business Profile location',{exact:true}).fill('Los Angeles');
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Listing form fits mobile');
+  await page.screenshot({path:artifactDir+'/business-profile-mobile.png',fullPage:true});
+  await profile.getByRole('button',{name:'Close form',exact:true}).click();
+  await page.getByRole('region',{name:'Google Business Profile setup',exact:true}).waitFor();
+  await page.screenshot({path:artifactDir+'/business-profile-guide-mobile.png',fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.getByRole('button',{name:'Add tracking number',exact:true}).click();
+  const normal = page.getByRole('dialog',{name:'Add tracking number',exact:true});
+  assert.equal(await normal.getByLabel('Marketing source',{exact:true}).inputValue(),'');
+  assert.equal(await normal.getByLabel('Marketing source',{exact:true}).getAttribute('readonly'),null);
+  await normal.getByRole('button',{name:'Close form',exact:true}).click();
   // Keep later website tests deterministic; pause this fixture and revoke its key.
   assert.equal((await api(`/v1/sites/${id}`,{name:'Onboarding test',origin:'https://onboarding.example',allowed_fields:['email'],enabled:false,version:1},'PATCH',secret)).status,200);
   assert.equal((await api(`/api-keys/${metadata.id}/revoke`,{version:metadata.version})).status,200);

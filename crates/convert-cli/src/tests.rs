@@ -598,7 +598,7 @@ async fn mcp_setup_tools_use_public_routes_and_preserve_versions() {
         ),
         (
             "configure_site_pool",
-            json!({"site_id":site,"version":4,"fallback_phone":"+12025550111","enabled":false,"number_ids":[],"dedicated_numbers":false}),
+            json!({"site_id":site,"version":4,"fallback_phone":"+12025550111","destination_phone":"+12025550112","enabled":false,"number_ids":[],"dedicated_numbers":false}),
         ),
     ] {
         let result = writer
@@ -618,6 +618,7 @@ async fn mcp_setup_tools_use_public_routes_and_preserve_versions() {
     assert!(seen[4].1.get("site_id").is_none());
     assert_eq!(seen[5].0, format!("PUT /api/v1/sites/{site}/number-pool"));
     assert_eq!(seen[5].1["version"], 4);
+    assert_eq!(seen[5].1["destination_phone"], "+12025550112");
     assert!(seen[5].1.get("site_id").is_none());
     task.abort();
 }

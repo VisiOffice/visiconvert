@@ -107,7 +107,7 @@ impl Store {
         sqlx::query("SELECT pg_advisory_xact_lock(73581001)")
             .execute(&mut *tx)
             .await?;
-        let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE phone_number=$1 OR phone_number=$2 OR destination=$1)").bind(&n.phone_number).bind(&n.destination).fetch_one(&mut *tx).await?;
+        let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE phone_number=$1 OR phone_number=$2 OR destination=$1) OR EXISTS(SELECT 1 FROM dni_pools WHERE destination_phone=$1 OR (fallback_phone=$1 AND (workspace_id<>$3 OR destination_phone<>$2)))").bind(&n.phone_number).bind(&n.destination).bind(self.workspace).fetch_one(&mut *tx).await?;
         if conflict {
             return Err(Error::Conflict);
         }

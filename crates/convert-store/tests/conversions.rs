@@ -344,6 +344,7 @@ async fn inferred_calls_require_opt_in_and_consent_at_event_time() {
             site,
             &PoolInput {
                 fallback_phone: number.destination.clone(),
+                destination_phone: None,
                 enabled: true,
                 version: 0,
                 number_ids: vec![store.numbers().await.unwrap()[0].id],

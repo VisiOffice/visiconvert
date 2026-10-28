@@ -6,6 +6,10 @@ use serde_json::{Value, json};
 #[serde(deny_unknown_fields)]
 pub struct PoolInput {
     pub fallback_phone: String,
+    /// Omitted by older clients: preserve an existing destination, or use the
+    /// published fallback when creating a legacy pool.
+    #[serde(default)]
+    pub destination_phone: Option<String>,
     pub enabled: bool,
     pub version: i32,
     pub number_ids: Vec<Uuid>,
@@ -24,7 +28,7 @@ impl Store {
             return Err(Error::NotFound);
         }
         let config: Option<Value> = sqlx::query_scalar("SELECT to_jsonb(p) - 'workspace_id' FROM dni_pools p WHERE workspace_id=$1 AND site_id=$2").bind(self.workspace).bind(site).fetch_optional(&self.pool).await?;
-        let numbers: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',n.id,'label',n.label,'phone_number',n.phone_number,'destination',n.destination,'site_id',p.site_id,'enabled',COALESCE(p.enabled,false),'reserved',EXISTS(SELECT 1 FROM dni_assignments a WHERE a.number_id=n.id AND a.reusable_at>clock_timestamp())) FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.workspace_id=$1 AND NOT n.is_demo ORDER BY n.label,n.id").bind(self.workspace).fetch_all(&self.pool).await?;
+        let numbers: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',n.id,'label',n.label,'phone_number',n.phone_number,'destination',n.destination,'site_id',p.site_id,'enabled',COALESCE(p.enabled,false),'used_as_fallback',EXISTS(SELECT 1 FROM dni_pools f WHERE f.fallback_phone=n.phone_number),'reserved',EXISTS(SELECT 1 FROM dni_assignments a WHERE a.number_id=n.id AND a.reusable_at>clock_timestamp())) FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.workspace_id=$1 AND NOT n.is_demo ORDER BY n.label,n.id").bind(self.workspace).fetch_all(&self.pool).await?;
         let history: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'phone_number',n.phone_number,'assigned_at',a.assigned_at,'expires_at',a.expires_at,'reusable_at',a.reusable_at,'revoked_at',a.revoked_at,'source',a.evidence->>'source','campaign',a.evidence->>'utm_campaign') FROM dni_assignments a JOIN tracking_numbers n ON n.id=a.number_id WHERE a.workspace_id=$1 AND a.site_id=$2 ORDER BY a.assigned_at DESC,a.id LIMIT 50").bind(self.workspace).bind(site).fetch_all(&self.pool).await?;
         Ok(
             json!({"pool":config,"numbers":numbers,"history":history,"lease_minutes":30,"reuse_delay_minutes":30}),
@@ -53,35 +57,59 @@ impl Store {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(Error::NotFound)?;
-        let old: Option<i32> = sqlx::query_scalar(
-            "SELECT version FROM dni_pools WHERE workspace_id=$1 AND site_id=$2",
+        let old = sqlx::query(
+            "SELECT version,fallback_phone,destination_phone FROM dni_pools WHERE workspace_id=$1 AND site_id=$2",
         )
         .bind(self.workspace)
         .bind(site)
         .fetch_optional(&mut *tx)
         .await?;
-        if old.unwrap_or(0) != input.version {
+        if old.as_ref().map_or(0, |r| r.get::<i32, _>("version")) != input.version {
             return Err(Error::Conflict);
         }
-        let fallback_is_tracking: bool = sqlx::query_scalar(
+        // Use the same lock as number registration for cross-workspace checks.
+        sqlx::query("SELECT pg_advisory_xact_lock(73581001)")
+            .execute(&mut *tx)
+            .await?;
+        let destination = input
+            .destination_phone
+            .clone()
+            .or_else(|| {
+                old.as_ref()
+                    .map(|r| r.get::<String, _>("destination_phone"))
+            })
+            .unwrap_or_else(|| input.fallback_phone.clone());
+        us_number(&destination)?;
+        let destination_is_tracking: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE phone_number=$1)",
         )
-        .bind(&input.fallback_phone)
+        .bind(&destination)
         .fetch_one(&mut *tx)
         .await?;
-        if fallback_is_tracking {
+        if destination_is_tracking {
             return Err(ValidationError(
-                "Fallback must be the business destination, not a registered tracking number",
+                "Forwarding destination must be a business line, not a registered tracking number",
             )
             .into());
         }
+        // A published static number can be replaced, but a pooled number must
+        // never be the fallback. Do not borrow another tenant's static number.
+        let invalid_fallback: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.phone_number=$1 AND (n.workspace_id<>$2 OR n.is_demo OR p.number_id IS NOT NULL OR n.destination<>$3 OR n.id=ANY($4)))")
+            .bind(&input.fallback_phone).bind(self.workspace).bind(&destination).bind(&ids).fetch_one(&mut *tx).await?;
+        if invalid_fallback {
+            return Err(ValidationError("The website number must be outside all pools; a registered static number must belong to this workspace and use the same forwarding destination").into());
+        }
         for id in &ids {
-            let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.workspace_id=$1 AND n.id=$2 AND NOT n.is_demo AND n.destination=$3 AND (p.site_id IS NULL OR p.site_id=$4))").bind(self.workspace).bind(id).bind(&input.fallback_phone).bind(site).fetch_one(&mut *tx).await?;
+            let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.workspace_id=$1 AND n.id=$2 AND NOT n.is_demo AND n.destination=$3 AND (p.site_id IS NULL OR p.site_id=$4) AND NOT EXISTS(SELECT 1 FROM dni_pools f WHERE f.fallback_phone=n.phone_number))").bind(self.workspace).bind(id).bind(&destination).bind(site).fetch_one(&mut *tx).await?;
             if !valid {
-                return Err(ValidationError("Pool numbers must belong to this workspace, forward to the fallback, and be dedicated to this site").into());
+                return Err(ValidationError("Pool numbers must belong to this workspace, use the selected forwarding destination, and be dedicated to this site").into());
             }
         }
-        sqlx::query("INSERT INTO dni_pools(site_id,workspace_id,fallback_phone,enabled) VALUES($1,$2,$3,$4) ON CONFLICT(site_id) DO UPDATE SET fallback_phone=$3,enabled=$4,version=dni_pools.version+1").bind(site).bind(self.workspace).bind(&input.fallback_phone).bind(input.enabled).execute(&mut *tx).await?;
+        let changed = old.as_ref().is_some_and(|r| {
+            r.get::<String, _>("fallback_phone") != input.fallback_phone
+                || r.get::<String, _>("destination_phone") != destination
+        });
+        sqlx::query("INSERT INTO dni_pools(site_id,workspace_id,fallback_phone,destination_phone,enabled) VALUES($1,$2,$3,$4,$5) ON CONFLICT(site_id) DO UPDATE SET fallback_phone=$3,destination_phone=$4,enabled=$5,version=dni_pools.version+1").bind(site).bind(self.workspace).bind(&input.fallback_phone).bind(&destination).bind(input.enabled).execute(&mut *tx).await?;
         sqlx::query("UPDATE dni_pool_numbers SET enabled=false WHERE site_id=$1")
             .bind(site)
             .execute(&mut *tx)
@@ -90,7 +118,7 @@ impl Store {
             sqlx::query("INSERT INTO dni_pool_numbers(number_id,site_id,workspace_id,enabled) VALUES($1,$2,$3,true) ON CONFLICT(number_id) DO UPDATE SET enabled=true").bind(id).bind(site).bind(self.workspace).execute(&mut *tx).await?;
         }
         // Revocation never frees a number early; a visitor may have saved it.
-        sqlx::query("UPDATE dni_assignments SET revoked_at=clock_timestamp() WHERE site_id=$1 AND revoked_at IS NULL AND (NOT $2 OR NOT (number_id=ANY($3)))").bind(site).bind(input.enabled).bind(&ids).execute(&mut *tx).await?;
+        sqlx::query("UPDATE dni_assignments SET revoked_at=clock_timestamp() WHERE site_id=$1 AND revoked_at IS NULL AND (NOT $2 OR NOT (number_id=ANY($3)) OR $4)").bind(site).bind(input.enabled).bind(&ids).bind(changed).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
