@@ -45,7 +45,12 @@ export function McpAuthorization({ request, verified }: { request: Request; veri
       <form onSubmit={submit}>
         <div className="form-field"><label htmlFor="mcp-workspace">Workspace</label><select id="mcp-workspace" required value={workspace} onChange={e => setWorkspace(e.target.value)}><option value="">Choose a workspace</option>{data.workspaces.map(w => <option key={w.id} value={w.id} disabled={!w.available}>{w.name}{w.available ? "" : " — setup or billing required"}</option>)}</select></div>
         {!data.workspaces.some(w => w.available) && <p>No ready workspaces are available. <a href="/workspaces">Manage your workspaces</a>, then restart this connection.</p>}
-        <fieldset><legend>Permissions</legend>{data.scopes.map(scope => <label className="site-toggle" key={scope}><input type="checkbox" checked={scopes.includes(scope)} disabled={scope === "read"} onChange={e => setScopes(old => e.target.checked ? [...old, scope] : old.filter(s => s !== scope))} />{descriptions[scope] || scope}</label>)}</fieldset>
+        <fieldset className="mcp-permissions"><legend>Permissions</legend>
+          <p>Choose what this agent can do. Read access is included; write access is optional and starts unchecked.</p>
+          {data.scopes.includes("setup:write") && <p>For guided setup, select “Create and update websites and dynamic number pools.” Also select “Register phone numbers you already own” if you want the agent to add your numbers.</p>}
+          {data.scopes.map(scope => <label className="site-toggle" key={scope}><input type="checkbox" checked={scopes.includes(scope)} disabled={scope === "read"} onChange={e => setScopes(old => e.target.checked ? [...old, scope] : old.filter(s => s !== scope))} />{descriptions[scope] || scope}</label>)}
+        </fieldset>
+        <p role="status">{scopes.length === 1 ? "Read-only connection: the agent can inspect this workspace but cannot configure it." : "The agent will receive only the permissions selected above for this workspace."}</p>
         <p>The agent cannot change your password, billing, or provider credentials. This connection expires after 90 days. Revoke it anytime in Connected agents.</p>
         {error && <p role="alert" className="error">{error}</p>}
         <div className="site-actions"><button className="primary" disabled={busy || !workspace} type="submit">Approve connection</button><button className="secondary" disabled={busy} type="button" onClick={() => void decide("deny")}>Deny</button></div>
@@ -68,6 +73,7 @@ export function McpConnections({ request }: { request: Request }) {
     finally { setBusy(""); }
   }
   return <section className="card cloud-panel"><h1>Connected agents</h1><p>Each connection can access only its approved workspace and permissions.</p>
+    <p>To change permissions, revoke the existing connection here, then reconnect from your agent and choose the permissions on the approval page. No API key is needed.</p>
     <p>Remote MCP URL: <code>{window.location.origin}/mcp</code></p>
     {error && <p role="alert" className="error">{error}</p>}
     {!items ? <p>Loading connections…</p> : !items.length ? <p>No active agent connections.</p> : items.map(c => <article className="card site-panel" key={c.id}><h2>{c.client_name}</h2><p>{c.workspace}</p><ul>{c.scopes.map(s => <li key={s}>{descriptions[s] || s}</li>)}</ul><p>Expires {new Date(c.expires_at).toLocaleDateString()}</p>{confirm === c.id ? <div><p>Revoke this connection? The agent will need your approval to reconnect.</p><button className="primary" disabled={!!busy} onClick={() => void revoke(c.id)}>Confirm revoke</button><button className="secondary" onClick={() => setConfirm("")}>Keep connection</button></div> : <button className="secondary" onClick={() => setConfirm(c.id)}>Revoke connection</button>}</article>)}

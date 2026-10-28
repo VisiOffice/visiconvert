@@ -13,10 +13,18 @@ for the OAuth client if prompted. This release supports Dynamic Client
 Registration (DCR), not Client ID Metadata Documents or confidential clients.
 Sign in with your **VisiConvert** email and password, select a ready workspace,
 and approve permissions. Only verified owners with workspace access can approve.
-Read is required; write checkboxes start unchecked. The client must request the
-write scopes it needs (`setup:write`, `numbers:write`, `leads:write`,
-`bookings:write`). Only requested scopes can be approved. If the client requests
-only read, reconnect with the additional scopes before attempting setup changes.
+Read is required; write checkboxes start unchecked. On the VisiConvert approval
+page, select **Create and update websites and dynamic number pools** for setup,
+and **Register phone numbers you already own** when needed. These choices are
+available even when the client requests only read or omits scopes. No scope
+strings or API key are needed. Leaving the write choices unchecked grants read
+only. Existing connections keep their permissions: revoke the old connection in
+Connected agents, then reconnect from the client to approve different permissions.
+
+The server offers its supported permissions for explicit owner approval, following
+[RFC 6749 section 3.3](https://www.rfc-editor.org/rfc/rfc6749.html#section-3.3).
+The token response reports exactly the approved scopes; refreshing cannot expand
+them. Unknown requested or approved scopes are rejected.
 
 The agent receives an OAuth token, never the account password or a workspace API
 key. Manage/revoke connections at **Account → Connected agents**. Disconnecting
@@ -34,7 +42,7 @@ Each connection is restricted to one workspace and expires after 90 days.
   `/oauth/register`, `/oauth/token`, and `/oauth/revoke`.
 - Vite serves `/mcp/authorize`; session/consent APIs remain cookie and CSRF
   protected. The signed consent request binds client, exact registered callback,
-  PKCE challenge, state, requested scopes, user, browser session, and a unique
+  PKCE challenge, state, requested and offered scopes, user, browser session, and a unique
   nonce, with a ten-minute lifetime. Approval is single use.
 - Public clients use authorization code with mandatory S256 PKCE and an explicit
   `resource` equal to the canonical `/mcp` URL at authorization and token exchange.
