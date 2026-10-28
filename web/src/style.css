@@ -1217,6 +1217,33 @@ footer button {
 .setup-instructions > li { padding: 8px 0; }
 .setup-instructions .site-code { width: 100%; }
 .setup-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.setup-layout > .card { margin-bottom: 0; }
+.setup-layout .setup-intro { margin-bottom: 24px; }
+.setup-layout .setup-intro p { max-width: 75ch; }
+.setup-layout .setup-instructions { margin: 0; line-height: 1.65; }
+.setup-layout .setup-instructions > li { padding: 0 0 0 4px; }
+.setup-layout .setup-instructions > li + li { margin-top: 28px; }
+.setup-step { display: grid; gap: 14px; min-width: 0; }
+.setup-step > button { justify-self: start; }
+.setup-copy-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.setup-copy-row .site-code { flex: 1; width: 0; }
+.setup-copy-row button { flex-shrink: 0; }
+.setup-guidance { display: grid; gap: 12px; max-width: 85ch; }
+.setup-layout a { color: #365c3b; text-underline-offset: 3px; }
+.setup-local { margin-top: 24px; padding-top: 20px; border-top: 1px solid #e1e6db; }
+.setup-local summary { line-height: 1.65; }
+.setup-local[open] > .setup-instructions { margin-top: 20px; }
+.setup-local .form-field, .setup-local .site-toggle, .setup-local .site-code { margin-top: 14px; }
+.setup-local .setup-instructions button { display: flex; margin-top: 12px; }
+.setup-local .site-toggle + p, .setup-local > p { margin-top: 14px; }
+.setup-layout .section-heading { gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.setup-layout .section-heading h2 { font-size: 17px; }
+.setup-layout .setup-evidence article p + p { margin-top: 8px; }
+@media (max-width: 600px) {
+  .setup-copy-row { flex-direction: column; align-items: stretch; }
+  .setup-copy-row .site-code { flex: auto; width: 100%; }
+  .setup-copy-row button { align-self: flex-start; }
+}
 
 /* OAuth callbacks and permission descriptions must fit narrow account screens. */
 .cloud-panel .site-code { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1224,3 +1251,4 @@ footer button {
 .cloud-panel fieldset .site-toggle { margin: 12px 0; align-items: flex-start; }
 
 .cloud-panel fieldset .site-toggle input { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; }
+.mcp-permissions p + p { margin-top: 12px; }

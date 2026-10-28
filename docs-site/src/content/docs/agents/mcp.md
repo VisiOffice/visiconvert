@@ -13,7 +13,7 @@ https://cloud.visiconvert.com/mcp
 
 In Claude, choose **Register automatically** for the OAuth client if prompted. Sign in with your **VisiConvert** account, choose one workspace, and approve permissions. No CLI installation or API key is required. This release supports automatic registration, not Claude’s published client identity option.
 
-Read access includes customer contact information. Write permissions start unchecked on the approval page. For website setup, the client must request `read setup:write`; approve website/DNI changes explicitly. Add `numbers:write`, `leads:write`, or `bookings:write` only if needed. The server only offers tools allowed by your approval. A workspace must be ready and have billing or complimentary access.
+Read access includes customer contact information. Write permissions start unchecked on the approval page. For website setup, select **Create and update websites and dynamic number pools** on VisiConvert’s approval page. Select **Register phone numbers you already own** if needed, and leave other write permissions unchecked unless you need them. These choices are available even if your client requests only read access; no manual OAuth scopes or API key are needed. To change an existing read-only connection, revoke it under **Account → Connected agents**, then reconnect from your agent and approve the setup permissions. The server only offers tools allowed by your approval. A workspace must be ready and have billing or complimentary access.
 
 Revoke access anytime under **Account → Connected agents**. Connections expire after 90 days; password resets and loss of workspace access also block them. This is VisiConvert account authorization, independent of connecting Google Ads.
 
@@ -80,7 +80,7 @@ Every tool carries MCP annotations that mark it as read-only or not, so clients 
 
 ## Guided setup
 
-The server includes a prompt, `set_up_call_tracking`. In clients that support MCP prompts, it walks the agent through checking status, choosing websites and campaigns, configuring consent/form hooks and DNI pools, and confirming real visits, forms and test calls. It asks you before each change and tells you to connect the provider yourself.
+The server includes a prompt, `set_up_call_tracking`. In clients that support MCP prompts, it walks the agent through checking status, choosing websites and campaigns, configuring consent/form hooks and DNI pools, and confirming real visits, forms and test calls. It asks you before each change and tells you to connect the provider yourself. If your client exposes tools but not MCP prompts, paste the setup prompt from **Setup → Connect your agent** instead. It contains the workflow; unavailable MCP prompts do not block setup.
 
 You can also just ask, for example:
 
