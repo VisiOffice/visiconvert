@@ -78,9 +78,52 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
         include_str!("../migrations/0009_public_api.sql"),
         include_str!("../migrations/0010_google_connection.sql"),
         include_str!("../migrations/0011_signalwire.sql"),
+        include_str!("../migrations/0012_setup_scope.sql"),
     ] {
         sqlx::raw_sql(migration).execute(&pool).await.unwrap();
     }
+    let site = store
+        .save_site(
+            None,
+            &convert_store::sites::SiteInput {
+                name: "Legacy pool".into(),
+                origin: "https://legacy.example".into(),
+                allowed_fields: vec![],
+                enabled: true,
+                version: 0,
+            },
+        )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO dni_pools(site_id,workspace_id,fallback_phone,enabled,version) VALUES($1,$2,'+12025550412',false,7)").bind(site).bind(workspace).execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0013_dni_destination.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let migrated_pool = store.dni_pool(site).await.unwrap();
+    assert_eq!(migrated_pool["pool"]["fallback_phone"], "+12025550412");
+    assert_eq!(migrated_pool["pool"]["destination_phone"], "+12025550412");
+    assert_eq!(migrated_pool["pool"]["version"], 7);
+    assert_eq!(migrated_pool["pool"]["enabled"], false);
+    // A restored older image can still insert a pool without the new column.
+    let legacy_site = store
+        .save_site(
+            None,
+            &convert_store::sites::SiteInput {
+                name: "Rollback pool".into(),
+                origin: "https://rollback.example".into(),
+                allowed_fields: vec![],
+                enabled: false,
+                version: 0,
+            },
+        )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO dni_pools(site_id,workspace_id,fallback_phone,enabled) VALUES($1,$2,'+12025550414',false)").bind(legacy_site).bind(workspace).execute(&pool).await.unwrap();
+    assert_eq!(
+        store.dni_pool(legacy_site).await.unwrap()["pool"]["destination_phone"],
+        "+12025550414"
+    );
     assert_eq!(
         store.numbers().await.unwrap()[0].provider,
         convert_domain::PhoneProvider::Twilio

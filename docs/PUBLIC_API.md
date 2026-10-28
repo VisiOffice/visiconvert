@@ -175,3 +175,11 @@ The **Setup** screen provides a key preset (read + setup:write, seven-day expiry
 a local stdio MCP configuration and a guided prompt. Registering owned numbers
 also requires `numbers:write`. Provider credentials remain in Connections; never
 send secrets to agent chat. Revoke temporary setup keys after acceptance checks.
+
+### Website pool phone fields
+
+`PUT /api/v1/sites/{id}/number-pool` accepts `fallback_phone` (the published website number to replace) and optional `destination_phone` (where pool calls should ring), both in +1 E.164 format. They may differ. Every selected number must already forward to `destination_phone`; pool saves do not modify carrier routing. Keep the published number outside all pools. A registered static fallback must belong to this workspace and share the destination.
+
+Send `destination_phone` explicitly for new integrations. Omitting it on an update preserves the existing destination; on creation it defaults to `fallback_phone` for older clients. Changing either value revokes active assignments without shortening their cooldown. Public tracker responses do not include the forwarding destination.
+
+For Google Business Profile, register a static number through the existing numbers API with source `Google Business Profile` and campaign naming the location. Keep it outside all website pools. Listing/phone changes in Google and carrier routing remain manual; this does not enable Google Ads uploads.
