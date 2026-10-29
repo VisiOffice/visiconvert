@@ -94,7 +94,7 @@ impl Store {
         }
         // A published static number can be replaced, but a pooled number must
         // never be the fallback. Do not borrow another tenant's static number.
-        let invalid_fallback: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.phone_number=$1 AND n.released_at IS NULL AND (n.workspace_id<>$2 OR n.is_demo OR p.number_id IS NOT NULL OR n.destination<>$3 OR n.id=ANY($4)))")
+        let invalid_fallback: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.phone_number=$1 AND n.released_at IS NULL AND (n.workspace_id<>$2 OR n.is_demo OR n.release_requested_at IS NOT NULL OR p.number_id IS NOT NULL OR n.destination<>$3 OR n.id=ANY($4)))")
             .bind(&input.fallback_phone).bind(self.workspace).bind(&destination).bind(&ids).fetch_one(&mut *tx).await?;
         if invalid_fallback {
             return Err(ValidationError("The website number must be outside all pools; a registered static number must belong to this workspace and use the same forwarding destination").into());

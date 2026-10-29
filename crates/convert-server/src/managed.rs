@@ -2,7 +2,8 @@
 //! Purchases cost money, so each one is idempotent, capped and owner-only.
 use super::*;
 use convert_adapters::signalwire_api;
-use convert_store::managed::{Purchase, due_releases};
+use convert_store::managed::{Purchase, due_releases, recoverable_purchases};
+use convert_store::signalwire::SignalWireConnection;
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/numbers/search", post(search))
         .route("/numbers/purchase", post(purchase))
+        .route("/numbers/purchases/{id}", get(purchase_status))
         .route("/numbers/{id}/release", post(release))
         .route("/numbers/{id}/restore", post(restore))
 }
@@ -90,9 +92,17 @@ async fn purchase(
     n.validate()
         .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?;
     let (c, token) = signalwire::credentials(&a, &access.store).await?;
+    // Existing receipts remain inspectable even when new spending is disabled.
+    match access.store.purchase_status(input.request_id).await {
+        Ok(_) => {}
+        Err(convert_store::Error::NotFound) => {
+            authorize_managed_purchase(&a, &access.store, &c).await?
+        }
+        Err(error) => return Err(error.into()),
+    }
     match access
         .store
-        .begin_purchase(input.request_id, &n.phone_number, purchase_limit())
+        .begin_purchase(input.request_id, &n, &c, purchase_limit())
         .await?
     {
         Purchase::Registered(id) => {
@@ -101,7 +111,7 @@ async fn purchase(
         Purchase::Unfinished => {
             return Err(ApiError(
                 StatusCode::CONFLICT,
-                "This purchase request did not complete. Search again and retry with a new request ID.".into(),
+                "This purchase is awaiting reconciliation or did not complete. Check its status using the same request ID; do not submit a new purchase.".into(),
             ));
         }
         Purchase::Started => {}
@@ -117,34 +127,138 @@ async fn purchase(
             &n.phone_number,
             &format!("{prefix}/voice"),
             &format!("{prefix}/status"),
+            &purchase_marker(access.store.workspace, input.request_id),
         )
         .await
     {
         Ok(bought) => bought,
         Err(error) => {
-            access.store.fail_purchase(input.request_id).await?;
+            if matches!(
+                error,
+                signalwire_api::Error::Taken | signalwire_api::Error::Credentials
+            ) {
+                access.store.fail_purchase(input.request_id).await?;
+            }
+            // Timeouts, 5xx and malformed success responses are ambiguous: retain
+            // the durable intent and recover by marker, never re-POST the purchase.
             return Err(error.into());
         }
     };
+    access
+        .store
+        .record_purchase_number(input.request_id, &bought.sid)
+        .await?;
     match access
         .store
-        .finish_purchase(input.request_id, &n, c.revision, &bought.sid)
+        .finish_purchase(input.request_id, &n, &bought.sid)
         .await
     {
         Ok(id) => Ok(Json(json!({"id": id, "phone_number": n.phone_number}))),
         Err(error) => {
-            // Never keep paying for a number nothing routes to.
-            if a.signalwire_client
-                .release(&c.space_host, &project, &token, &bought.sid)
-                .await
-                .is_err()
-            {
-                tracing::error!(workspace = %access.store.workspace, "Release after failed registration failed");
+            if matches!(
+                error,
+                convert_store::Error::Validation(_) | convert_store::Error::Conflict
+            ) {
+                // Persist the cleanup obligation before any DELETE. Database/network
+                // errors stay pending: the registration commit itself may have succeeded.
+                access.store.cleanup_purchase(input.request_id).await?;
             }
-            access.store.fail_purchase(input.request_id).await?;
             Err(error.into())
         }
     }
+}
+
+fn purchase_marker(workspace: Uuid, request: Uuid) -> String {
+    format!("VisiConvert purchase {workspace}/{request}")
+}
+async fn purchase_status(
+    Extension(access): Extension<hosted::Access>,
+    Path(id): Path<Uuid>,
+) -> Api<Value> {
+    Ok(Json(access.store.purchase_status(id).await?))
+}
+
+/// Rails owns managed-spending eligibility. A normal workspace entitlement is not
+/// an allowance to spend the platform's carrier balance. BYOC pays its own carrier.
+async fn authorize_managed_purchase(
+    a: &App,
+    store: &Store,
+    connection: &SignalWireConnection,
+) -> Result<(), ApiError> {
+    if !connection.managed {
+        return Ok(());
+    }
+    let denied = || {
+        ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Managed number purchasing is unavailable until usage billing is enabled".into(),
+        )
+    };
+    let cloud = a.cloud.as_ref().ok_or_else(denied)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .map_err(|_| denied())?;
+    let response = client
+        .post(format!(
+            "{}/internal/managed-number-access",
+            cloud.cloud_origin
+        ))
+        .bearer_auth(&cloud.service_key)
+        .json(&json!({"workspace_id":store.workspace,"project_id":connection.project_id}))
+        .send()
+        .await
+        .map_err(|_| denied())?;
+    if !response.status().is_success() {
+        return Err(denied());
+    }
+    let value: Value = response.json().await.map_err(|_| denied())?;
+    if value["allowed"] != true
+        || value["workspace_id"] != store.workspace.to_string()
+        || value["project_id"] != connection.project_id.to_string()
+    {
+        return Err(denied());
+    }
+    Ok(())
+}
+
+/// Recover an interrupted purchase from carrier inventory. A phone number alone is
+/// not ownership evidence: the request-specific marker must also match. Missing
+/// inventory remains pending for operator investigation rather than freeing capacity.
+pub async fn reconcile_purchases(a: &App) -> anyhow::Result<()> {
+    for pending in recoverable_purchases(&a.store.pool).await? {
+        let result: anyhow::Result<()> = async {
+            let store = Store { pool:a.store.pool.clone(), workspace:pending.workspace };
+            let (c, token) = signalwire::credentials(a, &store).await.map_err(|_| anyhow::anyhow!("Purchase credentials unavailable"))?;
+            anyhow::ensure!(c.space_host==pending.space && c.project_id==pending.project, "Purchase project changed; manual reconciliation required");
+            let sid = if let Some(sid) = pending.carrier_sid { sid } else {
+                let inventory = a.signalwire_client.numbers(&pending.space, &pending.project.to_string(), &token, Some(&pending.number.phone_number)).await?;
+                let marker = purchase_marker(pending.workspace,pending.request);
+                let Some(number) = inventory.numbers.iter().find(|n| n.phone_number==pending.number.phone_number && n.friendly_name==marker) else {
+                    tracing::warn!(workspace=%pending.workspace, request=%pending.request, "Purchase outcome unresolved; carrier reconciliation required");
+                    return Ok(());
+                };
+                store.record_purchase_number(pending.request,&number.sid).await?;
+                number.sid.clone()
+            };
+            if pending.cleanup {
+                a.signalwire_client.release(&pending.space,&pending.project.to_string(),&token,&sid).await?;
+                store.complete_cleanup(pending.request).await?;
+            } else if let Err(error) = store.finish_purchase(pending.request,&pending.number,&sid).await {
+                if matches!(error, convert_store::Error::Validation(_) | convert_store::Error::Conflict) {
+                    store.cleanup_purchase(pending.request).await?;
+                }
+                return Err(error.into());
+            }
+            Ok(())
+        }.await;
+        if let Err(error) = result {
+            tracing::warn!(workspace=%pending.workspace, request=%pending.request, %error, "Purchase recovery will retry");
+        }
+    }
+    Ok(())
 }
 
 async fn release(Extension(access): Extension<hosted::Access>, Path(id): Path<Uuid>) -> Api<Value> {
@@ -171,6 +285,9 @@ pub async fn release_due(a: &App) -> anyhow::Result<usize> {
             tracing::warn!(workspace = %due.workspace_id, "No SignalWire connection for a held number");
             continue;
         };
+        if !store.claim_release(due.number_id, hold_days()).await? {
+            continue;
+        }
         match a
             .signalwire_client
             .release(
@@ -195,9 +312,12 @@ pub async fn release_due(a: &App) -> anyhow::Result<usize> {
 
 pub fn spawn_release_loop(app: Shared) {
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(3600));
+        let mut tick = tokio::time::interval(Duration::from_secs(60));
         loop {
             tick.tick().await;
+            if let Err(error) = reconcile_purchases(&app).await {
+                tracing::error!(%error, "Purchase recovery pass failed");
+            }
             if let Err(error) = release_due(&app).await {
                 tracing::error!(%error, "Release pass failed");
             }

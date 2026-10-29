@@ -20,6 +20,8 @@ pub enum Error {
     Taken,
     #[error("SignalWire could not find that resource.")]
     Missing,
+    #[error("SignalWire rejected the request.")]
+    Rejected,
 }
 
 /// A local number offered for purchase. Not yet owned by anyone.
@@ -122,6 +124,7 @@ impl Client {
         match response.status().as_u16() {
             200 | 201 => {}
             204 => return Ok(Value::Null),
+            400 => return Err(Error::Rejected),
             401 | 403 => return Err(Error::Credentials),
             404 => return Err(Error::Missing),
             429 | 500..=599 => return Err(Error::Unavailable),
@@ -248,6 +251,7 @@ impl Client {
 
     /// Buys one number into this project and points its voice and status webhooks at the
     /// given URLs. This is a billable carrier change.
+    #[allow(clippy::too_many_arguments)]
     pub async fn purchase(
         &self,
         space: &str,
@@ -256,6 +260,7 @@ impl Client {
         phone: &str,
         voice_url: &str,
         status_url: &str,
+        purchase_marker: &str,
     ) -> Result<Number, Error> {
         convert_domain::us_number(phone).map_err(|_| Error::Taken)?;
         let value = self
@@ -268,7 +273,7 @@ impl Client {
                 &[],
                 Some(&[
                     ("PhoneNumber", phone),
-                    ("FriendlyName", "VisiConvert tracking number"),
+                    ("FriendlyName", purchase_marker),
                     ("VoiceUrl", voice_url),
                     ("VoiceMethod", "POST"),
                     ("StatusCallback", status_url),
@@ -278,7 +283,7 @@ impl Client {
             .await
             .map_err(|error| match error {
                 // The Compatibility API answers 400/404 when someone else bought it first.
-                Error::Response | Error::Missing => Error::Taken,
+                Error::Rejected | Error::Missing => Error::Taken,
                 other => other,
             })?;
         let number: Number = serde_json::from_value(value.clone()).map_err(|_| Error::Response)?;

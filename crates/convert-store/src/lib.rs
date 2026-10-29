@@ -126,6 +126,13 @@ impl Store {
         sqlx::query("SELECT pg_advisory_xact_lock(73581001)")
             .execute(&mut **tx)
             .await?;
+        if carrier_sid.is_none() {
+            let pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM number_purchases WHERE workspace_id=$1 AND phone_number=$2 AND status IN ('pending','cleanup','review'))")
+                .bind(self.workspace).bind(&n.phone_number).fetch_one(&mut **tx).await?;
+            if pending {
+                return Err(Error::Conflict);
+            }
+        }
         let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE released_at IS NULL AND (phone_number=$1 OR phone_number=$2 OR destination=$1)) OR EXISTS(SELECT 1 FROM dni_pools WHERE destination_phone=$1 OR (fallback_phone=$1 AND (workspace_id<>$3 OR destination_phone<>$2)))").bind(&n.phone_number).bind(&n.destination).bind(self.workspace).fetch_one(&mut **tx).await?;
         if conflict {
             return Err(Error::Conflict);

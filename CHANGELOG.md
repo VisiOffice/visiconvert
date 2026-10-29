@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — number lifecycle safety
+
+- Persist purchase intent and carrier evidence; reconcile ambiguous responses without buying twice, and retry cleanup after registration failures.
+- Add workspace-scoped purchase status, full-payload idempotency, and capacity reservations for unresolved requests.
+- Claim carrier releases durably, reject restores after deletion starts, and protect website fallback numbers from release.
+- Require a separate Rails eligibility check for managed carrier spending; it remains disabled until usage billing is implemented. BYOC purchases remain supported.
+- Migration 0015 preserves legacy ambiguous attempts for operator review. See the SignalWire connection guide before a paired rollout.
+
 ## Unreleased — remote MCP authorization
 
 - Hosted remote MCP over Streamable HTTP with VisiConvert sign-in, workspace selection, explicit scope approval, rotating tokens, and Connected agents revocation.
