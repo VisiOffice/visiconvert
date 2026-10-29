@@ -34,16 +34,14 @@ pub(super) async fn show(
         .await?
         .iter()
         .any(|n| !n.is_demo && n.provider == PhoneProvider::Signalwire);
-    let prefix = format!(
-        "{}/webhooks/signalwire/workspaces/{}",
-        a.public_url, access.store.workspace
-    );
+    let prefix = webhook_prefix(&a, access.store.workspace);
+    let managed = connection.as_ref().is_some_and(|c| c.managed);
     Ok(Json(json!({
-        "connected": connection.is_some(), "space_host": connection.as_ref().map(|c| &c.space_host),
+        "connected": connection.is_some(), "managed": managed, "space_host": connection.as_ref().map(|c| &c.space_host),
         "project_id": connection.as_ref().map(|c| c.project_id), "revision": connection.as_ref().map_or(0, |c| c.revision),
         "last_webhook_at": connection.as_ref().and_then(|c| c.last_webhook_at),
         "setup_available": available(&a).is_none(), "setup_message": available(&a),
-        "can_disconnect": connection.is_some() && !used,
+        "can_disconnect": connection.is_some() && !used && !managed,
         "voice_url": format!("{prefix}/voice"), "status_url": format!("{prefix}/status")
     })))
 }
@@ -56,17 +54,6 @@ struct Credentials {
     signing_key: String,
     revision: i64,
 }
-impl From<signalwire_api::Error> for ApiError {
-    fn from(error: signalwire_api::Error) -> Self {
-        let status = match error {
-            signalwire_api::Error::Credentials | signalwire_api::Error::Number => {
-                StatusCode::BAD_REQUEST
-            }
-            _ => StatusCode::BAD_GATEWAY,
-        };
-        Self(status, error.to_string())
-    }
-}
 async fn save(
     State(a): State<Shared>,
     Extension(access): Extension<hosted::Access>,
@@ -76,6 +63,7 @@ async fn save(
     if let Some(reason) = available(&a) {
         return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, reason.into()));
     }
+    reject_managed(&access.store).await?;
     let secret_valid =
         |s: &str| (16..=512).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_graphic());
     if !signalwire_api::valid_space(&input.space_host)
@@ -147,6 +135,99 @@ fn decrypt(
         )
         .map_err(|_| connections::vault_error())
 }
+async fn reject_managed(store: &Store) -> Result<(), ApiError> {
+    if store
+        .signalwire_connection()
+        .await?
+        .is_some_and(|c| c.managed)
+    {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "VisiConvert manages this workspace's SignalWire numbers; this connection cannot be changed here".into(),
+        ));
+    }
+    Ok(())
+}
+pub fn webhook_prefix(a: &App, workspace: Uuid) -> String {
+    format!(
+        "{}/webhooks/signalwire/workspaces/{workspace}",
+        a.public_url
+    )
+}
+/// The workspace's connection and its decrypted API token.
+pub async fn credentials(
+    a: &App,
+    store: &Store,
+) -> Result<(SignalWireConnection, String), ApiError> {
+    let c = connection(store).await?;
+    let token = decrypt(a, store, &c, false)?;
+    Ok((c, token))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Managed {
+    space_host: String,
+    project_id: Uuid,
+    api_token: String,
+    signing_key: String,
+}
+/// Cloud hands over the subproject it created for this workspace. The token is scoped to
+/// calling and numbers, so it cannot read account details; inventory access is checked.
+pub(super) async fn save_managed(
+    State(a): State<Shared>,
+    Path(workspace): Path<Uuid>,
+    Json(input): Json<Managed>,
+) -> Api<Value> {
+    if let Some(reason) = available(&a) {
+        return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, reason.into()));
+    }
+    let secret_valid =
+        |s: &str| (16..=512).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_graphic());
+    if !signalwire_api::valid_space(&input.space_host)
+        || input.project_id.is_nil()
+        || !secret_valid(&input.api_token)
+        || !secret_valid(&input.signing_key)
+    {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Invalid managed SignalWire project".into(),
+        ));
+    }
+    if !a.store.hosted_exists(workspace).await? {
+        return Err(ApiError(
+            StatusCode::NOT_FOUND,
+            "Workspace not available".into(),
+        ));
+    }
+    let project = input.project_id.to_string();
+    a.signalwire_client
+        .numbers(&input.space_host, &project, &input.api_token, None)
+        .await?;
+    let vault = a.vault.as_ref().ok_or_else(connections::vault_error)?;
+    let seal = |purpose, secret: &str| {
+        vault
+            .seal_signalwire(
+                workspace,
+                &input.space_host,
+                input.project_id,
+                purpose,
+                secret,
+            )
+            .map_err(|_| connections::vault_error())
+    };
+    let token = seal("api-token", &input.api_token)?;
+    let signing = seal("signing-key", &input.signing_key)?;
+    let store = Store {
+        pool: a.store.pool.clone(),
+        workspace,
+    };
+    store
+        .save_managed_signalwire_connection(&input.space_host, input.project_id, &signing, &token)
+        .await?;
+    Ok(Json(
+        json!({"workspace_id": workspace, "status": "connected"}),
+    ))
+}
 async fn connection(store: &Store) -> Result<SignalWireConnection, ApiError> {
     store.signalwire_connection().await?.ok_or_else(|| {
         ApiError(
@@ -169,8 +250,7 @@ pub(super) async fn inventory(
     ))
 }
 pub async fn register(a: &App, access: &hosted::Access, n: &NewNumber) -> Result<(), ApiError> {
-    let c = connection(&access.store).await?;
-    let token = decrypt(a, &access.store, &c, false)?;
+    let (c, token) = credentials(a, &access.store).await?;
     a.signalwire_client
         .verify_number(
             &c.space_host,
@@ -195,6 +275,7 @@ async fn disconnect(
     Json(input): Json<Revision>,
 ) -> Api<Value> {
     connections::authorize(&access).await?;
+    reject_managed(&access.store).await?;
     access
         .store
         .remove_signalwire_connection(input.revision)

@@ -5,6 +5,7 @@ pub mod dni;
 pub mod google;
 pub mod hosted;
 pub mod inquiries;
+pub mod managed;
 pub mod public_api;
 pub mod setup;
 pub mod signalwire;
@@ -25,6 +26,8 @@ pub enum Error {
     NotFound,
     #[error("This record changed, or its identifier is already in use. Refresh and retry.")]
     Conflict,
+    #[error("This workspace has reached its tracking number limit")]
+    Limit,
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -53,7 +56,7 @@ impl Store {
     }
     pub async fn numbers(&self) -> Result<Vec<TrackingNumber>> {
         let rows =
-            sqlx::query("SELECT * FROM tracking_numbers WHERE workspace_id=$1 ORDER BY label")
+            sqlx::query("SELECT * FROM tracking_numbers WHERE workspace_id=$1 AND released_at IS NULL ORDER BY label")
                 .bind(self.workspace)
                 .fetch_all(&self.pool)
                 .await?;
@@ -72,6 +75,8 @@ impl Store {
                 source: r.get("source"),
                 campaign: r.get("campaign"),
                 is_demo: r.get("is_demo"),
+                purchased: r.get::<Option<String>, _>("carrier_sid").is_some(),
+                release_requested_at: r.get("release_requested_at"),
             })
             .collect())
     }
@@ -89,6 +94,20 @@ impl Store {
             .bind(self.workspace)
             .fetch_one(&mut *tx)
             .await?;
+        self.insert_number(&mut tx, n, revision, None).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    /// Registers a number inside a transaction that already holds the workspace lock.
+    /// `carrier_sid` marks a number VisiConvert bought and may later release.
+    pub(crate) async fn insert_number(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        n: &NewNumber,
+        revision: Option<i64>,
+        carrier_sid: Option<&str>,
+    ) -> Result<Uuid> {
+        n.validate()?;
         let current: Option<i64> = sqlx::query_scalar(match n.provider {
             PhoneProvider::Twilio => {
                 "SELECT revision FROM twilio_connections WHERE workspace_id=$1"
@@ -98,23 +117,23 @@ impl Store {
             }
         })
         .bind(self.workspace)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         if current != revision || (n.provider == PhoneProvider::Signalwire && revision.is_none()) {
             return Err(Error::Conflict);
         }
         // Serialize registrations across workspaces: a destination must never be a tracked number.
         sqlx::query("SELECT pg_advisory_xact_lock(73581001)")
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-        let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE phone_number=$1 OR phone_number=$2 OR destination=$1) OR EXISTS(SELECT 1 FROM dni_pools WHERE destination_phone=$1 OR (fallback_phone=$1 AND (workspace_id<>$3 OR destination_phone<>$2)))").bind(&n.phone_number).bind(&n.destination).bind(self.workspace).fetch_one(&mut *tx).await?;
+        let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE released_at IS NULL AND (phone_number=$1 OR phone_number=$2 OR destination=$1)) OR EXISTS(SELECT 1 FROM dni_pools WHERE destination_phone=$1 OR (fallback_phone=$1 AND (workspace_id<>$3 OR destination_phone<>$2)))").bind(&n.phone_number).bind(&n.destination).bind(self.workspace).fetch_one(&mut **tx).await?;
         if conflict {
             return Err(Error::Conflict);
         }
-        sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign,provider) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
-            .bind(Uuid::new_v4()).bind(self.workspace).bind(n.label.trim()).bind(&n.phone_number).bind(&n.destination).bind(n.source.trim()).bind(n.campaign.trim()).bind(n.provider.as_str()).execute(&mut *tx).await?;
-        tx.commit().await?;
-        Ok(())
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign,provider,carrier_sid,purchased_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $9::text IS NULL THEN NULL ELSE now() END)")
+            .bind(id).bind(self.workspace).bind(n.label.trim()).bind(&n.phone_number).bind(&n.destination).bind(n.source.trim()).bind(n.campaign.trim()).bind(n.provider.as_str()).bind(carrier_sid).execute(&mut **tx).await?;
+        Ok(id)
     }
     pub async fn leads(&self) -> Result<Vec<Lead>> {
         let rows = sqlx::query("SELECT l.*, i.qualification AS inquiry_qualification,i.notes AS inquiry_notes,i.version AS inquiry_version, COALESCE((SELECT SUM(amount_minor)::bigint FROM outcomes o WHERE o.workspace_id=l.workspace_id AND o.lead_id=l.id AND o.status='booked'),0)::bigint AS booked_minor FROM leads l JOIN inquiries i ON i.workspace_id=l.workspace_id AND i.id=l.inquiry_id WHERE l.workspace_id=$1 ORDER BY l.created_at DESC LIMIT 500")
@@ -318,7 +337,7 @@ impl Store {
             }
             (r.get::<Uuid, _>("id"), r.get::<String, _>("destination"))
         } else {
-            let number=sqlx::query("SELECT * FROM tracking_numbers WHERE workspace_id=$1 AND phone_number=$2 AND provider=$3 AND NOT is_demo").bind(self.workspace).bind(&event.to).bind(provider.as_str()).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+            let number=sqlx::query("SELECT * FROM tracking_numbers WHERE workspace_id=$1 AND phone_number=$2 AND provider=$3 AND NOT is_demo AND released_at IS NULL").bind(self.workspace).bind(&event.to).bind(provider.as_str()).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
             let id = Uuid::new_v4();
             let destination: String = number.get("destination");
             sqlx::query("INSERT INTO leads(id,workspace_id,external_id,name,contact,channel,source,campaign,tracking_number,destination,call_status,provider) VALUES($1,$2,$3,'Phone inquiry',$4,'call',$5,$6,$7,$8,'ringing',$9)")

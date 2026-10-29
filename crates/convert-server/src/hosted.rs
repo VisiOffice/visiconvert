@@ -99,6 +99,10 @@ pub fn routes(app: Shared) -> Router<Shared> {
         .route("/internal/cloud/workspaces", post(provision))
         .route("/internal/cloud/launch", post(launch))
         .route("/internal/cloud/revoke-user", post(revoke_user))
+        .route(
+            "/internal/cloud/workspaces/{workspace}/signalwire",
+            post(super::signalwire::save_managed),
+        )
         .route_layer(middleware::from_fn_with_state(app, service_auth))
         .route("/auth/start", get(start))
         .route("/auth/prepare", post(prepare))
