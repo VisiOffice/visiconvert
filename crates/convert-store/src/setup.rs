@@ -17,7 +17,7 @@ impl Store {
              'call_count',count(l.id),'last_call_at',max(l.created_at))
              FROM tracking_numbers n LEFT JOIN leads l ON l.workspace_id=n.workspace_id
              AND l.tracking_number=n.phone_number AND l.provider=n.provider AND l.channel='call' AND NOT l.is_demo
-             WHERE n.workspace_id=$1 AND NOT n.is_demo GROUP BY n.id ORDER BY n.label,n.id")
+             WHERE n.workspace_id=$1 AND NOT n.is_demo AND n.released_at IS NULL GROUP BY n.id ORDER BY n.label,n.id")
             .bind(self.workspace).fetch_all(&self.pool).await?;
         Ok(
             json!({"sites":sites,"numbers":numbers,"google_uploads_enabled":false,

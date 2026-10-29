@@ -124,9 +124,22 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
         store.dni_pool(legacy_site).await.unwrap()["pool"]["destination_phone"],
         "+12025550414"
     );
-    assert_eq!(
-        store.numbers().await.unwrap()[0].provider,
-        convert_domain::PhoneProvider::Twilio
+    // Existing numbers stay live and unpurchased; the phone number is still unique while live.
+    sqlx::raw_sql(include_str!("../migrations/0014_managed_numbers.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let numbers = store.numbers().await.unwrap();
+    assert_eq!(numbers[0].provider, convert_domain::PhoneProvider::Twilio);
+    assert!(!numbers[0].purchased);
+    assert!(numbers[0].release_requested_at.is_none());
+    assert!(
+        sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign) VALUES($1,$2,'Duplicate','+12025550411','+12025550415','Legacy source','Legacy campaign')")
+            .bind(Uuid::new_v4())
+            .bind(workspace)
+            .execute(&pool)
+            .await
+            .is_err()
     );
     assert_eq!(
         store

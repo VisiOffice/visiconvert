@@ -149,6 +149,8 @@ async fn add_number(
         source: n.source,
         campaign: n.campaign,
         is_demo: false,
+        purchased: false,
+        release_requested_at: None,
     });
     Ok(Json(json!({"ok": true})))
 }

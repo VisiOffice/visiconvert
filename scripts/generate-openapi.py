@@ -31,7 +31,14 @@ schemas={
 provider=string(enum=['twilio','signalwire'],default='twilio')
 schemas['NumberInput']['properties']['provider']=provider
 schemas['Number']['properties']['provider']=provider
-schemas['SignalWireStatus']=obj({'connected':{'type':'boolean'},'space_host':{'type':['string','null']},'project_id':{'type':['string','null'],'format':'uuid'},'revision':integer(),'last_webhook_at':nullable_date,'setup_available':{'type':'boolean'},'setup_message':{'type':['string','null']},'can_disconnect':{'type':'boolean'},'voice_url':string(),'status_url':string()},['connected','revision','voice_url','status_url'])
+schemas['Number']['properties']['purchased']={'type':'boolean','description':'Bought through VisiConvert, so it can be released here.'}
+schemas['Number']['properties']['release_requested_at']={**nullable_date,'description':'Set during the release hold; the number still forwards calls until released.'}
+schemas['NumberSearch']=obj({'area_code':string(pattern='^[0-9]{3}$'),'limit':integer(minimum=1,maximum=30,default=10)},['area_code'])
+schemas['AvailableNumbers']=obj({'numbers':array(obj({'phone_number':string(),'locality':{'type':['string','null']},'region':{'type':['string','null']}},['phone_number']))},['numbers'])
+schemas['NumberPurchase']=obj({'request_id':string(format='uuid',description='Client-chosen idempotency key. Retrying the same request never buys twice; a failed request needs a new ID.'),**{k:string(minLength=1) for k in ['label','phone_number','destination','source','campaign']}},['request_id','label','phone_number','destination','source','campaign'])
+schemas['Purchased']=obj({'id':uuid,'phone_number':string()},['id','phone_number'])
+schemas['ReleaseHold']=obj({'ok':{'type':'boolean'},'hold_days':integer()},['ok','hold_days'])
+schemas['SignalWireStatus']=obj({'connected':{'type':'boolean'},'managed':{'type':'boolean','description':'The project is provisioned and billed by VisiConvert Cloud.'},'space_host':{'type':['string','null']},'project_id':{'type':['string','null'],'format':'uuid'},'revision':integer(),'last_webhook_at':nullable_date,'setup_available':{'type':'boolean'},'setup_message':{'type':['string','null']},'can_disconnect':{'type':'boolean'},'voice_url':string(),'status_url':string()},['connected','revision','voice_url','status_url'])
 schemas['SiteInput']=obj({'name':string(minLength=1,maxLength=100),'origin':string(description='Exact HTTPS origin without path, query, fragment or wildcard; HTTP only for localhost.'),'allowed_fields':array(string(enum=['name','email','phone','company'])),'enabled':{'type':'boolean'},'version':integer(minimum=0,description='0 for creation; current list_sites version for updates. Stale updates return 409.')},['name','origin','allowed_fields','enabled','version'])
 schemas['Site']={'type':'object','description':'Website settings and historical session_count, form_count, last_session_at and last_form_at. Browser-reported activity is not proof of authenticity.','properties':{**schemas['SiteInput']['properties'],'id':uuid,'session_count':integer(),'form_count':integer(),'last_session_at':nullable_date,'last_form_at':nullable_date}}
 schemas['Sites']=obj({'sites':array(ref('Site')),'tracker_url':string()},['sites','tracker_url'])
@@ -77,6 +84,10 @@ route('/bookings','get','List all workspace bookings, including canceled records
 route('/reports/sources','get','All-time inquiry counts and booked revenue by primary source',array(ref('SourceReport')))
 route('/numbers','get','List registered tracking numbers',array(ref('Number')))
 route('/numbers','post','Register a number already owned in connected Twilio or SignalWire (provider defaults to twilio); webhook configuration remains manual',ref('Ok'),'numbers:write','NumberInput')
+route('/numbers/search','post','Search local SignalWire numbers available to buy in an area code; nothing is reserved',ref('AvailableNumbers'),'numbers:purchase','NumberSearch')
+route('/numbers/purchase','post','Buy a number into the connected SignalWire project, point its webhooks at this workspace and register it. Billable; capped per workspace',ref('Purchased'),'numbers:purchase','NumberPurchase')
+route('/numbers/{id}/release','post','Start the release hold for a purchased number. It keeps forwarding calls but leaves website pools; the carrier release follows after the hold',ref('ReleaseHold'),'numbers:purchase')
+route('/numbers/{id}/restore','post','Cancel a pending release; re-enable the number in its pool separately',ref('Ok'),'numbers:purchase')
 route('/connections/signalwire','get','Read SignalWire status and callback readiness; credential changes are not permitted',ref('SignalWireStatus'))
 route('/connections/signalwire/numbers','get','Read first SignalWire inventory page; check has_more',ref('TwilioInventory'))
 route('/connections/twilio','get','Read connection status; credential changes are not permitted',ref('TwilioStatus'))

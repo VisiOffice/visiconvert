@@ -4,6 +4,7 @@ mod conversions;
 mod google;
 mod hosted;
 mod inquiries;
+mod managed;
 mod public_api;
 mod remote_mcp;
 mod secrets;
@@ -147,6 +148,9 @@ async fn main() -> anyhow::Result<()> {
     let address: SocketAddr = std::env::var("LISTEN_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3100".into())
         .parse()?;
+    if app.vault.is_some() {
+        managed::spawn_release_loop(app.clone());
+    }
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address,"VisiConvert pilot listening");
     axum::serve(listener, router(app))
@@ -187,6 +191,7 @@ fn router(app: Shared) -> Router {
     let api = Router::new()
         .merge(connections::routes())
         .merge(signalwire::routes())
+        .merge(managed::routes())
         .merge(sites::private_routes())
         .merge(inquiries::routes())
         .merge(conversions::routes())
@@ -318,6 +323,7 @@ impl From<convert_store::Error> for ApiError {
             RateLimited => Self(StatusCode::TOO_MANY_REQUESTS, e.to_string()),
             NotFound => Self(StatusCode::NOT_FOUND, "Not found".into()),
             Conflict => Self(StatusCode::CONFLICT, e.to_string()),
+            Limit => Self(StatusCode::FORBIDDEN, e.to_string()),
             Database(error) => {
                 tracing::error!(%error,"Database request failed");
                 Self(
@@ -748,3 +754,6 @@ mod public_api_tests;
 
 #[cfg(test)]
 mod signalwire_tests;
+
+#[cfg(test)]
+mod managed_tests;

@@ -81,7 +81,7 @@ impl Store {
             .unwrap_or_else(|| input.fallback_phone.clone());
         us_number(&destination)?;
         let destination_is_tracking: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE phone_number=$1)",
+            "SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE phone_number=$1 AND released_at IS NULL)",
         )
         .bind(&destination)
         .fetch_one(&mut *tx)
@@ -94,13 +94,13 @@ impl Store {
         }
         // A published static number can be replaced, but a pooled number must
         // never be the fallback. Do not borrow another tenant's static number.
-        let invalid_fallback: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.phone_number=$1 AND (n.workspace_id<>$2 OR n.is_demo OR p.number_id IS NOT NULL OR n.destination<>$3 OR n.id=ANY($4)))")
+        let invalid_fallback: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.phone_number=$1 AND n.released_at IS NULL AND (n.workspace_id<>$2 OR n.is_demo OR p.number_id IS NOT NULL OR n.destination<>$3 OR n.id=ANY($4)))")
             .bind(&input.fallback_phone).bind(self.workspace).bind(&destination).bind(&ids).fetch_one(&mut *tx).await?;
         if invalid_fallback {
             return Err(ValidationError("The website number must be outside all pools; a registered static number must belong to this workspace and use the same forwarding destination").into());
         }
         for id in &ids {
-            let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.workspace_id=$1 AND n.id=$2 AND NOT n.is_demo AND n.destination=$3 AND (p.site_id IS NULL OR p.site_id=$4) AND NOT EXISTS(SELECT 1 FROM dni_pools f WHERE f.fallback_phone=n.phone_number))").bind(self.workspace).bind(id).bind(&destination).bind(site).fetch_one(&mut *tx).await?;
+            let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers n LEFT JOIN dni_pool_numbers p ON p.number_id=n.id WHERE n.workspace_id=$1 AND n.id=$2 AND NOT n.is_demo AND n.release_requested_at IS NULL AND n.destination=$3 AND (p.site_id IS NULL OR p.site_id=$4) AND NOT EXISTS(SELECT 1 FROM dni_pools f WHERE f.fallback_phone=n.phone_number))").bind(self.workspace).bind(id).bind(&destination).bind(site).fetch_one(&mut *tx).await?;
             if !valid {
                 return Err(ValidationError("Pool numbers must belong to this workspace, use the selected forwarding destination, and be dedicated to this site").into());
             }
@@ -146,7 +146,7 @@ impl Store {
             return Ok(json!({"status":"expired","fallback_phone":fallback}));
         }
         super::sites::rate_limit(&mut tx, site).await?;
-        let number=sqlx::query("SELECT n.id,n.phone_number FROM dni_pool_numbers p JOIN tracking_numbers n ON n.id=p.number_id WHERE p.site_id=$1 AND p.enabled AND NOT EXISTS(SELECT 1 FROM dni_assignments a WHERE a.number_id=p.number_id AND a.reusable_at>clock_timestamp()) ORDER BY (SELECT max(a.assigned_at) FROM dni_assignments a WHERE a.number_id=p.number_id) ASC NULLS FIRST,n.id LIMIT 1").bind(site).fetch_optional(&mut *tx).await?;
+        let number=sqlx::query("SELECT n.id,n.phone_number FROM dni_pool_numbers p JOIN tracking_numbers n ON n.id=p.number_id WHERE p.site_id=$1 AND p.enabled AND n.release_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM dni_assignments a WHERE a.number_id=p.number_id AND a.reusable_at>clock_timestamp()) ORDER BY (SELECT max(a.assigned_at) FROM dni_assignments a WHERE a.number_id=p.number_id) ASC NULLS FIRST,n.id LIMIT 1").bind(site).fetch_optional(&mut *tx).await?;
         let Some(number) = number else {
             sqlx::query("UPDATE dni_pools SET fallback_count=fallback_count+1 WHERE site_id=$1")
                 .bind(site)

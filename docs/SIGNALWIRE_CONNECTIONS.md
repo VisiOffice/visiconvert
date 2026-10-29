@@ -42,7 +42,17 @@ visiconvert numbers add +12025550142 --provider signalwire \
 
 MCP exposes `list_signalwire_numbers`. Set `provider: "signalwire"` on `add_tracking_number`; writes still require `--allow-changes` and a `numbers:write` key. `get_status` returns both provider statuses and callback URLs. Agents must not ask users to paste credentials in chat or change production carrier routing without approval.
 
-The v1 API provides `GET /api/v1/connections/signalwire` and `GET /api/v1/connections/signalwire/numbers` with `read` scope. Register numbers with `POST /api/v1/numbers`, `numbers:write`, and `provider: "signalwire"`. Omitted provider defaults to `twilio` for compatibility. Inventory returns the first page and `has_more`; registering an exact number performs a filtered ownership check. No SMS, recordings, transcription, purchases, porting, automatic routing changes or Google/Microsoft conversion delivery are included in this slice.
+The v1 API provides `GET /api/v1/connections/signalwire` and `GET /api/v1/connections/signalwire/numbers` with `read` scope. Register numbers with `POST /api/v1/numbers`, `numbers:write`, and `provider: "signalwire"`. Omitted provider defaults to `twilio` for compatibility. Inventory returns the first page and `has_more`; registering an exact number performs a filtered ownership check. No SMS, recordings, transcription, porting or Google/Microsoft conversion delivery are included in this slice.
+
+## Buy and release numbers
+
+Owners can buy local numbers into the connected project instead of registering existing ones:
+
+- `POST /api/v1/numbers/search` with `{"area_code":"213"}` lists available local voice numbers. Nothing is reserved.
+- `POST /api/v1/numbers/purchase` with a client-chosen `request_id` and the usual number fields buys the number, sets its voice and status webhooks to this workspace's URLs and registers it. Retrying the same `request_id` never buys twice; if registration fails, the number is released again. Purchases are billable at your carrier and capped per workspace by `VISICONVERT_PURCHASE_LIMIT` (default 25).
+- `POST /api/v1/numbers/{id}/release` starts a hold of `VISICONVERT_RELEASE_HOLD_DAYS` (default 45). The number keeps forwarding calls but is disabled in its website pool; `.../restore` cancels the hold. After the hold, the engine releases the number at the carrier. Its call history is kept.
+
+API keys need the separate `numbers:purchase` permission. Hosted workspaces can instead let VisiConvert Cloud provision a dedicated SignalWire project; that connection is marked managed and cannot be edited or disconnected by the owner.
 
 ## Protocol and verification
 

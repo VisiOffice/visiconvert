@@ -553,6 +553,14 @@ fn openapi_covers_public_routes() {
     ] {
         assert!(spec["paths"][path]["get"].is_object(), "{path}");
     }
+    for path in [
+        "/numbers/search",
+        "/numbers/purchase",
+        "/numbers/{id}/release",
+        "/numbers/{id}/restore",
+    ] {
+        assert!(spec["paths"][path]["post"].is_object(), "{path}");
+    }
     assert!(
         spec["paths"]["/api-keys"].is_null(),
         "Management endpoints must stay outside the integration API"

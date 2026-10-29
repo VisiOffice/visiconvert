@@ -171,6 +171,12 @@ pub struct TrackingNumber {
     pub source: String,
     pub campaign: String,
     pub is_demo: bool,
+    /// Bought through VisiConvert, so it can be released from here.
+    #[serde(default)]
+    pub purchased: bool,
+    /// Set while a purchased number is in its release hold. It still forwards calls.
+    #[serde(default)]
+    pub release_requested_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
