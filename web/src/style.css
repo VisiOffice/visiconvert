@@ -1267,3 +1267,10 @@ footer button {
 .business-profile-guide ol { padding-left: 22px; line-height: 1.65; }
 .business-profile-guide li + li { margin-top: 10px; }
 @media (max-width: 600px) { .tracking-choices { grid-template-columns: 1fr; } }
+
+.managed-usage { display: flex; flex-direction: column; gap: 16px; min-width: 0; border-top: 1px solid #dce4df; padding-top: 24px; }
+.managed-usage-period { display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid #dce4df; border-radius: 10px; }
+.managed-usage-period h3 { font-size: 16px; overflow-wrap: anywhere; }
+.managed-usage-period dl { display: grid; gap: 8px; margin: 0; }
+.managed-usage-period dl > div { display: flex; justify-content: space-between; gap: 16px; }
+.managed-usage-period dd { margin: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
