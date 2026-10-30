@@ -31,6 +31,20 @@ Billing currently runs in test mode. The interface labels test billing; it does
 not collect a real payment. Public launch and live subscriptions are separate
 from the interface rollout.
 
+## Managed call service
+
+Managed-number billing is still gated. When enabled, failed payments block new
+purchases immediately while existing calls have a seven-day payment grace period.
+Forwarding then pauses and numbers remain held for 45 more days before release.
+Scheduled cancellation keeps calls working through the paid period, followed by
+a 45-day number hold. The Billing page shows the applied service state and hold
+deadline separately from a change still waiting to reach the workspace.
+
+Restore billing before carrier release begins to retain the numbers. A new
+subscription does not erase earlier unpaid usage or invoices. Numbers you have
+separately requested to release stay in that release process. Bring-your-own
+Twilio and SignalWire accounts are not enrolled in managed billing by these rules.
+
 ## Sessions and recovery
 
 Reloading an open workspace signs it back in through your account. If a workspace
@@ -48,4 +62,4 @@ while that revocation completes.
 API keys are managed inside each workspace under **API keys**. They are separate
 from your browser session. Existing CLI, MCP and HTTP integrations can continue
 using `https://workspaces.visiconvert.com`; see [API keys](/api/public-api/).
-Keep using the Twilio webhook URLs displayed under **Connections**.
+Keep using the webhook URLs for your provider displayed under **Connections**.

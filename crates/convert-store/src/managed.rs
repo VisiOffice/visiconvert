@@ -186,6 +186,13 @@ impl Store {
             .map_err(|_| convert_domain::ValidationError("Invalid persisted number purchase"))?;
         self.validate_number_route(&mut tx, &n, Some(request))
             .await?;
+        let allowed: bool = sqlx::query_scalar("SELECT managed_forwarding_allowed($1)")
+            .bind(self.workspace)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !allowed {
+            return Err(Error::Conflict);
+        }
         self.check_purchase_attempts(&mut tx, limit).await?;
         sqlx::query("UPDATE number_purchases SET phase='carrier',carrier_started_at=now() WHERE workspace_id=$1 AND request_id=$2")
             .bind(self.workspace).bind(request).execute(&mut *tx).await?;
@@ -251,7 +258,7 @@ impl Store {
         sqlx::query("SELECT pg_advisory_xact_lock(73581001)")
             .execute(&mut *tx)
             .await?;
-        let result = sqlx::query("UPDATE tracking_numbers n SET release_started_at=COALESCE(release_started_at,now()) WHERE workspace_id=$1 AND id=$2 AND released_at IS NULL AND (release_started_at IS NOT NULL OR release_requested_at < now()-make_interval(days=>$3)) AND NOT EXISTS(SELECT 1 FROM dni_pools p WHERE p.fallback_phone=n.phone_number)")
+        let result = sqlx::query("UPDATE tracking_numbers n SET release_policy=CASE WHEN release_started_at IS NULL AND billing_release_due(workspace_id,id) THEN (SELECT payload FROM managed_service_policies p WHERE p.workspace_id=n.workspace_id) ELSE release_policy END, release_started_at=COALESCE(release_started_at,now()), release_requested_at=COALESCE(release_requested_at,now()) WHERE workspace_id=$1 AND id=$2 AND released_at IS NULL AND (release_started_at IS NOT NULL OR billing_release_due(workspace_id,id) OR (release_requested_at < now()-make_interval(days=>$3) AND NOT EXISTS(SELECT 1 FROM dni_pools p WHERE p.fallback_phone=n.phone_number)))")
             .bind(self.workspace).bind(number).bind(hold_days).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(result.rows_affected() == 1)
@@ -329,7 +336,7 @@ pub async fn recoverable_purchases(pool: &PgPool) -> Result<Vec<RecoverPurchase>
 
 /// Purchased numbers across all workspaces whose hold began more than `hold_days` ago.
 pub async fn due_releases(pool: &PgPool, hold_days: i32) -> Result<Vec<DueRelease>> {
-    let rows = sqlx::query("SELECT workspace_id,id,carrier_sid FROM tracking_numbers WHERE release_requested_at IS NOT NULL AND released_at IS NULL AND carrier_sid IS NOT NULL AND (release_started_at IS NOT NULL OR release_requested_at < now() - make_interval(days => $1)) ORDER BY release_requested_at LIMIT 100")
+    let rows = sqlx::query("SELECT workspace_id,id,carrier_sid FROM tracking_numbers WHERE released_at IS NULL AND carrier_sid IS NOT NULL AND (release_started_at IS NOT NULL OR release_requested_at < now() - make_interval(days => $1) OR billing_release_due(workspace_id,id)) ORDER BY release_requested_at LIMIT 100")
         .bind(hold_days).fetch_all(pool).await?;
     Ok(rows
         .iter()

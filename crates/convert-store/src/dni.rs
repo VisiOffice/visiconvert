@@ -136,6 +136,16 @@ impl Store {
             return Ok(json!({"status":"not_configured"}));
         };
         let fallback: String = pool.get("fallback_phone");
+        let workspace: Uuid = pool.get("workspace_id");
+        let forwarding: bool = sqlx::query_scalar("SELECT managed_forwarding_allowed($1)")
+            .bind(workspace)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !forwarding {
+            // Do not return an existing lease or a suspended tracking fallback.
+            let destination: String = pool.get("destination_phone");
+            return Ok(json!({"status":"disabled","fallback_phone":destination}));
+        }
         if !pool.get::<bool, _>("enabled") {
             return Ok(json!({"status":"disabled","fallback_phone":fallback}));
         }

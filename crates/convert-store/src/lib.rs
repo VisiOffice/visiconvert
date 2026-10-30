@@ -7,6 +7,7 @@ pub mod hosted;
 pub mod inquiries;
 pub mod managed;
 pub mod public_api;
+pub mod service_policy;
 pub mod setup;
 pub mod signalwire;
 pub mod sites;

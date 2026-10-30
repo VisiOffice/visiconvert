@@ -94,3 +94,16 @@ Manrope, whose font license is included in `assets/brand/FONT-LICENSE.txt`.
 Hosted and self-hosted workspaces can assign dedicated tracking numbers to consenting website sessions, with fallback, cooldown, and explicit inferred call-source evidence. See [setup and limits](docs/DYNAMIC_NUMBERS.md).
 
 SignalWire setup: [connect an existing project and test a call](docs/SIGNALWIRE_CONNECTIONS.md).
+
+Managed hosted service policies are enforced by the Rust engine; Rails retains
+billing agreement history and issues versioned, expiring authorization. Failed
+payments allow a seven-day forwarding grace, followed by suspension and a
+45-day number hold. Scheduled cancellation keeps service through the paid
+boundary. A fresh suspended policy is required for automatic release; expired
+billing authorization alone cannot release numbers. Status callbacks continue
+for final metering. BYOC connections remain outside managed billing enforcement.
+The paired Cloud lifecycle feature is disabled until explicitly enabled during
+rollout, and managed purchases remain gated. See the private Cloud billing
+runbook for reconciliation and activation. Existing managed connections require
+valid authorization before forwarding; deploy the matching Cloud worker before
+enabling managed service.

@@ -295,6 +295,7 @@ async fn managed_numbers_purchase_hold_and_release() {
     )
     .await
     .1;
+    enable_service(&store, workspace).await;
     assert_eq!(state["managed"], true);
     assert_eq!(state["can_disconnect"], false);
     assert!(!state.to_string().contains(TOKEN));
@@ -895,6 +896,7 @@ async fn managed_budget_and_verified_quantities() {
     let workspace = Uuid::new_v4();
     let session = bearer(&store, workspace).await;
     assert_eq!(internal(app.clone(),workspace,&service_key,json!({"space_host":"fixture.signalwire.com","project_id":PROJECT,"api_token":TOKEN,"signing_key":SIGNING})).await,StatusCode::OK);
+    enable_service(&store, workspace).await;
     let request = Uuid::new_v4();
     let buy = json!({"request_id":request,"phone_number":"+12025550981","destination":"+12025550398","label":"Metered","source":"Website","campaign":"Pool"});
     let (status, value) = api(
@@ -1271,4 +1273,21 @@ async fn carrier_quantity_pagination_preserves_filters_and_rejects_duplicates() 
             .is_err()
     );
     server.abort();
+}
+
+async fn enable_service(store: &Store, workspace: Uuid) {
+    Store {
+        pool: store.pool.clone(),
+        workspace,
+    }
+    .apply_service_policy(&convert_store::service_policy::ServicePolicy {
+        project_id: Uuid::parse_str(PROJECT).unwrap(),
+        revision: 1,
+        state: "active".into(),
+        reason: "paid".into(),
+        valid_until: chrono::Utc::now().timestamp() + 86400,
+        release_at: None,
+    })
+    .await
+    .unwrap();
 }
