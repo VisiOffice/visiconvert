@@ -241,6 +241,9 @@ try {
       env: { ...env, VISICONVERT_TEST_DATABASE_URL: `postgresql:///visiconvert_managed_test?host=${encodeURIComponent(socketDir)}` },
     });
   });
+  await check("Carrier adoption: exact inventory, atomic activation, recovery and no backbilling", async () => {
+    await command("cargo", ["test", "-p", "convert-server", "adoption_tests::", "--", "--ignored", "--test-threads=1"]);
+  });
   await check("Managed service: policy ordering, expiry, recovery, DNI fallback and release claims", async () => {
     await command("cargo", ["test", "-p", "convert-store", "--test", "service_policy", "--", "--ignored", "--test-threads=1"]);
   });
