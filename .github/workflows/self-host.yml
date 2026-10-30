@@ -32,6 +32,9 @@ jobs:
           mkdir -p artifacts/browser
           chmod 777 artifacts/browser
           docker run --rm -v "$PWD/artifacts/browser:/src/artifacts" visiconvert-verify:ci
+      - name: Verify hosted usage and payment states in the production frontend
+        run: |
+          docker run --rm --network none --shm-size=256m -v "$PWD/artifacts/browser:/src/artifacts" --entrypoint node visiconvert-verify:ci web/tests/verify-billing-usage.mjs
       - name: Save verification diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4

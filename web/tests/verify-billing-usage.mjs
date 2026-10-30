@@ -29,7 +29,7 @@ try {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/cloud/session") return route.fulfill({ json: { csrf_token: "fixture", user: { id: "owner", email: "fixture@example.test", email_verified: true }, signups_enabled: true, billing: { enabled: true, mode: "test", amount_minor: 2750, currency: "usd" } } });
     if (path.endsWith("/billing/usage")) return route.fulfill(unavailable ? { status: 503, json: { error: "Unavailable" } } : { json: usage });
-    if (path.endsWith("/billing")) return route.fulfill({ json: { workspace, required: true, enabled: true, mode: "test", amount_minor: 2750, currency: "usd", status: "active", paid_access: true, cancellation_scheduled: false, access_until: null, can_checkout: false, can_manage: true } });
+    if (path.endsWith("/billing")) return route.fulfill({ json: { workspace, required: true, enabled: true, mode: "test", amount_minor: 2750, currency: "usd", status: usage.subscription_status === "canceled" ? "canceled" : "active", paid_access: usage.subscription_status !== "canceled", cancellation_scheduled: false, access_until: null, can_checkout: false, can_manage: true } });
     if (path === `/api/cloud/workspaces/${id}`) return route.fulfill({ json: workspace });
     throw new Error(`Unexpected API request ${path}`);
   });
@@ -48,6 +48,21 @@ try {
   await page.getByRole("button", { name: "Refresh usage", exact: true }).click();
   await page.getByText(/Needs review —/).waitFor();
   assert.equal(await page.locator(".managed-usage-period dd").last().innerText(), "$16.50");
+  usage = { ...usage, spending_blocked: true, subscription_status: "canceled",
+    payment_issues: [{ status: "open", payment_required: true, amount_remaining_cents: 1650, next_payment_attempt_at: "2026-11-02T00:00:00Z" }],
+    periods: [{ ...period, kind: "tail", final_invoice: true, payment: { status: "open", payment_required: true }, entries: [{ kind: "usage", amount_cents: 1650 }, { kind: "credit", amount_cents: 0 }] }] };
+  await page.reload();
+  await page.getByText(/Subscription ended/).waitFor();
+  await page.getByRole("alert").filter({ hasText: "Billing needs attention" }).waitFor();
+  await page.getByText(/No additional monthly credit applies/).waitFor();
+  assert.equal(await page.locator(".managed-usage-period dd").allTextContents().then(x => x.join("|")), "$16.50|$0.00|$16.50");
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: "artifacts/billing-usage/cancellation-mobile.png", fullPage: true });
+  usage = { ...usage, payment_issues: [], periods: [{ ...period, final_invoice: true, payment: { status: "paid", payment_required: false } }] };
+  await page.getByRole("button", { name: "Refresh usage", exact: true }).click();
+  await page.getByText("Invoice paid", { exact: true }).waitFor();
+  await page.getByRole("alert").filter({ hasText: "Billing needs attention" }).waitFor({ state: "detached" });
+  await page.getByText(/Subscription ended/).waitFor();
   unavailable = true;
   await page.getByRole("button", { name: "Refresh usage", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Usage billing is temporarily unavailable" }).waitFor();
@@ -57,7 +72,7 @@ try {
   await page.getByRole("button", { name: "Refresh usage", exact: true }).click();
   await page.getByRole("heading", { name: "Managed numbers and calls" }).waitFor({ state: "detached" });
   assert.deepEqual(errors, []);
-  console.log("PASS: usage totals, sealed corrections, desktop/mobile layout, unavailable API and unenrolled workspace");
+  console.log("PASS: usage totals, sealed corrections, canceled subscription, failed and paid invoices, uncredited tail, desktop/mobile layout, unavailable API and unenrolled workspace");
 } finally {
   await browser?.close();
   server.kill();
