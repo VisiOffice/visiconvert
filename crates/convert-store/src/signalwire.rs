@@ -73,6 +73,15 @@ impl Store {
             .bind(self.workspace)
             .fetch_one(&mut *tx)
             .await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(account.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let adopted_elsewhere: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM managed_carrier_adoptions WHERE project_id=$1 AND workspace_id<>$2)")
+            .bind(account).bind(self.workspace).fetch_one(&mut *tx).await?;
+        if adopted_elsewhere {
+            return Err(Error::Conflict);
+        }
         let existing = sqlx::query(
             "SELECT space_host,project_id,revision,managed FROM signalwire_connections WHERE workspace_id=$1",
         )

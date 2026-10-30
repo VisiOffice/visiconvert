@@ -1,3 +1,4 @@
+mod adoption;
 mod api_keys;
 mod connections;
 mod conversions;
@@ -776,3 +777,6 @@ mod signalwire_tests;
 
 #[cfg(test)]
 mod managed_tests;
+
+#[cfg(test)]
+mod adoption_tests;

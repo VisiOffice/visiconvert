@@ -72,3 +72,29 @@ Sessions expire after 15 minutes without refresh. The unified UI reopens a works
 ## Verification
 
 The Docker `verify` target includes isolated PostgreSQL/HTTP tests of service-key boundaries, idempotent provisioning, membership, concurrent exchange, code/session expiry, logout, cross-tenant lead isolation, and revocation races. It also runs the existing self-hosted database and browser workflow. Cloud maintains its own Rails, onboarding, and password-recovery browser suites.
+
+## Dedicated carrier adoption (service-key only)
+
+Cloud may adopt an existing dedicated, single-number SignalWire test project after
+proving master ownership and live paid subscription evidence. These routes are not
+public API/MCP tools and reject workspace keys:
+
+- `POST /internal/cloud/workspaces/{workspace}/carrier-adoption/preview`: reads the
+  exact BYO connection revision, registered purchase and current carrier routes.
+- `POST /internal/cloud/workspaces/{workspace}/carrier-adoption`: accepts an
+  `adoption_id`, the exact `plan`, and a fresh revision-1 active/paid service `policy`.
+- `POST /internal/cloud/workspaces/{workspace}/carrier-adoption/status`: accepts
+  `adoption_id` and `plan`; returns `{ "receipt": null }` or the original receipt.
+
+The engine rechecks the plan under the workspace/project locks and atomically
+switches managed ownership, installs the active service policy and persists a
+receipt with its activation timestamp. It does not purchase, reroute, or rotate
+secrets. Shared projects and unresolved purchase/release states are rejected.
+Retries recover the same receipt without resetting the billing start. Status
+recovery is required before retrying an uncertain activation after payment changes.
+
+Migration 0019 adds `managed_carrier_adoptions` and
+`tracking_numbers.managed_adopted_at`; original `purchased_at` remains unchanged.
+Metering excludes rental before activation and calls whose inbound leg began
+before activation. Never roll an activated engine back to code that ignores this
+boundary, and preserve paired Cloud/engine backups when restoring.

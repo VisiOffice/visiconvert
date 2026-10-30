@@ -63,7 +63,11 @@ pub async fn report(
     let mut numbers = Vec::new();
     let mut phones: HashMap<String, Vec<(i64, Option<i64>)>> = HashMap::new();
     let mut active = HashMap::new();
+    let mut adopted = HashMap::new();
     for row in rows {
+        if let Some(at) = row.adopted_at {
+            adopted.insert(row.phone.clone(), at.timestamp());
+        }
         let sid = row.sid;
         let phone = row.phone;
         let start = row.started_at;
@@ -151,6 +155,11 @@ pub async fn report(
         let root = &parents[parent];
         let start = timestamp(&root["start_time"])?;
         let phone = root["to"].as_str().ok_or_else(invalid)?;
+        // An adopted number has genuine BYO history. Never backbill calls that
+        // started before activation, including calls completed after activation.
+        if root["direction"] == "inbound" && adopted.get(phone).is_some_and(|at| start < *at) {
+            continue;
+        }
         if root["direction"] != "inbound"
             || !phones.get(phone).is_some_and(|periods| {
                 periods

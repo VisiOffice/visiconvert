@@ -14,6 +14,7 @@ export type Billing = {
   mode: "test" | "live"; amount_minor: number; currency: string; status: string;
   paid_access: boolean; cancellation_scheduled: boolean; access_until: string | null;
   can_checkout: boolean; can_manage: boolean;
+  carrier_migration?: { state: "prepared" | "activating" | "active"; activated_at: string | null } | null;
 };
 export class CloudError extends Error {
   constructor(message: string, public status: number) { super(message); }
