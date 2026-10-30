@@ -1,3 +1,12 @@
+## Unreleased — purchase safety
+
+- Persist purchase phases so rejected budgets and interrupted pre-carrier requests
+  can recover without blocking usage or risking a duplicate purchase.
+- Preserve and reconcile uncertain reservation holds, including late responses.
+- Validate routing conflicts before purchase and again at registration; cap carrier
+  attempts per rolling hour, including failures and cleanup.
+- Add a bounded operator purchase-reconciliation command and migration 0017.
+
 # Changelog
 
 ## Unreleased — number lifecycle safety

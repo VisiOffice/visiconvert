@@ -32,6 +32,7 @@ impl Store {
         n: &NewNumber,
         connection: &SignalWireConnection,
         limit: i64,
+        attempt_limit: i64,
     ) -> Result<Purchase> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE")
@@ -55,6 +56,9 @@ impl Store {
                 _ => Purchase::Unfinished,
             });
         }
+        self.validate_number_route(&mut tx, n, Some(request))
+            .await?;
+        self.check_purchase_attempts(&mut tx, attempt_limit).await?;
         let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM signalwire_connections WHERE workspace_id=$1 AND project_id=$2 AND space_host=$3 AND revision=$4)")
             .bind(self.workspace).bind(connection.project_id).bind(&connection.space_host).bind(connection.revision).fetch_one(&mut *tx).await?;
         if !current {
@@ -75,7 +79,7 @@ impl Store {
         if used >= limit {
             return Err(Error::Limit);
         }
-        sqlx::query("INSERT INTO number_purchases(workspace_id,request_id,phone_number,status,request_payload,space_host,project_id,managed) VALUES($1,$2,$3,'pending',$4,$5,$6,$7)")
+        sqlx::query("INSERT INTO number_purchases(workspace_id,request_id,phone_number,status,request_payload,space_host,project_id,managed,phase) VALUES($1,$2,$3,'pending',$4,$5,$6,$7,'prepared')")
             .bind(self.workspace).bind(request).bind(&n.phone_number).bind(json!(n)).bind(&connection.space_host).bind(connection.project_id).bind(connection.managed).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(Purchase::Started)
@@ -114,7 +118,7 @@ impl Store {
             .bind(self.workspace).bind(row.get::<String,_>("space_host")).bind(row.get::<Uuid,_>("project_id"))
             .fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         let id = self
-            .insert_number(&mut tx, n, Some(revision), Some(carrier_sid))
+            .insert_number(&mut tx, n, Some(revision), Some(carrier_sid), Some(request))
             .await?;
         let updated = sqlx::query("UPDATE number_purchases SET status='registered',number_id=$3 WHERE workspace_id=$1 AND request_id=$2 AND status='pending'")
             .bind(self.workspace).bind(request).bind(id).execute(&mut *tx).await?;
@@ -125,12 +129,67 @@ impl Store {
         Ok(id)
     }
 
+    async fn check_purchase_attempts(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        limit: i64,
+    ) -> Result<()> {
+        let attempts: i64 = sqlx::query_scalar("SELECT count(*) FROM number_purchases WHERE workspace_id=$1 AND carrier_started_at >= now()-interval '1 hour'")
+            .bind(self.workspace).fetch_one(&mut **tx).await?;
+        if attempts >= limit {
+            return Err(Error::Limit);
+        }
+        Ok(())
+    }
+
+    pub async fn start_reservation(&self, request: Uuid) -> Result<()> {
+        let result=sqlx::query("UPDATE number_purchases SET phase='reserving',reservation_lookup_pending=true WHERE workspace_id=$1 AND request_id=$2 AND managed AND status='pending' AND phase='prepared'")
+            .bind(self.workspace).bind(request).execute(&self.pool).await?;
+        if result.rows_affected() != 1 {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    }
     pub async fn record_reservation(&self, request: Uuid, reservation: i64) -> Result<()> {
-        let result = sqlx::query("UPDATE number_purchases SET reservation_id=$3 WHERE workspace_id=$1 AND request_id=$2 AND managed AND status='pending' AND (reservation_id IS NULL OR reservation_id=$3)")
+        // A late response may arrive after recovery canceled the unstarted purchase.
+        // Retain the receipt for release; never revive the failed purchase.
+        let result = sqlx::query("UPDATE number_purchases SET reservation_id=$3,reservation_lookup_pending=false,phase=CASE WHEN phase='reserving' THEN 'reserved' ELSE phase END WHERE workspace_id=$1 AND request_id=$2 AND managed AND status IN ('pending','failed') AND (reservation_id IS NULL OR reservation_id=$3)")
             .bind(self.workspace).bind(request).bind(reservation).execute(&self.pool).await?;
         if result.rows_affected() != 1 {
             return Err(Error::Conflict);
         }
+        Ok(())
+    }
+    /// Only a definite response to the original reserve request proves no hold was
+    /// made. A lookup error, timeout or malformed response does not prove absence.
+    pub async fn reject_reservation(&self, request: Uuid) -> Result<()> {
+        sqlx::query("UPDATE number_purchases SET status='failed',reservation_lookup_pending=false WHERE workspace_id=$1 AND request_id=$2 AND phase='reserving' AND status IN ('pending','failed') AND reservation_id IS NULL")
+            .bind(self.workspace).bind(request).execute(&self.pool).await?;
+        Ok(())
+    }
+    pub async fn cancel_unstarted_purchase(&self, request: Uuid) -> Result<()> {
+        sqlx::query("UPDATE number_purchases SET status='failed' WHERE workspace_id=$1 AND request_id=$2 AND status='pending' AND phase IN ('prepared','reserving','reserved') AND carrier_sid IS NULL")
+            .bind(self.workspace).bind(request).execute(&self.pool).await?;
+        Ok(())
+    }
+    /// CAS is the irreversible boundary. A recovery worker can cancel an unstarted
+    /// request, but cannot race a late API task into making a carrier purchase.
+    pub async fn start_carrier_purchase(&self, request: Uuid, limit: i64) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE")
+            .bind(self.workspace)
+            .fetch_one(&mut *tx)
+            .await?;
+        let row=sqlx::query("SELECT request_payload FROM number_purchases WHERE workspace_id=$1 AND request_id=$2 AND status='pending' AND ((NOT managed AND phase='prepared') OR (managed AND phase='reserved' AND reservation_id IS NOT NULL)) FOR UPDATE")
+            .bind(self.workspace).bind(request).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+        let n: NewNumber = serde_json::from_value(row.get("request_payload"))
+            .map_err(|_| convert_domain::ValidationError("Invalid persisted number purchase"))?;
+        self.validate_number_route(&mut tx, &n, Some(request))
+            .await?;
+        self.check_purchase_attempts(&mut tx, limit).await?;
+        sqlx::query("UPDATE number_purchases SET phase='carrier',carrier_started_at=now() WHERE workspace_id=$1 AND request_id=$2")
+            .bind(self.workspace).bind(request).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
     pub async fn fail_purchase(&self, request: Uuid) -> Result<()> {
@@ -203,12 +262,17 @@ impl Store {
         Ok(())
     }
 
+    pub async fn purchase_recovery_summary(&self) -> Result<Value> {
+        // Operator command covers all tenants, like the worker. No tokens/phone data.
+        Ok(sqlx::query_scalar("SELECT jsonb_build_object('unresolved_purchases',count(*) FILTER (WHERE status IN ('pending','cleanup','review')),'pending_billing_receipts',count(*) FILTER (WHERE reservation_lookup_pending OR (reservation_id IS NOT NULL AND reservation_settled_at IS NULL))) FROM number_purchases")
+            .fetch_one(&self.pool).await?)
+    }
     pub async fn purchase_status(&self, request: Uuid) -> Result<Value> {
-        sqlx::query_scalar("SELECT jsonb_build_object('request_id',request_id,'phone_number',phone_number,'status',status,'number_id',number_id) FROM number_purchases WHERE workspace_id=$1 AND request_id=$2")
+        sqlx::query_scalar("SELECT jsonb_build_object('request_id',request_id,'phone_number',phone_number,'status',status,'number_id',number_id,'phase',phase,'billing_reconciliation_pending',(reservation_lookup_pending OR (reservation_id IS NOT NULL AND reservation_settled_at IS NULL))) FROM number_purchases WHERE workspace_id=$1 AND request_id=$2")
             .bind(self.workspace).bind(request).fetch_optional(&self.pool).await?.ok_or(Error::NotFound)
     }
     pub async fn record_purchase_number(&self, request: Uuid, sid: &str) -> Result<()> {
-        let result = sqlx::query("UPDATE number_purchases SET carrier_sid=$3 WHERE workspace_id=$1 AND request_id=$2 AND status='pending' AND (carrier_sid IS NULL OR carrier_sid=$3)")
+        let result = sqlx::query("UPDATE number_purchases SET carrier_sid=$3 WHERE workspace_id=$1 AND request_id=$2 AND status='pending' AND phase IN ('carrier','legacy') AND (carrier_sid IS NULL OR carrier_sid=$3)")
             .bind(self.workspace).bind(request).bind(sid).execute(&self.pool).await?;
         if result.rows_affected() != 1 {
             return Err(Error::Conflict);
@@ -235,6 +299,7 @@ pub struct RecoverPurchase {
     pub project: Uuid,
     pub carrier_sid: Option<String>,
     pub cleanup: bool,
+    pub phase: String,
     pub managed: bool,
     pub reservation: Option<i64>,
 }
@@ -254,6 +319,7 @@ pub async fn recoverable_purchases(pool: &PgPool) -> Result<Vec<RecoverPurchase>
                 project: r.get("project_id"),
                 carrier_sid: r.get("carrier_sid"),
                 cleanup: r.get::<String, _>("status") == "cleanup",
+                phase: r.get("phase"),
                 managed: r.get("managed"),
                 reservation: r.get("reservation_id"),
             })
@@ -287,12 +353,12 @@ pub struct ReservationSettlement {
     pub workspace: Uuid,
     pub project: Uuid,
     pub request: Uuid,
-    pub reservation: i64,
+    pub reservation: Option<i64>,
     pub status: String,
     pub carrier_sid: Option<String>,
 }
 pub async fn reservation_settlements(pool: &PgPool) -> Result<Vec<ReservationSettlement>> {
-    let rows=sqlx::query("UPDATE number_purchases SET last_attempt_at=now() WHERE (workspace_id,request_id) IN (SELECT workspace_id,request_id FROM number_purchases WHERE managed AND reservation_id IS NOT NULL AND reservation_settled_at IS NULL AND status IN ('registered','failed') AND last_attempt_at < now()-interval '1 minute' ORDER BY last_attempt_at LIMIT 100 FOR UPDATE SKIP LOCKED) RETURNING workspace_id,project_id,request_id,reservation_id,status,carrier_sid")
+    let rows=sqlx::query("UPDATE number_purchases SET last_attempt_at=now() WHERE (workspace_id,request_id) IN (SELECT workspace_id,request_id FROM number_purchases WHERE managed AND (reservation_id IS NOT NULL OR reservation_lookup_pending) AND reservation_settled_at IS NULL AND status IN ('registered','failed') AND last_attempt_at < now()-interval '1 minute' ORDER BY last_attempt_at LIMIT 100 FOR UPDATE SKIP LOCKED) RETURNING workspace_id,project_id,request_id,reservation_id,status,carrier_sid")
         .fetch_all(pool).await?;
     Ok(rows
         .into_iter()

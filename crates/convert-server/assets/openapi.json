@@ -5496,13 +5496,28 @@
                         "null"
                       ],
                       "format": "uuid"
+                    },
+                    "phase": {
+                      "type": "string",
+                      "enum": [
+                        "legacy",
+                        "prepared",
+                        "reserving",
+                        "reserved",
+                        "carrier"
+                      ]
+                    },
+                    "billing_reconciliation_pending": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
                     "request_id",
                     "phone_number",
                     "status",
-                    "number_id"
+                    "number_id",
+                    "phase",
+                    "billing_reconciliation_pending"
                   ],
                   "additionalProperties": false
                 }

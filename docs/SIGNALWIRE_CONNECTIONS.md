@@ -107,3 +107,50 @@ Migration 0016 adds reservation identities and settlement receipts. Existing unr
 managed attempts enter review. Deploy the matching Rails protocol/migration first. This
 slice does not enable purchases or implement call spend caps, final cancellation settlement,
 or dunning. Real carrier verification is still required before enabling hosted spending.
+
+
+### Purchase recovery and spend limits
+
+Purchase intents record `prepared`, `reserving`, `reserved`, or `carrier` before
+crossing each external boundary. `legacy` means an older binary created the
+intent and its carrier outcome cannot be inferred from the new phases.
+
+- Known routing conflicts are rejected before reserving budget or buying a number.
+  Registration checks run again to cover concurrent routing changes.
+- A definite rejection of the original Rails reservation request ends the attempt
+  as `failed`. Retrying its request ID cannot reserve or buy again; after correcting
+  billing, explicitly start a new purchase with a new request ID.
+- Recovery cancels interrupted attempts that never started a carrier request.
+  Held reservations are released through the durable settlement outbox. A late
+  response cannot restart a canceled purchase.
+- If a reservation response is lost, the purchase fails without buying a number,
+  and `billing_reconciliation_pending` stays true until the hold can be looked up
+  and released. Failed lookups are **not** proof that no hold exists. These failed
+  pre-carrier attempts do not block usage metering, but unresolved billing receipts
+  still prevent switching/deleting the carrier connection. Investigate prolonged
+  lookup failures with the exact workspace/project/request ID in Rails; never
+  erase the intent or release budget solely because inventory is empty.
+- Once a carrier request may have started, recovery uses the original purchase
+  marker and does not repeat the POST. An unmatched outcome remains unresolved,
+  preserving its budget and capacity. Old `legacy` intents keep this conservative
+  behavior; the migration does not label them safe to cancel.
+
+`VISICONVERT_PURCHASE_ATTEMPT_LIMIT` defaults to **25 carrier purchase attempts per
+workspace per rolling hour**. Failed purchases and cleanup still count. This is
+separate from `VISICONVERT_PURCHASE_LIMIT`, which caps live and unresolved numbers.
+Both limits allow successful requests to return their existing receipt. A value
+of zero blocks new attempts. Raising this limit increases potential carrier costs.
+
+The worker reconciles purchases and billing receipts every minute. Operators can
+run `convert-server reconcile-number-purchases` with the deployed engine's normal
+private environment to run one bounded pass across tenants without SQL edits.
+It never starts a new purchase or releases ordinary live/held numbers. It may
+complete a previously recorded cleanup deletion and settle known billing holds.
+The command respects the worker's one-minute retry interval and prints remaining
+purchase/billing-obligation counts; a completed pass does not mean all obligations
+are resolved. Keep the original request IDs and inspect their receipts/logs.
+
+Apply migration 0017 before starting this engine. During rollout, stop old purchase
+writers before enabling new traffic: older binaries do not enforce the new phases
+or attempt cap. The default phase remains `legacy` so requests written by an older
+binary are never automatically treated as unstarted.

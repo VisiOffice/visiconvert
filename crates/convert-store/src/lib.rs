@@ -94,7 +94,7 @@ impl Store {
             .bind(self.workspace)
             .fetch_one(&mut *tx)
             .await?;
-        self.insert_number(&mut tx, n, revision, None).await?;
+        self.insert_number(&mut tx, n, revision, None, None).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -106,6 +106,7 @@ impl Store {
         n: &NewNumber,
         revision: Option<i64>,
         carrier_sid: Option<&str>,
+        purchase: Option<Uuid>,
     ) -> Result<Uuid> {
         n.validate()?;
         let current: Option<i64> = sqlx::query_scalar(match n.provider {
@@ -133,14 +134,35 @@ impl Store {
                 return Err(Error::Conflict);
             }
         }
-        let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE released_at IS NULL AND (phone_number=$1 OR phone_number=$2 OR destination=$1)) OR EXISTS(SELECT 1 FROM dni_pools WHERE destination_phone=$1 OR (fallback_phone=$1 AND (workspace_id<>$3 OR destination_phone<>$2)))").bind(&n.phone_number).bind(&n.destination).bind(self.workspace).fetch_one(&mut **tx).await?;
-        if conflict {
-            return Err(Error::Conflict);
-        }
+        self.validate_number_route(tx, n, purchase).await?;
         let id = Uuid::new_v4();
         sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign,provider,carrier_sid,purchased_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $9::text IS NULL THEN NULL ELSE now() END)")
             .bind(id).bind(self.workspace).bind(n.label.trim()).bind(&n.phone_number).bind(&n.destination).bind(n.source.trim()).bind(n.campaign.trim()).bind(n.provider.as_str()).bind(carrier_sid).execute(&mut **tx).await?;
         Ok(id)
+    }
+    /// Caller holds the workspace lock. Serialize routing decisions across tenants,
+    /// including in-flight purchases; recheck at registration to cover other edits.
+    pub(crate) async fn validate_number_route(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        n: &NewNumber,
+        purchase: Option<Uuid>,
+    ) -> Result<()> {
+        n.validate()?;
+        sqlx::query("SELECT pg_advisory_xact_lock(73581001)")
+            .execute(&mut **tx)
+            .await?;
+        let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE released_at IS NULL AND (phone_number=$1 OR phone_number=$2 OR destination=$1)) OR EXISTS(SELECT 1 FROM dni_pools WHERE destination_phone=$1 OR (fallback_phone=$1 AND (workspace_id<>$3 OR destination_phone<>$2)))").bind(&n.phone_number).bind(&n.destination).bind(self.workspace).fetch_one(&mut **tx).await?;
+        if conflict {
+            return Err(Error::Conflict);
+        }
+
+        let pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM number_purchases WHERE status IN ('pending','cleanup','review') AND NOT (workspace_id=$3 AND request_id IS NOT DISTINCT FROM $4) AND (phone_number=$1 OR phone_number=$2 OR request_payload->>'destination'=$1))")
+            .bind(&n.phone_number).bind(&n.destination).bind(self.workspace).bind(purchase).fetch_one(&mut **tx).await?;
+        if pending {
+            return Err(Error::Conflict);
+        }
+        Ok(())
     }
     pub async fn leads(&self) -> Result<Vec<Lead>> {
         let rows = sqlx::query("SELECT l.*, i.qualification AS inquiry_qualification,i.notes AS inquiry_notes,i.version AS inquiry_version, COALESCE((SELECT SUM(amount_minor)::bigint FROM outcomes o WHERE o.workspace_id=l.workspace_id AND o.lead_id=l.id AND o.status='booked'),0)::bigint AS booked_minor FROM leads l JOIN inquiries i ON i.workspace_id=l.workspace_id AND i.id=l.inquiry_id WHERE l.workspace_id=$1 ORDER BY l.created_at DESC LIMIT 500")
