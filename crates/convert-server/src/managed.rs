@@ -116,6 +116,31 @@ async fn purchase(
         }
         Purchase::Started => {}
     }
+    if c.managed {
+        // Intent is durable before reserving. A lost response is ambiguous: leave
+        // it pending and retain the hold; never risk an unreserved carrier POST.
+        let receipt = billing_request(
+            &a,
+            json!({"operation":"reserve", "workspace_id":access.store.workspace,
+            "project_id":c.project_id,"request_id":input.request_id,"phone_number":n.phone_number}),
+        )
+        .await?;
+        let reservation = receipt["reservation_id"]
+            .as_i64()
+            .filter(|v| *v > 0)
+            .ok_or_else(billing_unavailable)?;
+        if receipt["workspace_id"] != access.store.workspace.to_string()
+            || receipt["project_id"] != c.project_id.to_string()
+            || receipt["request_id"] != input.request_id.to_string()
+            || receipt["status"] != "held"
+        {
+            return Err(billing_unavailable());
+        }
+        access
+            .store
+            .record_reservation(input.request_id, reservation)
+            .await?;
+    }
     let project = c.project_id.to_string();
     let prefix = signalwire::webhook_prefix(&a, access.store.workspace);
     let bought = match a
@@ -224,6 +249,89 @@ async fn authorize_managed_purchase(
     Ok(())
 }
 
+fn billing_unavailable() -> ApiError {
+    ApiError(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Managed purchase billing is unavailable; retain the request ID for reconciliation".into(),
+    )
+}
+async fn billing_request(a: &App, body: Value) -> Result<Value, ApiError> {
+    let cloud = a.cloud.as_ref().ok_or_else(billing_unavailable)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .user_agent("VisiConvert/0.1")
+        .build()
+        .map_err(|_| billing_unavailable())?;
+    let mut response = client
+        .post(format!(
+            "{}/internal/managed-number-access",
+            cloud.cloud_origin
+        ))
+        .bearer_auth(&cloud.service_key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|_| billing_unavailable())?;
+    if !response.status().is_success() {
+        return Err(billing_unavailable());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| billing_unavailable())? {
+        if bytes.len() + chunk.len() > 8192 {
+            return Err(billing_unavailable());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| billing_unavailable())
+}
+/// Retry terminal receipts until Rails acknowledges the exact operation. Neither
+/// successful purchases nor ambiguous timeouts release budget automatically.
+pub async fn settle_reservations(a: &App) -> anyhow::Result<()> {
+    for row in convert_store::managed::reservation_settlements(&a.store.pool).await? {
+        let workspace = row.workspace;
+        let project = row.project;
+        let request = row.request;
+        let reservation = row.reservation;
+        let status = row.status;
+        let sid = if status == "registered" {
+            row.carrier_sid
+        } else {
+            None
+        };
+        let expected = if status == "registered" {
+            "committed"
+        } else {
+            "released"
+        };
+        let result = billing_request(
+            a,
+            json!({"operation":"settle","workspace_id":workspace,"project_id":project,
+            "request_id":request,"reservation_id":reservation,"outcome":status,"carrier_sid":sid}),
+        )
+        .await;
+        if let Ok(value) = result
+            && value["workspace_id"] == workspace.to_string()
+            && value["project_id"] == project.to_string()
+            && value["request_id"] == request.to_string()
+            && value["reservation_id"] == reservation
+            && value["status"] == expected
+        {
+            let store = Store {
+                pool: a.store.pool.clone(),
+                workspace,
+            };
+            store
+                .settle_reservation_receipt(request, reservation, &status)
+                .await?;
+            continue;
+        }
+        tracing::warn!(%workspace,%request,"Purchase reservation settlement will retry");
+    }
+    Ok(())
+}
+
 /// Recover an interrupted purchase from carrier inventory. A phone number alone is
 /// not ownership evidence: the request-specific marker must also match. Missing
 /// inventory remains pending for operator investigation rather than freeing capacity.
@@ -233,6 +341,12 @@ pub async fn reconcile_purchases(a: &App) -> anyhow::Result<()> {
             let store = Store { pool:a.store.pool.clone(), workspace:pending.workspace };
             let (c, token) = signalwire::credentials(a, &store).await.map_err(|_| anyhow::anyhow!("Purchase credentials unavailable"))?;
             anyhow::ensure!(c.space_host==pending.space && c.project_id==pending.project, "Purchase project changed; manual reconciliation required");
+            if pending.managed && pending.reservation.is_none() {
+                let receipt=billing_request(a,json!({"operation":"lookup","workspace_id":pending.workspace,"project_id":pending.project,"request_id":pending.request})).await.map_err(|_|anyhow::anyhow!("Reservation lookup unavailable"))?;
+                anyhow::ensure!(receipt["workspace_id"]==pending.workspace.to_string() && receipt["project_id"]==pending.project.to_string() && receipt["request_id"]==pending.request.to_string() && receipt["status"]=="held", "Reservation identity mismatch");
+                let reservation=receipt["reservation_id"].as_i64().filter(|v|*v>0).ok_or_else(||anyhow::anyhow!("Reservation missing"))?;
+                store.record_reservation(pending.request,reservation).await?;
+            }
             let sid = if let Some(sid) = pending.carrier_sid { sid } else {
                 let inventory = a.signalwire_client.numbers(&pending.space, &pending.project.to_string(), &token, Some(&pending.number.phone_number)).await?;
                 let marker = purchase_marker(pending.workspace,pending.request);
@@ -317,6 +431,9 @@ pub fn spawn_release_loop(app: Shared) {
             tick.tick().await;
             if let Err(error) = reconcile_purchases(&app).await {
                 tracing::error!(%error, "Purchase recovery pass failed");
+            }
+            if let Err(error) = settle_reservations(&app).await {
+                tracing::error!(%error, "Reservation settlement will retry");
             }
             if let Err(error) = release_due(&app).await {
                 tracing::error!(%error, "Release pass failed");

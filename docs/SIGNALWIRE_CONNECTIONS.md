@@ -86,3 +86,24 @@ before applying migration 0015 and starting this release; old workers do not imp
 the new recovery protocol. Ordinary subscription access does not enable managed
 carrier spending. Usage metering, credit reservations and invoicing remain separate
 Rails work; no usage prices or included credit are promised by this release.
+
+### Managed metering and reservation protocol
+
+Managed purchases remain gated. The engine now supports a service-only quantity report
+at `POST /internal/cloud/workspaces/{workspace}/usage`, binding workspace, project and
+period. It reconciles the complete number inventory and verifies completed forwarding
+legs against their inbound parent using SignalWire's call records. Missing pages,
+unresolved purchases, foreign records and unexplained inventory fail the report.
+Prices, minute rounding, prorated number fees and credits are calculated by Rails.
+
+Before a managed carrier purchase, the engine records intent and obtains a durable Rails
+reservation through `/internal/managed-number-access`. A matching receipt is stored
+before the carrier POST. Terminal results retry through an outbox; uncertain results
+retain their hold and are recovered by request-specific carrier evidence. The protocol
+never retries a carrier purchase merely because its response was lost. BYOC bypasses
+platform billing reservations and keeps its existing lifecycle.
+
+Migration 0016 adds reservation identities and settlement receipts. Existing unresolved
+managed attempts enter review. Deploy the matching Rails protocol/migration first. This
+slice does not enable purchases or implement call spend caps, final cancellation settlement,
+or dunning. Real carrier verification is still required before enabling hosted spending.

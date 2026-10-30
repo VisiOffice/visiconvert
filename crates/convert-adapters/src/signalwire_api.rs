@@ -140,6 +140,89 @@ impl Client {
         serde_json::from_slice(&body).map_err(|_| Error::Response)
     }
 
+    /// Complete, bounded pagination. Never follow carrier-provided URLs with
+    /// credentials; extract only pagination controls and preserve our filters.
+    pub async fn usage_records(
+        &self,
+        space: &str,
+        account: &str,
+        token: &str,
+        resource: &str,
+        filters: &[(&str, &str)],
+    ) -> Result<Vec<Value>, Error> {
+        let key = match resource {
+            "/Calls" => "calls",
+            "/IncomingPhoneNumbers" => "incoming_phone_numbers",
+            _ => return Err(Error::Response),
+        };
+        let mut paging = vec![("Page".to_string(), "0".to_string())];
+        let mut seen = std::collections::HashSet::new();
+        let mut ids = std::collections::HashSet::new();
+        let mut records = Vec::new();
+        for _ in 0..100 {
+            let mut query = filters.to_vec();
+            query.push(("PageSize", "1000"));
+            query.extend(paging.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+            let page = self.get(space, account, token, resource, &query).await?;
+            let rows = page[key].as_array().ok_or(Error::Response)?;
+            for row in rows {
+                let sid = row["sid"]
+                    .as_str()
+                    .filter(|v| valid_id(v))
+                    .ok_or(Error::Response)?;
+                if row["account_sid"] != account
+                    || !ids.insert(sid.to_string())
+                    || records.len() >= 50_000
+                {
+                    return Err(Error::Response);
+                }
+                records.push(row.clone());
+            }
+            let next = match page.get("next_page_uri") {
+                Some(Value::Null) => return Ok(records),
+                Some(Value::String(s)) if s.is_empty() => return Ok(records),
+                Some(Value::String(s)) => s,
+                _ => return Err(Error::Response),
+            };
+            if !next.starts_with('/') || next.starts_with("//") || !seen.insert(next.clone()) {
+                return Err(Error::Response);
+            }
+            let url = reqwest::Url::parse(&format!("https://{space}{next}"))
+                .map_err(|_| Error::Response)?;
+            let expected = format!("/api/laml/2010-04-01/Accounts/{account}{resource}");
+            if url.path() != expected && url.path() != format!("{expected}.json") {
+                return Err(Error::Response);
+            }
+            paging = url
+                .query_pairs()
+                .filter(|(k, _)| k == "Page" || k == "PageToken")
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+            if paging.is_empty() {
+                return Err(Error::Response);
+            }
+        }
+        Err(Error::Response)
+    }
+    pub async fn usage_call(
+        &self,
+        space: &str,
+        account: &str,
+        token: &str,
+        sid: &str,
+    ) -> Result<Value, Error> {
+        if !valid_id(sid) {
+            return Err(Error::Response);
+        }
+        let call = self
+            .get(space, account, token, &format!("/Calls/{sid}"), &[])
+            .await?;
+        if call["sid"] != sid || call["account_sid"] != account {
+            return Err(Error::Response);
+        }
+        Ok(call)
+    }
+
     pub async fn verify_account(
         &self,
         space: &str,
