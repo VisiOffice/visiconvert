@@ -97,6 +97,18 @@ pub fn configuration(public_url: &str, operator_key: &str) -> anyhow::Result<Opt
 pub fn routes(app: Shared) -> Router<Shared> {
     Router::new()
         .route("/internal/cloud/workspaces", post(provision))
+        .route(
+            "/internal/cloud/workspaces/{workspace}/carrier-adoption/preview",
+            post(super::adoption::preview),
+        )
+        .route(
+            "/internal/cloud/workspaces/{workspace}/carrier-adoption",
+            post(super::adoption::apply),
+        )
+        .route(
+            "/internal/cloud/workspaces/{workspace}/carrier-adoption/status",
+            post(super::adoption::status),
+        )
         .route("/internal/cloud/launch", post(launch))
         .route("/internal/cloud/revoke-user", post(revoke_user))
         .route(

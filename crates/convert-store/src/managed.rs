@@ -352,6 +352,7 @@ pub struct MeteredNumber {
     pub sid: String,
     pub phone: String,
     pub request: Uuid,
+    pub adopted_at: Option<chrono::DateTime<chrono::Utc>>,
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
     pub released_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -396,7 +397,7 @@ impl Store {
         if unresolved {
             return Err(Error::Conflict);
         }
-        let rows=sqlx::query("SELECT n.carrier_sid,n.phone_number,n.purchased_at,n.release_started_at,n.released_at,p.request_id FROM tracking_numbers n JOIN number_purchases p ON p.workspace_id=n.workspace_id AND p.number_id=n.id WHERE n.workspace_id=$1 AND p.project_id=$2 AND p.managed AND p.status='registered' ORDER BY n.id")
+        let rows=sqlx::query("SELECT n.carrier_sid,n.phone_number,COALESCE(n.managed_adopted_at,n.purchased_at) AS purchased_at,n.managed_adopted_at,n.release_started_at,n.released_at,p.request_id FROM tracking_numbers n JOIN number_purchases p ON p.workspace_id=n.workspace_id AND p.number_id=n.id WHERE n.workspace_id=$1 AND p.project_id=$2 AND p.managed AND p.status='registered' ORDER BY n.id")
             .bind(self.workspace).bind(project).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -404,6 +405,7 @@ impl Store {
                 sid: r.get("carrier_sid"),
                 phone: r.get("phone_number"),
                 request: r.get("request_id"),
+                adopted_at: r.get("managed_adopted_at"),
                 started_at: r.get("purchased_at"),
                 ended_at: r.get("release_started_at"),
                 released_at: r.get("released_at"),
@@ -411,7 +413,7 @@ impl Store {
             .collect())
     }
     pub async fn metering_changed_since(&self, observed: i64) -> Result<bool> {
-        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM number_purchases WHERE workspace_id=$1 AND created_at>=to_timestamp($2)) OR EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND (purchased_at>=to_timestamp($2) OR release_started_at>=to_timestamp($2) OR released_at>=to_timestamp($2)))")
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM number_purchases WHERE workspace_id=$1 AND created_at>=to_timestamp($2)) OR EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND (managed_adopted_at>=to_timestamp($2) OR purchased_at>=to_timestamp($2) OR release_started_at>=to_timestamp($2) OR released_at>=to_timestamp($2)))")
             .bind(self.workspace).bind(observed as f64).fetch_one(&self.pool).await?)
     }
 }
