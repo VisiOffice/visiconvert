@@ -92,7 +92,7 @@ impl Store {
             r.get::<uuid::Uuid, _>("project_id") != account
                 || r.get::<String, _>("space_host") != space
         }) {
-            let used: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND NOT is_demo AND provider='signalwire' AND released_at IS NULL)")
+            let used: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND NOT is_demo AND provider='signalwire' AND released_at IS NULL) OR EXISTS(SELECT 1 FROM number_purchases WHERE workspace_id=$1 AND status IN ('pending','cleanup','review'))")
                 .bind(self.workspace).fetch_one(&mut *tx).await?;
             if used {
                 return Err(Error::Conflict);
@@ -113,7 +113,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         let used: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND NOT is_demo AND provider='signalwire' AND released_at IS NULL)",
+            "SELECT EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND NOT is_demo AND provider='signalwire' AND released_at IS NULL) OR EXISTS(SELECT 1 FROM number_purchases WHERE workspace_id=$1 AND status IN ('pending','cleanup','review'))",
         )
         .bind(self.workspace)
         .fetch_one(&mut *tx)

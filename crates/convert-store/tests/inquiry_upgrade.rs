@@ -129,6 +129,23 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
         .execute(&pool)
         .await
         .unwrap();
+    let legacy_pending = Uuid::new_v4();
+    let legacy_failed = Uuid::new_v4();
+    for (request, status) in [(legacy_pending, "pending"), (legacy_failed, "failed")] {
+        sqlx::query("INSERT INTO number_purchases(workspace_id,request_id,phone_number,status) VALUES($1,$2,'+12025550420',$3)").bind(workspace).bind(request).bind(status).execute(&pool).await.unwrap();
+    }
+    sqlx::raw_sql(include_str!("../migrations/0015_number_lifecycle.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.purchase_status(legacy_pending).await.unwrap()["status"],
+        "review"
+    );
+    assert_eq!(
+        store.purchase_status(legacy_failed).await.unwrap()["status"],
+        "review"
+    );
     let numbers = store.numbers().await.unwrap();
     assert_eq!(numbers[0].provider, convert_domain::PhoneProvider::Twilio);
     assert!(!numbers[0].purchased);

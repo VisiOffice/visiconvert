@@ -49,10 +49,10 @@ The v1 API provides `GET /api/v1/connections/signalwire` and `GET /api/v1/connec
 Owners can buy local numbers into the connected project instead of registering existing ones:
 
 - `POST /api/v1/numbers/search` with `{"area_code":"213"}` lists available local voice numbers. Nothing is reserved.
-- `POST /api/v1/numbers/purchase` with a client-chosen `request_id` and the usual number fields buys the number, sets its voice and status webhooks to this workspace's URLs and registers it. Retrying the same `request_id` never buys twice; if registration fails, the number is released again. Purchases are billable at your carrier and capped per workspace by `VISICONVERT_PURCHASE_LIMIT` (default 25).
-- `POST /api/v1/numbers/{id}/release` starts a hold of `VISICONVERT_RELEASE_HOLD_DAYS` (default 45). The number keeps forwarding calls but is disabled in its website pool; `.../restore` cancels the hold. After the hold, the engine releases the number at the carrier. Its call history is kept.
+- `POST /api/v1/numbers/purchase` with a client-chosen `request_id` and the usual number fields buys the number, sets its voice and status webhooks to this workspace's URLs and registers it. Retrying the same `request_id` never buys twice; if registration fails, cleanup is persisted and retried. A timeout may mean the carrier already bought the number: keep the original request ID and inspect `GET /api/v1/numbers/purchases/{id}`. The worker reconciles inventory using the request-specific carrier label and never repeats the purchase POST. An unresolved request continues to reserve capacity. Purchases are billable at your carrier and capped per workspace by `VISICONVERT_PURCHASE_LIMIT` (default 25).
+- `POST /api/v1/numbers/{id}/release` starts a hold of `VISICONVERT_RELEASE_HOLD_DAYS` (default 45). The number keeps forwarding calls but is disabled in its website pool; `.../restore` cancels the hold only before carrier deletion starts. Once deletion may have started, restoration is rejected even if the carrier response is uncertain. Website fallback references must be replaced before release; a held number cannot become a fallback. After the hold, the engine releases the number at the carrier. Its call history is kept.
 
-API keys need the separate `numbers:purchase` permission. Hosted workspaces can instead let VisiConvert Cloud provision a dedicated SignalWire project; that connection is marked managed and cannot be edited or disconnected by the owner.
+API keys need the separate `numbers:purchase` permission. Hosted workspaces can instead let VisiConvert Cloud provision a dedicated SignalWire project; that connection is marked managed and cannot be edited or disconnected by the owner. New managed purchases are currently blocked by a separate Rails eligibility check until usage billing is implemented. BYOC purchases remain available and are charged by the customer’s carrier.
 
 ## Protocol and verification
 
@@ -61,3 +61,28 @@ Only form-encoded Compatibility callbacks are accepted. Signatures use the proje
 Tests cover simulated provider verification, ownership, encryption separation, credential rotation, callback authorization, tenant isolation, retries, call ordering, and UI setup. A live carrier call is a separate release acceptance check; simulations cannot establish production carrier readiness.
 
 References: [account retrieval](https://signalwire.com/docs/compatibility-api/rest/accounts/get-account), [number inventory](https://signalwire.com/docs/compatibility-api/rest/incoming-phone-numbers/list-incoming-phone-numbers), [webhook verification](https://signalwire.com/docs/compatibility-api/guides/webhooks), [cXML Dial](https://signalwire.com/docs/compatibility-api/cxml/reference/voice/dial).
+
+## Purchase recovery and upgrades
+
+Purchase status is workspace-scoped and returns no provider credentials. States are
+`pending` (carrier outcome or registration unresolved), `registered`, `cleanup`
+(carrier deletion must be retried), `failed` (definitively rejected or cleaned up),
+and `review` (legacy request lacking recovery evidence). Background recovery runs
+once per minute. Missing inventory stays pending: it is not proof that a timed-out
+purchase failed. The original payload, project and carrier identifier are retained;
+changing the forwarding destination under an existing request ID is rejected.
+
+Unresolved purchases block disconnecting/replacing their project, as well as manual
+registration of the same phone. Token rotation within that project is still allowed.
+Do not manually delete receipts or reset them to failed without reconciling carrier
+ownership and billing. Migration 0015 puts pre-existing pending/failed attempts into
+`review`, because the previous implementation did not retain enough carrier evidence.
+Check those against SignalWire before clearing them. This release does not invent
+proof for purchases made by an older engine.
+
+Deploy Rails and the engine together: the gateway must expose the service-authenticated
+`/internal/managed-number-access` check to the engine. Stop all old engine processes
+before applying migration 0015 and starting this release; old workers do not implement
+the new recovery protocol. Ordinary subscription access does not enable managed
+carrier spending. Usage metering, credit reservations and invoicing remain separate
+Rails work; no usage prices or included credit are promised by this release.

@@ -7,6 +7,9 @@ use http_body_util::BodyExt;
 use std::sync::Mutex;
 use tower::ServiceExt;
 
+const LOST: &str = "+12025550413";
+static OWNED: Mutex<Vec<Value>> = Mutex::new(Vec::new());
+static FAIL_DELETE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const TAKEN: &str = "+12025550777";
 /// Carrier calls the mock received: (method, path, form body).
 static CARRIER: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
@@ -17,6 +20,9 @@ async fn mock_signalwire(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if uri.path() == "/internal/managed-number-access" {
+        return Json(json!({"allowed":false})).into_response();
+    }
     let prefix = format!("/api/laml/2010-04-01/Accounts/{PROJECT}");
     if headers.get("authorization").and_then(|h| h.to_str().ok())
         != Some(&format!(
@@ -34,7 +40,17 @@ async fn mock_signalwire(
         .push((method.to_string(), path.clone(), form.clone()));
     match (method.as_str(), path.as_str()) {
         ("GET", "/IncomingPhoneNumbers") => {
-            Json(json!({"incoming_phone_numbers": [], "next_page_uri": null})).into_response()
+            let phone = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
+                .find(|(k, _)| k == "PhoneNumber")
+                .map(|(_, v)| v.into_owned());
+            let owned: Vec<Value> = OWNED
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|n| phone.as_ref().is_none_or(|p| n["phone_number"] == *p))
+                .cloned()
+                .collect();
+            Json(json!({"incoming_phone_numbers": owned, "next_page_uri": null})).into_response()
         }
         ("GET", "/AvailablePhoneNumbers/US/Local") => Json(json!({"available_phone_numbers": [
             {"phone_number":"+12025550411","locality":"Washington","region":"DC"},
@@ -54,14 +70,21 @@ async fn mock_signalwire(
                 )
                     .into_response();
             }
-            (
-                StatusCode::CREATED,
-                Json(json!({"sid": Uuid::new_v4(), "account_sid": PROJECT,
-                    "phone_number": fields["PhoneNumber"], "friendly_name": fields["FriendlyName"]})),
-            )
-                .into_response()
+            let number = json!({"sid": Uuid::new_v4(), "account_sid": PROJECT,
+                "phone_number": fields["PhoneNumber"], "friendly_name": fields["FriendlyName"], "capabilities":{"voice":true}});
+            OWNED.lock().unwrap().push(number.clone());
+            if fields["PhoneNumber"] == LOST {
+                // Carrier committed the purchase but the response was lost/failed.
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            (StatusCode::CREATED, Json(number)).into_response()
         }
         ("DELETE", p) if p.starts_with("/IncomingPhoneNumbers/") => {
+            if FAIL_DELETE.load(std::sync::atomic::Ordering::SeqCst) {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            let sid = p.strip_prefix("/IncomingPhoneNumbers/").unwrap();
+            OWNED.lock().unwrap().retain(|n| n["sid"] != sid);
             StatusCode::NO_CONTENT.into_response()
         }
         _ => StatusCode::NOT_FOUND.into_response(),
@@ -145,7 +168,7 @@ async fn managed_numbers_purchase_hold_and_release() {
         twilio_token: None,
         cloud: Some(hosted::Config {
             service_key: service_key.clone(),
-            cloud_origin: "https://cloud.example.com".into(),
+            cloud_origin: origin.clone(),
             app_origin: None,
         }),
         vault: Some(secrets::Vault::from_hex(&"e".repeat(64)).unwrap()),
@@ -227,6 +250,27 @@ async fn managed_numbers_purchase_hold_and_release() {
         StatusCode::CONFLICT
     );
 
+    // Managed spending cannot use ordinary workspace access or test billing.
+    let blocked = json!({"request_id":Uuid::new_v4(),"phone_number":"+12025550411","destination":"+12025550398","label":"Blocked","source":"Website","campaign":"Pool"});
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            blocked
+        )
+        .await
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(carrier("POST", "/IncomingPhoneNumbers").is_empty());
+    // Continue lifecycle coverage using a BYOC project: its customer pays the carrier.
+    sqlx::query("UPDATE signalwire_connections SET managed=false WHERE workspace_id=$1")
+        .bind(workspace)
+        .execute(&store.pool)
+        .await
+        .unwrap();
     // Search.
     assert_eq!(
         api(
@@ -416,6 +460,7 @@ async fn managed_numbers_purchase_hold_and_release() {
 
     // API keys need the separate numbers:purchase permission. Self-hosted operator keys
     // exercise the scope check without a Rails entitlement service.
+    let hosted_app = app.clone();
     let app = Arc::new(App {
         cloud: None,
         ..(*app).clone()
@@ -443,5 +488,227 @@ async fn managed_numbers_purchase_hold_and_release() {
         .await;
         assert_eq!(status, expected, "{body}");
     }
+    let app = hosted_app;
+    let workspace_store = Store {
+        pool: store.pool.clone(),
+        workspace,
+    };
+    // Persist an ambiguous carrier success, recover it without a second purchase.
+    let lost_request = Uuid::new_v4();
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            buy(lost_request, LOST)
+        )
+        .await
+        .0,
+        StatusCode::BAD_GATEWAY
+    );
+    assert_eq!(
+        workspace_store.purchase_status(lost_request).await.unwrap()["status"],
+        "pending"
+    );
+    let posts = carrier("POST", "/IncomingPhoneNumbers").len();
+    let mut changed = buy(lost_request, LOST);
+    changed["destination"] = json!("+12025550399");
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            changed
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            buy(Uuid::new_v4(), LOST)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    // Reserve capacity while the carrier result is uncertain; no second request
+    // or manual registration may sidestep the recovery receipt.
+    set_env("VISICONVERT_PURCHASE_LIMIT", Some("2"));
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            buy(Uuid::new_v4(), "+12025550419")
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    set_env("VISICONVERT_PURCHASE_LIMIT", None);
+    let c = workspace_store
+        .signalwire_connection()
+        .await
+        .unwrap()
+        .unwrap();
+    let manual = NewNumber {
+        provider: PhoneProvider::Signalwire,
+        phone_number: LOST.into(),
+        destination: "+12025550398".into(),
+        label: "Manual".into(),
+        source: "Website".into(),
+        campaign: "Pool".into(),
+    };
+    assert!(
+        workspace_store
+            .add_number_with_connection(&manual, Some(c.revision))
+            .await
+            .is_err()
+    );
+    let path = format!("/api/numbers/purchases/{lost_request}");
+    assert_eq!(
+        api(app.clone(), "GET", &path, &other_session, json!(null))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    // Never adopt another number based only on its phone; the request marker is required.
+    let marker = OWNED
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|n| n["phone_number"] == LOST)
+        .unwrap()["friendly_name"]
+        .clone();
+    OWNED
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|n| n["phone_number"] == LOST)
+        .unwrap()["friendly_name"] = json!("Unrelated carrier number");
+    age_purchases(&store, workspace).await;
+    managed::reconcile_purchases(&app).await.unwrap();
+    assert_eq!(
+        workspace_store.purchase_status(lost_request).await.unwrap()["status"],
+        "pending"
+    );
+    OWNED
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|n| n["phone_number"] == LOST)
+        .unwrap()["friendly_name"] = marker;
+    age_purchases(&store, workspace).await;
+    managed::reconcile_purchases(&app).await.unwrap();
+    let recovered = workspace_store.purchase_status(lost_request).await.unwrap();
+    assert_eq!(recovered["status"], "registered");
+    assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), posts);
+
+    // Registration rejection queues cleanup. A failed DELETE never loses that obligation.
+    let cleanup = Uuid::new_v4();
+    let mut invalid = buy(cleanup, "+12025550414");
+    invalid["destination"] = json!(LOST);
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            invalid
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        workspace_store.purchase_status(cleanup).await.unwrap()["status"],
+        "cleanup"
+    );
+    FAIL_DELETE.store(true, std::sync::atomic::Ordering::SeqCst);
+    age_purchases(&store, workspace).await;
+    managed::reconcile_purchases(&app).await.unwrap();
+    assert_eq!(
+        workspace_store.purchase_status(cleanup).await.unwrap()["status"],
+        "cleanup"
+    );
+    FAIL_DELETE.store(false, std::sync::atomic::Ordering::SeqCst);
+    age_purchases(&store, workspace).await;
+    managed::reconcile_purchases(&app).await.unwrap();
+    assert_eq!(
+        workspace_store.purchase_status(cleanup).await.unwrap()["status"],
+        "failed"
+    );
+    assert!(
+        !OWNED
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|n| n["phone_number"] == "+12025550414")
+    );
+
+    let restored = Uuid::parse_str(recovered["number_id"].as_str().unwrap()).unwrap();
+    workspace_store.request_release(restored).await.unwrap();
+    // Worker snapshots before a successful restore; its subsequent claim must fail.
+    let snapshot = convert_store::managed::due_releases(&store.pool, 0)
+        .await
+        .unwrap();
+    assert!(snapshot.iter().any(|n| n.number_id == restored));
+    workspace_store.restore_number(restored).await.unwrap();
+    assert!(!workspace_store.claim_release(restored, 0).await.unwrap());
+    workspace_store.request_release(restored).await.unwrap();
+    assert!(workspace_store.claim_release(restored, 0).await.unwrap());
+    assert!(workspace_store.restore_number(restored).await.is_err());
+    FAIL_DELETE.store(true, std::sync::atomic::Ordering::SeqCst);
+    set_env("VISICONVERT_RELEASE_HOLD_DAYS", Some("0"));
+    assert_eq!(managed::release_due(&app).await.unwrap(), 0);
+    assert!(workspace_store.restore_number(restored).await.is_err());
+    FAIL_DELETE.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(managed::release_due(&app).await.unwrap(), 1);
+    set_env("VISICONVERT_RELEASE_HOLD_DAYS", None);
+
+    // Static published fallbacks cannot be released, even on a disabled pool.
+    let active = workspace_store
+        .numbers()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|n| n.phone_number == "+12025550411")
+        .unwrap();
+    let site = Uuid::new_v4();
+    sqlx::query("INSERT INTO sites(id,workspace_id,name,origin,allowed_fields) VALUES($1,$2,'Fixture','https://fixture.example','{}')").bind(site).bind(workspace).execute(&store.pool).await.unwrap();
+    let pool = convert_store::dni::PoolInput {
+        fallback_phone: active.phone_number.clone(),
+        destination_phone: Some(active.destination.clone()),
+        enabled: false,
+        number_ids: vec![],
+        dedicated_numbers: false,
+        version: 0,
+    };
+    workspace_store.save_dni_pool(site, &pool).await.unwrap();
+    assert!(workspace_store.request_release(active.id).await.is_err());
+    sqlx::query("UPDATE dni_pools SET fallback_phone='+12025550177' WHERE site_id=$1")
+        .bind(site)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    workspace_store.request_release(active.id).await.unwrap();
+    assert!(
+        workspace_store
+            .save_dni_pool(site, &convert_store::dni::PoolInput { version: 1, ..pool })
+            .await
+            .is_err()
+    );
     server.abort();
+}
+
+async fn age_purchases(store: &Store, workspace: Uuid) {
+    sqlx::query("UPDATE number_purchases SET last_attempt_at=now()-interval '2 minutes' WHERE workspace_id=$1").bind(workspace).execute(&store.pool).await.unwrap();
 }
