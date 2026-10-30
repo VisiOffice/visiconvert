@@ -27,6 +27,10 @@ fn setting(name: &str, default: i64) -> i64 {
 fn purchase_limit() -> i64 {
     setting("VISICONVERT_PURCHASE_LIMIT", 25)
 }
+/// Includes failed carrier attempts and cleanup, so deletion cannot reset the cap.
+fn purchase_attempt_limit() -> i64 {
+    setting("VISICONVERT_PURCHASE_ATTEMPT_LIMIT", 25)
+}
 /// Days a removed number keeps forwarding before it is released at the carrier.
 fn hold_days() -> i32 {
     setting("VISICONVERT_RELEASE_HOLD_DAYS", 45).min(365) as i32
@@ -102,7 +106,13 @@ async fn purchase(
     }
     match access
         .store
-        .begin_purchase(input.request_id, &n, &c, purchase_limit())
+        .begin_purchase(
+            input.request_id,
+            &n,
+            &c,
+            purchase_limit(),
+            purchase_attempt_limit(),
+        )
         .await?
     {
         Purchase::Registered(id) => {
@@ -117,14 +127,29 @@ async fn purchase(
         Purchase::Started => {}
     }
     if c.managed {
-        // Intent is durable before reserving. A lost response is ambiguous: leave
-        // it pending and retain the hold; never risk an unreserved carrier POST.
-        let receipt = billing_request(
+        access.store.start_reservation(input.request_id).await?;
+        let receipt = match billing_request(
             &a,
             json!({"operation":"reserve", "workspace_id":access.store.workspace,
             "project_id":c.project_id,"request_id":input.request_id,"phone_number":n.phone_number}),
         )
-        .await?;
+        .await
+        {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                if matches!(error, BillingFailure::Rejected(_)) {
+                    access.store.reject_reservation(input.request_id).await?;
+                } else {
+                    // No carrier request started. Cancel it, but retain a lookup
+                    // obligation for any hold whose response was lost.
+                    access
+                        .store
+                        .cancel_unstarted_purchase(input.request_id)
+                        .await?;
+                }
+                return Err(error.into());
+            }
+        };
         let reservation = receipt["reservation_id"]
             .as_i64()
             .filter(|v| *v > 0)
@@ -140,6 +165,19 @@ async fn purchase(
             .store
             .record_reservation(input.request_id, reservation)
             .await?;
+    }
+    if let Err(error) = access
+        .store
+        .start_carrier_purchase(input.request_id, purchase_attempt_limit())
+        .await
+    {
+        // A conflict/rate limit before the carrier call is safe to cancel; held
+        // reservations are released by the same durable settlement outbox.
+        access
+            .store
+            .cancel_unstarted_purchase(input.request_id)
+            .await?;
+        return Err(error.into());
     }
     let project = c.project_id.to_string();
     let prefix = signalwire::webhook_prefix(&a, access.store.workspace);
@@ -255,15 +293,32 @@ fn billing_unavailable() -> ApiError {
         "Managed purchase billing is unavailable; retain the request ID for reconciliation".into(),
     )
 }
-async fn billing_request(a: &App, body: Value) -> Result<Value, ApiError> {
-    let cloud = a.cloud.as_ref().ok_or_else(billing_unavailable)?;
+#[derive(Debug)]
+enum BillingFailure {
+    Rejected(StatusCode),
+    Unknown,
+}
+impl From<BillingFailure> for ApiError {
+    fn from(value: BillingFailure) -> Self {
+        match value {
+            BillingFailure::Rejected(StatusCode::CONFLICT | StatusCode::FORBIDDEN) => Self(
+                StatusCode::CONFLICT,
+                "Managed purchase was not authorized; check billing before making a new request"
+                    .into(),
+            ),
+            _ => billing_unavailable(),
+        }
+    }
+}
+async fn billing_request(a: &App, body: Value) -> Result<Value, BillingFailure> {
+    let cloud = a.cloud.as_ref().ok_or(BillingFailure::Unknown)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
         .user_agent("VisiConvert/0.1")
         .build()
-        .map_err(|_| billing_unavailable())?;
+        .map_err(|_| BillingFailure::Unknown)?;
     let mut response = client
         .post(format!(
             "{}/internal/managed-number-access",
@@ -273,18 +328,28 @@ async fn billing_request(a: &App, body: Value) -> Result<Value, ApiError> {
         .json(&body)
         .send()
         .await
-        .map_err(|_| billing_unavailable())?;
+        .map_err(|_| BillingFailure::Unknown)?;
+    if matches!(
+        response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::CONFLICT
+    ) {
+        return Err(BillingFailure::Rejected(response.status()));
+    }
     if !response.status().is_success() {
-        return Err(billing_unavailable());
+        return Err(BillingFailure::Unknown);
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| billing_unavailable())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| BillingFailure::Unknown)?
+    {
         if bytes.len() + chunk.len() > 8192 {
-            return Err(billing_unavailable());
+            return Err(BillingFailure::Unknown);
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).map_err(|_| billing_unavailable())
+    serde_json::from_slice(&bytes).map_err(|_| BillingFailure::Unknown)
 }
 /// Retry terminal receipts until Rails acknowledges the exact operation. Neither
 /// successful purchases nor ambiguous timeouts release budget automatically.
@@ -293,7 +358,34 @@ pub async fn settle_reservations(a: &App) -> anyhow::Result<()> {
         let workspace = row.workspace;
         let project = row.project;
         let request = row.request;
-        let reservation = row.reservation;
+        let store = Store {
+            pool: a.store.pool.clone(),
+            workspace,
+        };
+        let reservation = match row.reservation {
+            Some(id) => id,
+            None => {
+                // A failed, pre-carrier request can still own a late Rails hold.
+                // Never treat an HTTP lookup error as proof that no hold exists.
+                let Ok(value) = billing_request(a, json!({"operation":"lookup","workspace_id":workspace,"project_id":project,"request_id":request})).await else {
+                    tracing::warn!(%workspace,%request,"Canceled purchase reservation lookup unresolved; retain billing hold");
+                    continue;
+                };
+                if value["workspace_id"] != workspace.to_string()
+                    || value["project_id"] != project.to_string()
+                    || value["request_id"] != request.to_string()
+                    || value["status"] != "held"
+                {
+                    tracing::warn!(%workspace,%request,"Canceled purchase reservation identity requires review");
+                    continue;
+                }
+                let Some(id) = value["reservation_id"].as_i64().filter(|v| *v > 0) else {
+                    continue;
+                };
+                store.record_reservation(request, id).await?;
+                id
+            }
+        };
         let status = row.status;
         let sid = if status == "registered" {
             row.carrier_sid
@@ -318,10 +410,6 @@ pub async fn settle_reservations(a: &App) -> anyhow::Result<()> {
             && value["reservation_id"] == reservation
             && value["status"] == expected
         {
-            let store = Store {
-                pool: a.store.pool.clone(),
-                workspace,
-            };
             store
                 .settle_reservation_receipt(request, reservation, &status)
                 .await?;
@@ -339,6 +427,10 @@ pub async fn reconcile_purchases(a: &App) -> anyhow::Result<()> {
     for pending in recoverable_purchases(&a.store.pool).await? {
         let result: anyhow::Result<()> = async {
             let store = Store { pool:a.store.pool.clone(), workspace:pending.workspace };
+            if !pending.cleanup && matches!(pending.phase.as_str(), "prepared" | "reserving" | "reserved") {
+                store.cancel_unstarted_purchase(pending.request).await?;
+                return Ok(());
+            }
             let (c, token) = signalwire::credentials(a, &store).await.map_err(|_| anyhow::anyhow!("Purchase credentials unavailable"))?;
             anyhow::ensure!(c.space_host==pending.space && c.project_id==pending.project, "Purchase project changed; manual reconciliation required");
             if pending.managed && pending.reservation.is_none() {

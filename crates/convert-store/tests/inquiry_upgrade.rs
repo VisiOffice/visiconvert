@@ -139,11 +139,25 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
         .await
         .unwrap();
     assert_eq!(
-        store.purchase_status(legacy_pending).await.unwrap()["status"],
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM number_purchases WHERE workspace_id=$1 AND request_id=$2"
+        )
+        .bind(workspace)
+        .bind(legacy_pending)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
         "review"
     );
     assert_eq!(
-        store.purchase_status(legacy_failed).await.unwrap()["status"],
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM number_purchases WHERE workspace_id=$1 AND request_id=$2"
+        )
+        .bind(workspace)
+        .bind(legacy_failed)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
         "review"
     );
     sqlx::raw_sql(include_str!("../migrations/0016_managed_reservations.sql"))
@@ -155,6 +169,29 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
     assert!(
         held,
         "Legacy unresolved obligations must not become spendable or settled"
+    );
+    sqlx::raw_sql(include_str!("../migrations/0017_purchase_phases.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.purchase_status(legacy_pending).await.unwrap()["phase"],
+        "legacy"
+    );
+    assert_eq!(
+        store.purchase_status(legacy_pending).await.unwrap()["status"],
+        "review"
+    );
+    assert_eq!(
+        store.purchase_status(legacy_failed).await.unwrap()["phase"],
+        "legacy"
+    );
+    let old_writer = Uuid::new_v4();
+    sqlx::query("INSERT INTO number_purchases(workspace_id,request_id,phone_number,status) VALUES($1,$2,'+12025550421','pending')").bind(workspace).bind(old_writer).execute(&pool).await.unwrap();
+    assert_eq!(
+        store.purchase_status(old_writer).await.unwrap()["phase"],
+        "legacy",
+        "Old binaries must never produce safe-to-cancel intents"
     );
     let numbers = store.numbers().await.unwrap();
     assert_eq!(numbers[0].provider, convert_domain::PhoneProvider::Twilio);

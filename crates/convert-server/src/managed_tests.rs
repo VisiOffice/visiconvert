@@ -17,6 +17,12 @@ static CARRIER: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
 
 static BILLING_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static RESERVE_FAIL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RESERVE_REJECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LOOKUP_FAIL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RESERVE_DELAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RESERVE_BAD_IDENTITY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static ROUTING_RACE: Mutex<Option<(Uuid, String)>> = Mutex::new(None);
 static USAGE_CALLS: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 static BAD_PAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -41,9 +47,26 @@ async fn mock_signalwire(
             input["operation"].as_str().unwrap_or("check").into(),
             input.to_string(),
         ));
+        if (input["operation"] == "reserve"
+            && RESERVE_REJECT.load(std::sync::atomic::Ordering::SeqCst))
+            || (input["operation"] == "lookup"
+                && LOOKUP_FAIL.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            return StatusCode::CONFLICT.into_response();
+        }
         if input["operation"] == "reserve" && RESERVE_FAIL.load(std::sync::atomic::Ordering::SeqCst)
         {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        if input["operation"] == "reserve"
+            && RESERVE_DELAY.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tokio::time::sleep(std::time::Duration::from_secs(9)).await;
+        }
+        if input["operation"] == "reserve"
+            && RESERVE_BAD_IDENTITY.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Json(json!({"workspace_id":Uuid::new_v4(),"project_id":input["project_id"],"request_id":input["request_id"],"reservation_id":321,"status":"held"})).into_response();
         }
         let status = if input["operation"] == "settle" {
             if input["outcome"] == "registered" {
@@ -114,6 +137,15 @@ async fn mock_signalwire(
             if fields["PhoneNumber"] == LOST || fields["PhoneNumber"] == LOST_MANAGED {
                 // Carrier committed the purchase but the response was lost/failed.
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            let race=ROUTING_RACE.lock().unwrap().take();
+            if let Some((workspace,phone))=race {
+                // Model another/legacy writer changing routing after preflight.
+                // The registration-time guard must still reject and retain cleanup.
+                let pool=sqlx::PgPool::connect(&std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap()).await.unwrap();
+                sqlx::query("INSERT INTO tracking_numbers(id,workspace_id,label,phone_number,destination,source,campaign,provider) VALUES($1,$2,'Race fixture',$3,'+12025550800','Test','Test','signalwire')")
+                    .bind(Uuid::new_v4()).bind(workspace).bind(phone).execute(&pool).await.unwrap();
+                pool.close().await;
             }
             (StatusCode::CREATED, Json(number)).into_response()
         }
@@ -654,10 +686,34 @@ async fn managed_numbers_purchase_hold_and_release() {
     assert_eq!(recovered["status"], "registered");
     assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), posts);
 
-    // Registration rejection queues cleanup. A failed DELETE never loses that obligation.
+    // Known conflicts must not reach the carrier or create an intent.
+    let before = carrier("POST", "/IncomingPhoneNumbers").len();
+    let invalid_id = Uuid::new_v4();
+    let mut invalid = buy(invalid_id, "+12025550414");
+    invalid["destination"] = json!(LOST);
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            invalid
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), before);
+    assert!(matches!(
+        workspace_store.purchase_status(invalid_id).await,
+        Err(convert_store::Error::NotFound)
+    ));
+
+    // A genuine post-preflight race still queues cleanup. Failed DELETE retains it.
+    *ROUTING_RACE.lock().unwrap() = Some((workspace, "+12025550666".into()));
     let cleanup = Uuid::new_v4();
     let mut invalid = buy(cleanup, "+12025550414");
-    invalid["destination"] = json!(LOST);
+    invalid["destination"] = json!("+12025550666");
     assert_eq!(
         api(
             app.clone(),
@@ -695,6 +751,44 @@ async fn managed_numbers_purchase_hold_and_release() {
             .iter()
             .any(|n| n["phone_number"] == "+12025550414")
     );
+
+    let attempts:i64=sqlx::query_scalar("SELECT count(*) FROM number_purchases WHERE workspace_id=$1 AND carrier_started_at >= now()-interval '1 hour'").bind(workspace).fetch_one(&store.pool).await.unwrap();
+    assert!(
+        attempts >= 3,
+        "Failed carrier attempts and cleanup stay in the rolling budget"
+    );
+    set_env(
+        "VISICONVERT_PURCHASE_ATTEMPT_LIMIT",
+        Some(&attempts.to_string()),
+    );
+    let before = carrier("POST", "/IncomingPhoneNumbers").len();
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            buy(Uuid::new_v4(), "+12025550419")
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), before);
+    // Existing successful receipt is still idempotent when all new spend is blocked.
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            buy(lost_request, LOST)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    set_env("VISICONVERT_PURCHASE_ATTEMPT_LIMIT", None);
 
     let restored = Uuid::parse_str(recovered["number_id"].as_str().unwrap()).unwrap();
     workspace_store.request_release(restored).await.unwrap();
@@ -913,21 +1007,214 @@ async fn managed_budget_and_verified_quantities() {
     .unwrap();
     assert_eq!(receipt["status"], "registered");
     assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), 2);
-    // A reservation outage must never reach the carrier POST.
-    RESERVE_FAIL.store(true, SeqCst);
-    let denied = json!({"request_id":Uuid::new_v4(),"phone_number":"+12025550983","destination":"+12025550398","label":"Denied","source":"Website","campaign":"Pool"});
+    let ws = Store {
+        pool: store.pool.clone(),
+        workspace,
+    };
+    let connection = ws.signalwire_connection().await.unwrap().unwrap();
+    let payload = |id, phone: &str| json!({"request_id":id,"phone_number":phone,"destination":"+12025550398","label":"Recovery","source":"Website","campaign":"Pool"});
+    // Definite reserve rejection frees the intent and metering, with no lookup hold.
+    RESERVE_REJECT.store(true, SeqCst);
+    let rejected = Uuid::new_v4();
     assert_eq!(
         api(
             app.clone(),
             "POST",
             "/api/numbers/purchase",
             &session,
-            denied
+            payload(rejected, "+12025550983")
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let receipt = ws.purchase_status(rejected).await.unwrap();
+    assert_eq!(receipt["status"], "failed");
+    assert_eq!(receipt["billing_reconciliation_pending"], false);
+    assert!(
+        ws.metered_numbers(Uuid::parse_str(PROJECT).unwrap())
+            .await
+            .is_ok()
+    );
+    let requests = carrier("BILLING", "reserve").len();
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            payload(rejected, "+12025550983")
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(carrier("BILLING", "reserve").len(), requests);
+    RESERVE_REJECT.store(false, SeqCst);
+    // Lost/5xx reserve response never purchases; a lookup failure does not free its hold.
+    RESERVE_FAIL.store(true, SeqCst);
+    let unknown = Uuid::new_v4();
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            payload(unknown, "+12025550983")
         )
         .await
         .0,
         StatusCode::SERVICE_UNAVAILABLE
     );
+    assert_eq!(
+        ws.purchase_status(unknown).await.unwrap()["status"],
+        "failed"
+    );
+    assert_eq!(
+        ws.purchase_status(unknown).await.unwrap()["billing_reconciliation_pending"],
+        true
+    );
+    assert!(
+        ws.metered_numbers(Uuid::parse_str(PROJECT).unwrap())
+            .await
+            .is_ok()
+    );
+    LOOKUP_FAIL.store(true, SeqCst);
+    age_purchases(&store, workspace).await;
+    managed::settle_reservations(&app).await.unwrap();
+    assert_eq!(
+        ws.purchase_status(unknown).await.unwrap()["billing_reconciliation_pending"],
+        true
+    );
+    LOOKUP_FAIL.store(false, SeqCst);
+    RESERVE_FAIL.store(false, SeqCst);
+    age_purchases(&store, workspace).await;
+    managed::settle_reservations(&app).await.unwrap();
+    assert_eq!(
+        ws.purchase_status(unknown).await.unwrap()["billing_reconciliation_pending"],
+        false
+    );
+    assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), 2);
+
+    // Crash recovery before reserve, during reserve, and after a confirmed hold.
+    for (index, phase) in ["prepared", "reserving", "reserved"].iter().enumerate() {
+        let id = Uuid::new_v4();
+        let n = NewNumber {
+            provider: PhoneProvider::Signalwire,
+            phone_number: format!("+1202555099{index}"),
+            destination: "+12025550398".into(),
+            label: "Crash".into(),
+            source: "Test".into(),
+            campaign: "Test".into(),
+        };
+        assert!(matches!(
+            ws.begin_purchase(id, &n, &connection, 25, 25)
+                .await
+                .unwrap(),
+            convert_store::managed::Purchase::Started
+        ));
+        if *phase != "prepared" {
+            ws.start_reservation(id).await.unwrap();
+        }
+        if *phase == "reserved" {
+            ws.record_reservation(id, 321).await.unwrap();
+        }
+        age_purchases(&store, workspace).await;
+        managed::reconcile_purchases(&app).await.unwrap();
+        assert_eq!(ws.purchase_status(id).await.unwrap()["status"], "failed");
+        assert!(
+            ws.start_carrier_purchase(id, 25).await.is_err(),
+            "Late API task must not purchase after cancellation"
+        );
+        if *phase == "reserving" {
+            ws.record_reservation(id, 321).await.unwrap();
+        }
+        age_purchases(&store, workspace).await;
+        managed::settle_reservations(&app).await.unwrap();
+        assert_eq!(
+            ws.purchase_status(id).await.unwrap()["billing_reconciliation_pending"],
+            false
+        );
+    }
+    // Actual HTTP timeout and malformed identity retain a recoverable hold, never a purchase.
+    for (index, delay) in [true, false].into_iter().enumerate() {
+        RESERVE_DELAY.store(delay, SeqCst);
+        RESERVE_BAD_IDENTITY.store(!delay, SeqCst);
+        let id = Uuid::new_v4();
+        assert_eq!(
+            api(
+                app.clone(),
+                "POST",
+                "/api/numbers/purchase",
+                &session,
+                payload(id, &format!("+1202555088{index}"))
+            )
+            .await
+            .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        RESERVE_DELAY.store(false, SeqCst);
+        RESERVE_BAD_IDENTITY.store(false, SeqCst);
+        age_purchases(&store, workspace).await;
+        managed::reconcile_purchases(&app).await.unwrap();
+        assert_eq!(ws.purchase_status(id).await.unwrap()["status"], "failed");
+        age_purchases(&store, workspace).await;
+        managed::settle_reservations(&app).await.unwrap();
+        assert_eq!(
+            ws.purchase_status(id).await.unwrap()["billing_reconciliation_pending"],
+            false
+        );
+    }
+    // Cancel versus irreversible claim: exactly one state wins, including a late caller.
+    let racing = Uuid::new_v4();
+    let rn = NewNumber {
+        provider: PhoneProvider::Signalwire,
+        phone_number: "+12025550996".into(),
+        destination: "+12025550398".into(),
+        label: "Race".into(),
+        source: "Test".into(),
+        campaign: "Test".into(),
+    };
+    ws.begin_purchase(racing, &rn, &connection, 25, 25)
+        .await
+        .unwrap();
+    ws.start_reservation(racing).await.unwrap();
+    ws.record_reservation(racing, 321).await.unwrap();
+    let (claim, cancel) = tokio::join!(
+        ws.start_carrier_purchase(racing, 25),
+        ws.cancel_unstarted_purchase(racing)
+    );
+    cancel.unwrap();
+    let state = ws.purchase_status(racing).await.unwrap();
+    if claim.is_ok() {
+        assert_eq!(state["phase"], "carrier");
+        assert_eq!(state["status"], "pending");
+        // Fixture proves no POST was issued; simulate a definite carrier rejection.
+        ws.fail_purchase(racing).await.unwrap();
+    } else {
+        assert_eq!(state["status"], "failed");
+    }
+    assert!(ws.start_carrier_purchase(racing, 25).await.is_err());
+
+    // Two requests racing for the same number cannot both reserve/buy it.
+    let n = NewNumber {
+        provider: PhoneProvider::Signalwire,
+        phone_number: "+12025550995".into(),
+        destination: "+12025550398".into(),
+        label: "Concurrent".into(),
+        source: "Test".into(),
+        campaign: "Test".into(),
+    };
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    let (a, b) = tokio::join!(
+        ws.begin_purchase(first, &n, &connection, 25, 25),
+        ws.begin_purchase(second, &n, &connection, 25, 25)
+    );
+    assert_ne!(a.is_ok(), b.is_ok());
+    ws.cancel_unstarted_purchase(if a.is_ok() { first } else { second })
+        .await
+        .unwrap();
     assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), 2);
     BILLING_ENABLED.store(false, SeqCst);
     RESERVE_FAIL.store(false, SeqCst);

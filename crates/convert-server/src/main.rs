@@ -39,6 +39,8 @@ enum Command {
     Serve,
     Migrate,
     SeedDemo,
+    /// Reconcile purchase intents and billing holds once; never buy new numbers.
+    ReconcileNumberPurchases,
 }
 #[derive(Clone)]
 struct App {
@@ -146,6 +148,12 @@ async fn main() -> anyhow::Result<()> {
         google,
         google_client: convert_adapters::google_api::Client::new()?,
     });
+    if matches!(cli.command, Some(Command::ReconcileNumberPurchases)) {
+        managed::reconcile_purchases(&app).await?;
+        managed::settle_reservations(&app).await?;
+        println!("{}", app.store.purchase_recovery_summary().await?);
+        return Ok(());
+    }
     let address: SocketAddr = std::env::var("LISTEN_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3100".into())
         .parse()?;
