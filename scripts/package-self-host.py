@@ -17,7 +17,7 @@ FILES = ['docs/REMOTE_MCP.md', 'web/tests/verify-setup.mjs', 'docs/SIGNALWIRE_CO
          'scripts/verify-self-host.py', 'scripts/package-self-host.py', 'scripts/sync-brand.py',
          'tests/test_self_host.py', 'tests/test_release_package.py',
          'web/package.json', 'web/pnpm-lock.yaml', 'web/tsconfig.json', 'web/vite.config.ts',
-         'web/index.html', 'web/tests/verify-local.mjs',
+         'web/index.html', 'web/tests/verify-local.mjs', 'web/tests/verify-billing-usage.mjs',
          'docs-site/package.json', 'docs-site/package-lock.json', 'docs-site/astro.config.mjs',
          'docs-site/wrangler.jsonc', 'docs-site/.gitignore', 'docs-site/scripts/reference.mjs']
 TREES = {'crates': {'.rs', '.toml', '.sql', '.js'}, 'web/src': {'.tsx', '.ts', '.css'},
