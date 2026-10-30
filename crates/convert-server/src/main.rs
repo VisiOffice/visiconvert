@@ -9,6 +9,7 @@ mod managed_usage;
 mod public_api;
 mod remote_mcp;
 mod secrets;
+mod service_policy;
 mod signalwire;
 mod sites;
 use axum::{
@@ -569,6 +570,15 @@ async fn process_provider_webhook(
             }
         }
     };
+    // Authenticate and validate first. A deliberate 200 Hangup prevents carrier
+    // retries/fallback from turning a billing suspension into new billable calls.
+    // Completion/status receipts still flow through for accurate final metering.
+    if endpoint == "voice"
+        && provider == PhoneProvider::Signalwire
+        && !store.managed_voice_allowed(field("To")).await?
+    {
+        return Ok(([("content-type", "application/xml")], twilio::HANGUP).into_response());
+    }
     let destination = store
         .call_event_for(
             &CallEvent {

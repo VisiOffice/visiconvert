@@ -43,6 +43,22 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.screenshot({ path: `artifacts/billing-usage/${width}.png`, fullPage: true });
   }
+  // Show applied policy separately from a requested change, including mobile.
+  usage = { ...usage, service: { enforced: true, synced: true, grace_ends_at: "2026-11-06T00:00:00Z", policy: { state: "grace", valid_until: 4102444800 } } };
+  await page.reload();
+  await page.getByText(/Calls continue during your payment grace period/).waitFor();
+  usage.service = { ...usage.service, policy: { state: "suspended", valid_until: 4102444800, release_at: 4102444800 } };
+  await page.getByRole("button", { name: "Refresh usage", exact: true }).click();
+  await page.getByText(/Managed call forwarding is paused/).waitFor();
+  await page.screenshot({ path: "artifacts/billing-usage/service-hold-mobile.png", fullPage: true });
+  usage.service.synced = false;
+  await page.getByRole("button", { name: "Refresh usage", exact: true }).click();
+  await page.getByText(/Updating call service status/).waitFor();
+  usage.service.synced = true;
+  usage.service.policy = { state: "active", valid_until: 1 };
+  await page.getByRole("button", { name: "Refresh usage", exact: true }).click();
+  await page.getByText(/Call authorization has expired/).waitFor();
+  delete usage.service;
   // A corrected estimate must never replace the sealed invoice values in the UI.
   usage = { ...usage, periods: [{ ...period, status: "review", invoice_status: "review", estimate: { gross_cents: 9900, credit_cents: 2750, amount_cents: 7150 } }] };
   await page.getByRole("button", { name: "Refresh usage", exact: true }).click();

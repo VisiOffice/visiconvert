@@ -555,5 +555,99 @@ async fn shared_signalwire_connections_and_calls() {
         .0,
         StatusCode::CONFLICT
     );
+    // A managed suspension returns successful Hangup XML only after signature
+    // verification. Completion receipts remain available for final metering.
+    sqlx::query("UPDATE signalwire_connections SET managed=true WHERE workspace_id=$1")
+        .bind(workspace)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let response = callback(
+        app.clone(),
+        workspace,
+        "voice",
+        "replacement-fixture-signing-key",
+        &fields,
+        "",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let xml = String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert_eq!(xml, twilio::HANGUP);
+    assert_eq!(
+        callback(
+            app.clone(),
+            workspace,
+            "voice",
+            "invalid-signature",
+            &fields,
+            ""
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    fields.insert("CallStatus", "completed".into());
+    fields.insert("SequenceNumber", "20".into());
+    assert_eq!(
+        callback(
+            app.clone(),
+            workspace,
+            "status",
+            "replacement-fixture-signing-key",
+            &fields,
+            ""
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let policy_store = Store {
+        pool: store.pool.clone(),
+        workspace,
+    };
+    policy_store
+        .apply_service_policy(&convert_store::service_policy::ServicePolicy {
+            project_id: Uuid::parse_str(PROJECT).unwrap(),
+            revision: 1,
+            state: "active".into(),
+            reason: "paid".into(),
+            valid_until: chrono::Utc::now().timestamp() + 3600,
+            release_at: None,
+        })
+        .await
+        .unwrap();
+    let response = callback(
+        app.clone(),
+        workspace,
+        "voice",
+        "replacement-fixture-signing-key",
+        &fields,
+        "",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        String::from_utf8(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec()
+        )
+        .unwrap()
+        .contains("<Dial")
+    );
     server.abort();
 }
