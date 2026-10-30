@@ -103,6 +103,10 @@ pub fn routes(app: Shared) -> Router<Shared> {
             "/internal/cloud/workspaces/{workspace}/signalwire",
             post(super::signalwire::save_managed),
         )
+        .route(
+            "/internal/cloud/workspaces/{workspace}/usage",
+            post(super::managed_usage::report),
+        )
         .route_layer(middleware::from_fn_with_state(app, service_auth))
         .route("/auth/start", get(start))
         .route("/auth/prepare", post(prepare))

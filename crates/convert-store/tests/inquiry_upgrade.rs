@@ -146,6 +146,16 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
         store.purchase_status(legacy_failed).await.unwrap()["status"],
         "review"
     );
+    sqlx::raw_sql(include_str!("../migrations/0016_managed_reservations.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let held: bool = sqlx::query_scalar("SELECT status='review' AND reservation_id IS NULL AND NOT managed FROM number_purchases WHERE workspace_id=$1 AND request_id=$2")
+        .bind(workspace).bind(legacy_pending).fetch_one(&pool).await.unwrap();
+    assert!(
+        held,
+        "Legacy unresolved obligations must not become spendable or settled"
+    );
     let numbers = store.numbers().await.unwrap();
     assert_eq!(numbers[0].provider, convert_domain::PhoneProvider::Twilio);
     assert!(!numbers[0].purchased);

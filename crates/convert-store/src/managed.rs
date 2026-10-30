@@ -75,8 +75,8 @@ impl Store {
         if used >= limit {
             return Err(Error::Limit);
         }
-        sqlx::query("INSERT INTO number_purchases(workspace_id,request_id,phone_number,status,request_payload,space_host,project_id) VALUES($1,$2,$3,'pending',$4,$5,$6)")
-            .bind(self.workspace).bind(request).bind(&n.phone_number).bind(json!(n)).bind(&connection.space_host).bind(connection.project_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO number_purchases(workspace_id,request_id,phone_number,status,request_payload,space_host,project_id,managed) VALUES($1,$2,$3,'pending',$4,$5,$6,$7)")
+            .bind(self.workspace).bind(request).bind(&n.phone_number).bind(json!(n)).bind(&connection.space_host).bind(connection.project_id).bind(connection.managed).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(Purchase::Started)
     }
@@ -125,6 +125,14 @@ impl Store {
         Ok(id)
     }
 
+    pub async fn record_reservation(&self, request: Uuid, reservation: i64) -> Result<()> {
+        let result = sqlx::query("UPDATE number_purchases SET reservation_id=$3 WHERE workspace_id=$1 AND request_id=$2 AND managed AND status='pending' AND (reservation_id IS NULL OR reservation_id=$3)")
+            .bind(self.workspace).bind(request).bind(reservation).execute(&self.pool).await?;
+        if result.rows_affected() != 1 {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    }
     pub async fn fail_purchase(&self, request: Uuid) -> Result<()> {
         sqlx::query("UPDATE number_purchases SET status='failed' WHERE workspace_id=$1 AND request_id=$2 AND status='pending'")
             .bind(self.workspace).bind(request).execute(&self.pool).await?;
@@ -227,6 +235,8 @@ pub struct RecoverPurchase {
     pub project: Uuid,
     pub carrier_sid: Option<String>,
     pub cleanup: bool,
+    pub managed: bool,
+    pub reservation: Option<i64>,
 }
 /// Rotate attempts fairly; an unavailable project must not starve other tenants.
 pub async fn recoverable_purchases(pool: &PgPool) -> Result<Vec<RecoverPurchase>> {
@@ -244,6 +254,8 @@ pub async fn recoverable_purchases(pool: &PgPool) -> Result<Vec<RecoverPurchase>
                 project: r.get("project_id"),
                 carrier_sid: r.get("carrier_sid"),
                 cleanup: r.get::<String, _>("status") == "cleanup",
+                managed: r.get("managed"),
+                reservation: r.get("reservation_id"),
             })
         })
         .collect()
@@ -261,4 +273,72 @@ pub async fn due_releases(pool: &PgPool, hold_days: i32) -> Result<Vec<DueReleas
             carrier_sid: r.get("carrier_sid"),
         })
         .collect())
+}
+
+pub struct MeteredNumber {
+    pub sid: String,
+    pub phone: String,
+    pub request: Uuid,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub released_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+pub struct ReservationSettlement {
+    pub workspace: Uuid,
+    pub project: Uuid,
+    pub request: Uuid,
+    pub reservation: i64,
+    pub status: String,
+    pub carrier_sid: Option<String>,
+}
+pub async fn reservation_settlements(pool: &PgPool) -> Result<Vec<ReservationSettlement>> {
+    let rows=sqlx::query("UPDATE number_purchases SET last_attempt_at=now() WHERE (workspace_id,request_id) IN (SELECT workspace_id,request_id FROM number_purchases WHERE managed AND reservation_id IS NOT NULL AND reservation_settled_at IS NULL AND status IN ('registered','failed') AND last_attempt_at < now()-interval '1 minute' ORDER BY last_attempt_at LIMIT 100 FOR UPDATE SKIP LOCKED) RETURNING workspace_id,project_id,request_id,reservation_id,status,carrier_sid")
+        .fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ReservationSettlement {
+            workspace: r.get("workspace_id"),
+            project: r.get("project_id"),
+            request: r.get("request_id"),
+            reservation: r.get("reservation_id"),
+            status: r.get("status"),
+            carrier_sid: r.get("carrier_sid"),
+        })
+        .collect())
+}
+impl Store {
+    pub async fn settle_reservation_receipt(
+        &self,
+        request: Uuid,
+        reservation: i64,
+        status: &str,
+    ) -> Result<()> {
+        sqlx::query("UPDATE number_purchases SET reservation_settled_at=now() WHERE workspace_id=$1 AND request_id=$2 AND reservation_id=$3 AND status=$4")
+            .bind(self.workspace).bind(request).bind(reservation).bind(status).execute(&self.pool).await?;
+        Ok(())
+    }
+    pub async fn metered_numbers(&self, project: Uuid) -> Result<Vec<MeteredNumber>> {
+        let unresolved:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM number_purchases WHERE workspace_id=$1 AND project_id=$2 AND status IN ('pending','cleanup','review'))")
+            .bind(self.workspace).bind(project).fetch_one(&self.pool).await?;
+        if unresolved {
+            return Err(Error::Conflict);
+        }
+        let rows=sqlx::query("SELECT n.carrier_sid,n.phone_number,n.purchased_at,n.release_started_at,n.released_at,p.request_id FROM tracking_numbers n JOIN number_purchases p ON p.workspace_id=n.workspace_id AND p.number_id=n.id WHERE n.workspace_id=$1 AND p.project_id=$2 AND p.managed AND p.status='registered' ORDER BY n.id")
+            .bind(self.workspace).bind(project).fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| MeteredNumber {
+                sid: r.get("carrier_sid"),
+                phone: r.get("phone_number"),
+                request: r.get("request_id"),
+                started_at: r.get("purchased_at"),
+                ended_at: r.get("release_started_at"),
+                released_at: r.get("released_at"),
+            })
+            .collect())
+    }
+    pub async fn metering_changed_since(&self, observed: i64) -> Result<bool> {
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM number_purchases WHERE workspace_id=$1 AND created_at>=to_timestamp($2)) OR EXISTS(SELECT 1 FROM tracking_numbers WHERE workspace_id=$1 AND (purchased_at>=to_timestamp($2) OR release_started_at>=to_timestamp($2) OR released_at>=to_timestamp($2)))")
+            .bind(self.workspace).bind(observed as f64).fetch_one(&self.pool).await?)
+    }
 }

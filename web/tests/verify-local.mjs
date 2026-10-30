@@ -235,6 +235,12 @@ try {
   await check("SignalWire connections: ownership, signatures, credential rotation, retries and isolation", async () => {
     await command("cargo", ["test", "-p", "convert-server", "signalwire_tests::shared_signalwire", "--", "--ignored", "--test-threads=1"]);
   });
+  await check("Managed billing: reservation ordering, carrier evidence, lost responses and BYOC lifecycle", async () => {
+    await command("createdb", ["-h", socketDir, "visiconvert_managed_test"]);
+    await command("cargo", ["test", "-p", "convert-server", "managed_tests::", "--", "--include-ignored", "--test-threads=1"], {
+      env: { ...env, VISICONVERT_TEST_DATABASE_URL: `postgresql:///visiconvert_managed_test?host=${encodeURIComponent(socketDir)}` },
+    });
+  });
   await check("Website collection: consent, retries, rate limits, and workspace isolation", async () => {
     await command("cargo", ["test", "-p", "convert-server", "site_tests::", "--", "--ignored", "--test-threads=1"]);
   });

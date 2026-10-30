@@ -8,11 +8,17 @@ use std::sync::Mutex;
 use tower::ServiceExt;
 
 const LOST: &str = "+12025550413";
+const LOST_MANAGED: &str = "+12025550984";
 static OWNED: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 static FAIL_DELETE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const TAKEN: &str = "+12025550777";
 /// Carrier calls the mock received: (method, path, form body).
 static CARRIER: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
+
+static BILLING_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RESERVE_FAIL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static USAGE_CALLS: Mutex<Vec<Value>> = Mutex::new(Vec::new());
+static BAD_PAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 async fn mock_signalwire(
     method: Method,
@@ -21,7 +27,34 @@ async fn mock_signalwire(
     body: Bytes,
 ) -> Response {
     if uri.path() == "/internal/managed-number-access" {
-        return Json(json!({"allowed":false})).into_response();
+        if !BILLING_ENABLED.load(std::sync::atomic::Ordering::SeqCst) {
+            return Json(json!({"allowed":false})).into_response();
+        }
+        if headers.get("authorization").and_then(|v| v.to_str().ok())
+            != Some(&format!("Bearer {}", "d".repeat(64)))
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        let input: Value = serde_json::from_slice(&body).unwrap();
+        CARRIER.lock().unwrap().push((
+            "BILLING".into(),
+            input["operation"].as_str().unwrap_or("check").into(),
+            input.to_string(),
+        ));
+        if input["operation"] == "reserve" && RESERVE_FAIL.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        let status = if input["operation"] == "settle" {
+            if input["outcome"] == "registered" {
+                "committed"
+            } else {
+                "released"
+            }
+        } else {
+            "held"
+        };
+        return Json(json!({"allowed":true,"workspace_id":input["workspace_id"],"project_id":input["project_id"],"request_id":input["request_id"],"reservation_id":321,"status":status,"amount_cents":200})).into_response();
     }
     let prefix = format!("/api/laml/2010-04-01/Accounts/{PROJECT}");
     if headers.get("authorization").and_then(|h| h.to_str().ok())
@@ -39,6 +72,11 @@ async fn mock_signalwire(
         .unwrap()
         .push((method.to_string(), path.clone(), form.clone()));
     match (method.as_str(), path.as_str()) {
+        ("GET", "/Calls") => Json(json!({"calls":USAGE_CALLS.lock().unwrap().clone(),"next_page_uri":if BAD_PAGE.load(std::sync::atomic::Ordering::SeqCst) {Some("https://evil.invalid/Calls")} else {None}})).into_response(),
+        ("GET", p) if p.starts_with("/Calls/") => {
+            let calls=USAGE_CALLS.lock().unwrap();
+            match calls.iter().find(|c|c["sid"]==p.trim_start_matches("/Calls/")) {Some(c)=>Json(c.clone()).into_response(),None=>StatusCode::NOT_FOUND.into_response()}
+        },
         ("GET", "/IncomingPhoneNumbers") => {
             let phone = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
                 .find(|(k, _)| k == "PhoneNumber")
@@ -73,7 +111,7 @@ async fn mock_signalwire(
             let number = json!({"sid": Uuid::new_v4(), "account_sid": PROJECT,
                 "phone_number": fields["PhoneNumber"], "friendly_name": fields["FriendlyName"], "capabilities":{"voice":true}});
             OWNED.lock().unwrap().push(number.clone());
-            if fields["PhoneNumber"] == LOST {
+            if fields["PhoneNumber"] == LOST || fields["PhoneNumber"] == LOST_MANAGED {
                 // Carrier committed the purchase but the response was lost/failed.
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
@@ -145,6 +183,10 @@ fn set_env(name: &str, value: Option<&str>) {
 #[tokio::test]
 #[ignore = "requires disposable Postgres"]
 async fn managed_numbers_purchase_hold_and_release() {
+    BILLING_ENABLED.store(false, std::sync::atomic::Ordering::SeqCst);
+    RESERVE_FAIL.store(false, std::sync::atomic::Ordering::SeqCst);
+    OWNED.lock().unwrap().clear();
+    CARRIER.lock().unwrap().clear();
     let store = Store::connect(
         &std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap(),
         Uuid::new_v4(),
@@ -711,4 +753,235 @@ async fn managed_numbers_purchase_hold_and_release() {
 
 async fn age_purchases(store: &Store, workspace: Uuid) {
     sqlx::query("UPDATE number_purchases SET last_attempt_at=now()-interval '2 minutes' WHERE workspace_id=$1").bind(workspace).execute(&store.pool).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Postgres"]
+async fn managed_budget_and_verified_quantities() {
+    use chrono::{Duration as Delta, Utc};
+    use std::sync::atomic::Ordering::SeqCst;
+    OWNED.lock().unwrap().clear();
+    CARRIER.lock().unwrap().clear();
+    USAGE_CALLS.lock().unwrap().clear();
+    BILLING_ENABLED.store(true, SeqCst);
+    RESERVE_FAIL.store(false, SeqCst);
+    BAD_PAGE.store(false, SeqCst);
+    let store = Store::connect(
+        &std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap(),
+        Uuid::new_v4(),
+    )
+    .await
+    .unwrap();
+    store.migrate().await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async {
+        axum::serve(listener, Router::new().fallback(mock_signalwire))
+            .await
+            .unwrap()
+    });
+    let service_key = "d".repeat(64);
+    let app = Arc::new(App {
+        store: store.clone(),
+        api_key: Uuid::new_v4().to_string(),
+        public_url: "https://engine.example.com".into(),
+        twilio_account: None,
+        twilio_token: None,
+        cloud: Some(hosted::Config {
+            service_key: service_key.clone(),
+            cloud_origin: origin.clone(),
+            app_origin: None,
+        }),
+        vault: Some(secrets::Vault::from_hex(&"e".repeat(64)).unwrap()),
+        twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
+        signalwire_client: convert_adapters::signalwire_api::Client::for_test(origin),
+        google: None,
+        google_client: convert_adapters::google_api::Client::new().unwrap(),
+    });
+    let workspace = Uuid::new_v4();
+    let session = bearer(&store, workspace).await;
+    assert_eq!(internal(app.clone(),workspace,&service_key,json!({"space_host":"fixture.signalwire.com","project_id":PROJECT,"api_token":TOKEN,"signing_key":SIGNING})).await,StatusCode::OK);
+    let request = Uuid::new_v4();
+    let buy = json!({"request_id":request,"phone_number":"+12025550981","destination":"+12025550398","label":"Metered","source":"Website","campaign":"Pool"});
+    let (status, value) = api(
+        app.clone(),
+        "POST",
+        "/api/numbers/purchase",
+        &session,
+        buy.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let events = CARRIER.lock().unwrap().clone();
+    let reserve = events
+        .iter()
+        .position(|(m, p, _)| m == "BILLING" && p == "reserve")
+        .unwrap();
+    let purchase = events
+        .iter()
+        .position(|(m, p, _)| m == "POST" && p == "/IncomingPhoneNumbers")
+        .unwrap();
+    assert!(reserve < purchase);
+    assert_eq!(
+        api(app.clone(), "POST", "/api/numbers/purchase", &session, buy)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), 1);
+    age_purchases(&store, workspace).await;
+    managed::settle_reservations(&app).await.unwrap();
+    let settled:bool=sqlx::query_scalar("SELECT reservation_settled_at IS NOT NULL AND reservation_id=321 FROM number_purchases WHERE workspace_id=$1 AND request_id=$2").bind(workspace).bind(request).fetch_one(&store.pool).await.unwrap();
+    assert!(settled);
+    sqlx::query(
+        "UPDATE tracking_numbers SET purchased_at=now()-interval '2 hours' WHERE workspace_id=$1",
+    )
+    .bind(workspace)
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE number_purchases SET created_at=now()-interval '2 hours' WHERE workspace_id=$1",
+    )
+    .bind(workspace)
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    let now = Utc::now();
+    let parent = Uuid::new_v4();
+    let child = Uuid::new_v4();
+    let root = json!({"sid":parent,"account_sid":PROJECT,"direction":"inbound","to":"+12025550981","status":"completed","start_time":(now-Delta::hours(1)).to_rfc2822(),"end_time":(now-Delta::minutes(58)).to_rfc2822(),"duration":120});
+    let call = json!({"sid":child,"account_sid":PROJECT,"direction":"outbound-dial","parent_call_sid":parent,"status":"completed","end_time":(now-Delta::minutes(59)).to_rfc2822(),"duration":"60"});
+    *USAGE_CALLS.lock().unwrap() = vec![root, call];
+    let path = format!("/internal/cloud/workspaces/{workspace}/usage");
+    let input = json!({"project_id":PROJECT,"period_start":(now-Delta::days(1)).timestamp(),"period_end":(now+Delta::days(29)).timestamp()});
+    assert_eq!(
+        api(app.clone(), "POST", &path, "wrong", input.clone())
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, report) = api(app.clone(), "POST", &path, &service_key, input.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["complete"], true);
+    assert_eq!(report["calls"].as_array().unwrap().len(), 1);
+    assert_eq!(report["calls"][0]["connected_seconds"], 60);
+    assert_eq!(report["numbers"].as_array().unwrap().len(), 1);
+    assert!(!report.to_string().contains("+12025550398"));
+    BAD_PAGE.store(true, SeqCst);
+    assert_ne!(
+        api(app.clone(), "POST", &path, &service_key, input.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    BAD_PAGE.store(false, SeqCst);
+    USAGE_CALLS.lock().unwrap()[1]["account_sid"] = json!(Uuid::new_v4());
+    assert_ne!(
+        api(app.clone(), "POST", &path, &service_key, input.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    USAGE_CALLS.lock().unwrap().clear();
+    OWNED
+        .lock()
+        .unwrap()
+        .push(json!({"sid":Uuid::new_v4(),"account_sid":PROJECT,"phone_number":"+12025550982"}));
+    assert_ne!(
+        api(app.clone(), "POST", &path, &service_key, input).await.0,
+        StatusCode::OK
+    );
+    // The carrier bought the number but its response was lost. Recovery uses
+    // the marker and existing reservation; it must never POST the purchase twice.
+    let lost_request = Uuid::new_v4();
+    let lost = json!({"request_id":lost_request,"phone_number":LOST_MANAGED,"destination":"+12025550398","label":"Lost response","source":"Website","campaign":"Pool"});
+    assert_eq!(
+        api(app.clone(), "POST", "/api/numbers/purchase", &session, lost)
+            .await
+            .0,
+        StatusCode::BAD_GATEWAY
+    );
+    age_purchases(&store, workspace).await;
+    managed::reconcile_purchases(&app).await.unwrap();
+    let receipt = Store {
+        pool: store.pool.clone(),
+        workspace,
+    }
+    .purchase_status(lost_request)
+    .await
+    .unwrap();
+    assert_eq!(receipt["status"], "registered");
+    assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), 2);
+    // A reservation outage must never reach the carrier POST.
+    RESERVE_FAIL.store(true, SeqCst);
+    let denied = json!({"request_id":Uuid::new_v4(),"phone_number":"+12025550983","destination":"+12025550398","label":"Denied","source":"Website","campaign":"Pool"});
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/purchase",
+            &session,
+            denied
+        )
+        .await
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(carrier("POST", "/IncomingPhoneNumbers").len(), 2);
+    BILLING_ENABLED.store(false, SeqCst);
+    RESERVE_FAIL.store(false, SeqCst);
+    OWNED.lock().unwrap().clear();
+    CARRIER.lock().unwrap().clear();
+    USAGE_CALLS.lock().unwrap().clear();
+    server.abort();
+}
+
+#[tokio::test]
+async fn carrier_quantity_pagination_preserves_filters_and_rejects_duplicates() {
+    use axum::extract::Query;
+    use std::collections::HashMap;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let path = format!("/api/laml/2010-04-01/Accounts/{PROJECT}/Calls");
+    let next = format!("{path}?Page=1&PageToken=PAfixture");
+    let server = tokio::spawn(async move {
+        axum::serve(listener,Router::new().route(&path,get(move |Query(q):Query<HashMap<String,String>>| {
+            let next=next.clone();async move {
+                assert_eq!(q.get("EndTime>").map(String::as_str),Some("boundary"));
+                let first=q.get("Page").map(String::as_str)==Some("0");
+                if !first { assert_eq!(q.get("PageToken").map(String::as_str),Some("PAfixture")); }
+                let duplicate=q.contains_key("duplicate");
+                Json(json!({"calls":[{"account_sid":PROJECT,"sid":if first || duplicate {"11111111-1111-4111-8111-111111111111"} else {"22222222-2222-4222-8222-222222222222"}}],"next_page_uri":if first {Some(next)} else {None}}))
+            }
+        }))).await.unwrap();
+    });
+    let client = convert_adapters::signalwire_api::Client::for_test(origin);
+    assert_eq!(
+        client
+            .usage_records(
+                "fixture.signalwire.com",
+                PROJECT,
+                TOKEN,
+                "/Calls",
+                &[("EndTime>", "boundary")]
+            )
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        client
+            .usage_records(
+                "fixture.signalwire.com",
+                PROJECT,
+                TOKEN,
+                "/Calls",
+                &[("EndTime>", "boundary"), ("duplicate", "1")]
+            )
+            .await
+            .is_err()
+    );
+    server.abort();
 }
