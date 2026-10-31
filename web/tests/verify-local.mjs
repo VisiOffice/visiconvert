@@ -259,6 +259,7 @@ try {
     await command("cargo", ["test", "-p", "convert-server", "conversion_tests::", "--", "--ignored", "--test-threads=1"]);
   });
   await check("Public API: scopes, pagination, key lifecycle, hosted billing and isolation", () => command("cargo", ["test", "-p", "convert-server", "public_api_tests::", "--", "--ignored", "--test-threads=1"]));
+  await check("Google delivery: opt-in, provider receipts, retries and revision isolation", () => command("cargo", ["test", "-p", "convert-server", "delivery_tests::", "--", "--ignored", "--test-threads=1"]));
   await check("Google connection: OAuth binding, ownership, encryption, discovery and validation", () => command("cargo", ["test", "-p", "convert-server", "google_tests::", "--", "--ignored", "--test-threads=1"]));
   await check("DNI allocation: concurrency, cooldown, reuse, callback evidence, and isolation", () => command("cargo", ["test", "-p", "convert-store", "--test", "dni", "--", "--ignored", "--test-threads=1"]));
   await check("Apply application migrations twice", async () => {

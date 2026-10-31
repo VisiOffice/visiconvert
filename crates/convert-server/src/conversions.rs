@@ -12,7 +12,7 @@ pub fn routes() -> Router<Shared> {
         .route("/conversions/stage", post(stage))
         .route("/conversions/{id}/cancel", post(cancel))
 }
-async fn owner(access: &hosted::Access) -> Result<(), ApiError> {
+pub(crate) async fn owner(access: &hosted::Access) -> Result<(), ApiError> {
     if let Some(hash) = &access.session_hash
         && !access.store.manages_connection(hash).await?
     {
@@ -25,7 +25,10 @@ async fn owner(access: &hosted::Access) -> Result<(), ApiError> {
 }
 async fn preview(Extension(access): Extension<hosted::Access>) -> Api<Value> {
     owner(&access).await?;
-    Ok(Json(access.store.conversion_preview().await?))
+    let mut value = access.store.conversion_preview().await?;
+    value["delivery_settings"] = access.store.delivery_settings().await?;
+    value["deliveries"] = json!(access.store.delivery_list().await?);
+    Ok(Json(value))
 }
 async fn settings(
     Extension(access): Extension<hosted::Access>,

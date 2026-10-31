@@ -4,7 +4,7 @@ description: Connect Google, choose accounts and import actions, and check your 
 ---
 
 VisiConvert can connect to Google and check conversion destinations in both hosted
-and self-hosted workspaces. **Conversions are not uploaded in this release.**
+and self-hosted workspaces. Connecting alone uploads nothing. Use [reviewed delivery](/guides/google-ads-preparation/) to validate and explicitly queue events.
 
 ## Connect
 

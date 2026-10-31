@@ -2,6 +2,7 @@ mod adoption;
 mod api_keys;
 mod connections;
 mod conversions;
+mod delivery;
 mod google;
 mod hosted;
 mod inquiries;
@@ -162,6 +163,9 @@ async fn main() -> anyhow::Result<()> {
     if app.vault.is_some() {
         managed::spawn_release_loop(app.clone());
     }
+    if app.google.is_some() {
+        delivery::spawn(app.clone());
+    }
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address,"VisiConvert pilot listening");
     axum::serve(listener, router(app))
@@ -206,6 +210,7 @@ fn router(app: Shared) -> Router {
         .merge(sites::private_routes())
         .merge(inquiries::routes())
         .merge(conversions::routes())
+        .merge(delivery::routes())
         .merge(google::routes())
         .merge(api_keys::routes())
         .route("/bootstrap", get(bootstrap))
@@ -780,3 +785,6 @@ mod managed_tests;
 
 #[cfg(test)]
 mod adoption_tests;
+
+#[cfg(test)]
+mod delivery_tests;

@@ -19,7 +19,8 @@ async fn adoption_is_atomic_retryable_scoped_and_never_backbills() {
     let sid = Uuid::new_v4().to_string();
     let phone_value = format!(
         "+1928{:07}",
-        1_000_000 + (Uuid::new_v4().as_u128() % 8_000_000)
+        // NANP exchange codes begin with 2–9, just like area codes.
+        2_000_000 + (Uuid::new_v4().as_u128() % 8_000_000)
     );
     let phone = phone_value.as_str();
     let destination = "+16025550100";

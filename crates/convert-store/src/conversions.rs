@@ -86,7 +86,7 @@ fn digest(value: &Value) -> String {
 fn transaction_id(workspace: Uuid, kind: &str, key: &str) -> String {
     format!("vc_{}", &digest(&json!([workspace, kind, key]))[..48])
 }
-async fn settings(conn: &mut PgConnection, workspace: Uuid) -> Result<Settings> {
+pub(crate) async fn settings(conn: &mut PgConnection, workspace: Uuid) -> Result<Settings> {
     let row =
         sqlx::query("SELECT configuration,version FROM conversion_settings WHERE workspace_id=$1")
             .bind(workspace)
@@ -123,7 +123,7 @@ async fn record(
 
 // Event timestamps come from recorded transitions, never from preview/staging
 // time. Older imported records without the necessary history remain blocked.
-const CANDIDATES: &str = r#"
+pub(crate) const CANDIDATES: &str = r#"
 WITH candidates AS (
  SELECT 'qualified'::text AS kind,i.id::text AS entity_key,i.id AS inquiry_id,
  i.primary_lead_id AS lead_id,i.qualification,i.archived_at,
@@ -155,7 +155,7 @@ LEFT JOIN conversion_outbox q ON q.workspace_id=$1 AND q.kind=c.kind AND q.entit
 WHERE ($2::text IS NULL OR (c.kind=$2 AND c.entity_key=$3))
 ORDER BY c.event_at DESC NULLS LAST,c.kind,c.entity_key LIMIT 200
 "#;
-fn candidate(
+pub(crate) fn candidate(
     row: &sqlx::postgres::PgRow,
     config: &Settings,
     workspace: Uuid,

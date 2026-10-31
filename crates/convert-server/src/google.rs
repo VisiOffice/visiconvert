@@ -137,7 +137,7 @@ async fn show(State(a): State<Shared>, Extension(access): Extension<hosted::Acce
     Ok(Json(
         json!({"configured":configured,"connected":c.encrypted_token.is_some() && matching,
         "reconnect_required":c.encrypted_token.is_some() && !matching,"revision":c.revision,"connected_at":c.connected_at,
-        "redirect_uri":format!("{}{CALLBACK}",hosted::browser_origin(&a)),"validation":if matching {c.validation}else{None},"checked_at":if matching {c.checked_at}else{None},"uploads_enabled":false}),
+        "redirect_uri":format!("{}{CALLBACK}",hosted::browser_origin(&a)),"validation":if matching {c.validation}else{None},"checked_at":if matching {c.checked_at}else{None},"uploads_enabled":access.store.delivery_settings().await?["enabled"]}),
     ))
 }
 #[derive(Deserialize)]
@@ -321,8 +321,11 @@ async fn complete(a: &App, headers: &HeaderMap, q: Callback) -> Result<(), ApiEr
 }
 async fn token(a: &App, access: &hosted::Access) -> Result<(Connection, String), ApiError> {
     owner(access).await?;
+    worker_token(a, &access.store).await
+}
+pub(crate) async fn worker_token(a: &App, store: &Store) -> Result<(Connection, String), ApiError> {
     let g = config(a)?;
-    let c = access.store.google_connection().await?;
+    let c = store.google_connection().await?;
     if c.client_fingerprint.as_deref() != Some(g.fingerprint().as_str()) {
         return Err(google_api::Error::Credentials.into());
     }
@@ -332,7 +335,7 @@ async fn token(a: &App, access: &hosted::Access) -> Result<(Connection, String),
         .as_deref()
         .ok_or(google_api::Error::Credentials)?;
     let refresh = vault
-        .open_google(access.store.workspace, "refresh", encrypted)
+        .open_google(store.workspace, "refresh", encrypted)
         .map_err(|_| connections::vault_error())?;
     let t = a
         .google_client
@@ -344,10 +347,9 @@ async fn token(a: &App, access: &hosted::Access) -> Result<(Connection, String),
         && next != refresh
     {
         let encrypted = vault
-            .seal_google(access.store.workspace, "refresh", &next)
+            .seal_google(store.workspace, "refresh", &next)
             .map_err(|_| connections::vault_error())?;
-        access
-            .store
+        store
             .rotate_google_refresh(
                 c.revision,
                 c.encrypted_token.as_deref().unwrap(),
@@ -447,11 +449,11 @@ async fn validate(
                 .iter()
                 .filter(|a| chosen.iter().any(|id| a.id.as_str() == id.as_str()))
                 .collect();
-            json!({"valid":valid,"login_customer_id":input.login,"account":account,"actions":selected,"settings_version":settings.version,"uploads_enabled":false,
+            json!({"valid":valid,"login_customer_id":input.login,"account":account,"actions":selected,"settings_version":settings.version,"uploads_enabled":access.store.delivery_settings().await?["enabled"],
                 "message":if valid {"Account is readable and the selected actions are enabled import actions owned by this account. Upload acceptance and attribution are not checked."}else if more {"A selected action is not verified in the first 200 results. Narrow the destination or check the action IDs."}else{"Check that this account is enabled and owns every selected, enabled import conversion action. Select the conversion-owning account when using cross-account tracking."}})
         }
         Err(e) => {
-            json!({"valid":false,"settings_version":settings.version,"uploads_enabled":false,"message":e.to_string()})
+            json!({"valid":false,"settings_version":settings.version,"uploads_enabled":access.store.delivery_settings().await?["enabled"],"message":e.to_string()})
         }
     };
     let actor = access

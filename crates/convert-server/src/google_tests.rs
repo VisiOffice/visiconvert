@@ -10,7 +10,10 @@ use std::sync::{
 use tower::ServiceExt;
 
 #[derive(Default)]
-struct Provider {
+pub(super) struct Provider {
+    pub(super) deliveries: Mutex<Vec<Value>>,
+    pub(super) delivery_http: AtomicUsize,
+    pub(super) processing: AtomicBool,
     challenge: Mutex<String>,
     exchanges: AtomicUsize,
     deny: AtomicBool,
@@ -52,6 +55,26 @@ async fn provider(
     }
     assert_eq!(headers["authorization"], "Bearer private-google-access");
     assert!(headers.get("developer-token").is_none());
+    if uri.path() == "/v1/events:ingest" {
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        if v["validateOnly"] == true {
+            return Json(json!({})).into_response();
+        }
+        p.deliveries.lock().unwrap().push(v);
+        let status = p.delivery_http.load(Ordering::SeqCst);
+        if status != 0 {
+            return (
+                StatusCode::from_u16(status as u16).unwrap(),
+                Json(json!({"error":"PRIVATE_PROVIDER_ERROR"})),
+            )
+                .into_response();
+        }
+        return Json(json!({"requestId":"google-receipt-1"})).into_response();
+    }
+    if uri.path() == "/v1/requestStatus:retrieve" {
+        let v = p.deliveries.lock().unwrap().last().unwrap().clone();
+        return Json(json!({"requestStatusPerDestination":[{"destination":v["destinations"][0],"requestStatus":if p.processing.load(Ordering::SeqCst) {"PROCESSING"} else {"SUCCESS"},"eventsIngestionStatus":{"recordCount":"1"}}]})).into_response();
+    }
     if uri.path() == "/v26/customers:listAccessibleCustomers" {
         return Json(json!({"resourceNames":["customers/1234567890"]})).into_response();
     }
@@ -106,11 +129,17 @@ async fn request(
     assert!(!text.contains("PRIVATE_PROVIDER_ERROR"));
     (code, headers, text)
 }
-async fn api(app: Shared, method: &str, path: &str, key: &str, v: Value) -> (StatusCode, Value) {
+pub(super) async fn api(
+    app: Shared,
+    method: &str,
+    path: &str,
+    key: &str,
+    v: Value,
+) -> (StatusCode, Value) {
     let (status, _, body) = request(app, method, path, key, "", v).await;
     (status, serde_json::from_str(&body).unwrap())
 }
-async fn fixture() -> (Shared, Arc<Provider>, tokio::task::JoinHandle<()>) {
+pub(super) async fn fixture() -> (Shared, Arc<Provider>, tokio::task::JoinHandle<()>) {
     let p = Arc::new(Provider::default());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -142,7 +171,7 @@ async fn fixture() -> (Shared, Arc<Provider>, tokio::task::JoinHandle<()>) {
     });
     (a, p, task)
 }
-async fn begin(a: Shared, p: &Provider, key: &str, revision: i64) -> (String, String) {
+pub(super) async fn begin(a: Shared, p: &Provider, key: &str, revision: i64) -> (String, String) {
     let (s, h, b) = request(
         a,
         "POST",
@@ -172,7 +201,7 @@ async fn begin(a: Shared, p: &Provider, key: &str, revision: i64) -> (String, St
         cookie.split(';').next().unwrap().into(),
     )
 }
-async fn callback(a: Shared, state: &str, cookie: &str, code: &str) -> String {
+pub(super) async fn callback(a: Shared, state: &str, cookie: &str, code: &str) -> String {
     let (s, h, b) = request(
         a,
         "GET",
@@ -188,7 +217,7 @@ async fn callback(a: Shared, state: &str, cookie: &str, code: &str) -> String {
     assert_eq!(h["referrer-policy"], "no-referrer");
     h["location"].to_str().unwrap().into()
 }
-async fn hosted_token(store: &Store) -> (String, Uuid) {
+pub(super) async fn hosted_token(store: &Store) -> (String, Uuid) {
     let user = Uuid::new_v4();
     store
         .provision_hosted(store.workspace, user, "Google test")

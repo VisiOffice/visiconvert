@@ -218,4 +218,4 @@ Use `--release` to require license metadata. Building a bundle does not publish 
 Google OAuth, account/action discovery and destination checks work in self-hosted
 installs. Follow [Google connection setup](GOOGLE_CONNECTION.md) to configure your
 own Web OAuth client in private `config.env`. Both client variables are optional;
-set them together with the existing encryption key. Uploads remain disabled.
+set them together with the existing encryption key. Delivery defaults to paused; see [reviewed Google delivery](CONVERSIONS.md) to validate and explicitly queue events.

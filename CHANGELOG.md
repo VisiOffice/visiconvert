@@ -1,3 +1,15 @@
+## Unreleased — reviewed Google conversion delivery
+
+- Add shared Rust delivery for hosted and self-hosted workspaces: validation-only
+  requests, explicit opt-in and queuing, bounded retries and receipt polling.
+- Preserve original event identities for booking value revisions; stop ambiguous
+  sends for review instead of silently replaying them.
+- Recheck consent, destination, source revisions and access before sending.
+  Cancellations flag already-sent events for manual correction; Google Data Manager
+  does not support retractions.
+- Add owner controls, delivery history and additive migration 0020. Existing
+  preparations remain unsent on upgrade. Microsoft delivery remains future work.
+
 ## Unreleased — purchase safety
 
 - Persist purchase phases so rejected budgets and interrupted pre-carrier requests

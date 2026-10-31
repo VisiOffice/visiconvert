@@ -20,7 +20,7 @@ impl Store {
              WHERE n.workspace_id=$1 AND NOT n.is_demo AND n.released_at IS NULL GROUP BY n.id ORDER BY n.label,n.id")
             .bind(self.workspace).fetch_all(&self.pool).await?;
         Ok(
-            json!({"sites":sites,"numbers":numbers,"google_uploads_enabled":false,
+            json!({"sites":sites,"numbers":numbers,"google_uploads_enabled":self.delivery_settings().await?["enabled"],
             "evidence_note":"Activity is historical, not a live health guarantee. Website visits and form success are reported by your website. A received call does not prove the business line rang or the attribution is correct; verify a real call and its source in the inbox."}),
         )
     }
