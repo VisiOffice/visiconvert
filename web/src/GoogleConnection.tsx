@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Client } from "./api";
 import type { Settings } from "./Conversions";
 
-type Check = { valid: boolean; message: string; settings_version: number; account?: { name: string }; actions?: { name: string; primary: boolean }[] };
+type Check = { valid: boolean; message: string; settings_version: number; login_customer_id?: string; account?: { name: string }; actions?: { name: string; primary: boolean }[] };
 type Status = { configured: boolean; connected: boolean; reconnect_required: boolean; revision: number; redirect_uri: string; validation: Check | null; checked_at: string | null };
 type Account = { id: string; name: string; manager: boolean; status: string };
 type Action = { id: string; name: string; eligible: boolean; kind: string; status: string; primary: boolean; owner: string };
@@ -19,19 +19,23 @@ export function GoogleConnection({ api, settings, onChange }: { api: Client; set
   const [qualified, setQualified] = useState("");
   const [booking, setBooking] = useState("");
   const [moreAccounts, setMoreAccounts] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busyCount, setBusyCount] = useState(0);
+  const busy = busyCount > 0;
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [manualCustomer, setManualCustomer] = useState("");
+  const discovery = useRef(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const cleanup = useRef<() => void>(() => {});
   async function refresh() { const s = await api<Status>("/connections/google"); setStatus(s); return s; }
-  useEffect(() => { let live = true; api<Status>("/connections/google").then(s => { if (live) setStatus(s); }).catch(e => { if (live) setError(e.message); }); return () => { live = false; cleanup.current(); }; }, [api]);
+  useEffect(() => { let live = true; api<Status>("/connections/google").then(s => { if (live) setStatus(s); }).catch(e => { if (live) setError(e.message); }); return () => { live = false; cleanup.current(); discovery.current++; }; }, [api]);
   // Saving the destination elsewhere invalidates the provider check immediately.
   useEffect(() => { void refresh().catch(e => setError(e.message)); }, [settings.version]);
   async function run(fn: () => Promise<void>) {
-    setBusy(true); setError(""); setNotice("");
+    setBusyCount(n => n + 1); setError(""); setNotice("");
     try { await fn(); } catch (e) { setError((e as Error).message); }
-    finally { await refresh().catch(() => {}); setBusy(false); }
+    finally { await refresh().catch(() => {}); setBusyCount(n => n - 1); }
   }
   function connect() {
     if (!status) return;
@@ -46,7 +50,7 @@ export function GoogleConnection({ api, settings, onChange }: { api: Client; set
       if (event.origin !== window.location.origin || event.source !== popup || event.data?.type !== "visiconvert-google-result") return;
       stop();
       void refresh().then(s => {
-        if (s.connected && s.revision > revision) { setNotice("Google connected. Browse accounts and validate your destination."); setError(""); }
+        if (s.connected && s.revision > revision) { setNotice("Google sign-in complete. Choose the advertising account you want to connect below."); setError(""); }
         else setError("Google was not connected. Try again and grant both requested permissions. Ask your administrator to check the OAuth configuration if it keeps failing.");
       }).catch(e => setError(e.message));
     };
@@ -61,7 +65,7 @@ export function GoogleConnection({ api, settings, onChange }: { api: Client; set
         let tries = 0;
         const poll = async () => {
           if (stopped) return;
-          try { const s = await refresh(); if (s.connected && s.revision > revision) { stop(); popup.close(); setNotice("Google connected. Browse accounts and validate your destination."); return; } }
+          try { const s = await refresh(); if (s.connected && s.revision > revision) { stop(); popup.close(); setNotice("Google sign-in complete. Choose the advertising account you want to connect below."); return; } }
           catch { /* The explicit refresh control remains available. */ }
           if (++tries < 300) timer = setTimeout(() => void poll(), 2000); else { stop(); setNotice("Connection window expired. Refresh the connection or try again."); }
         };
@@ -69,45 +73,83 @@ export function GoogleConnection({ api, settings, onChange }: { api: Client; set
       } catch (e) { stop(); popup.close(); throw e; }
     });
   }
+  // Show the next setup step as soon as OAuth succeeds, including on a return visit.
+  useEffect(() => {
+    if (status?.connected) void run(browse);
+    else { discovery.current++; setLogins([]); setAccounts([]); setActions(null); setAccountsLoaded(false); setLogin(""); }
+    return () => { discovery.current++; };
+  }, [api, status?.connected, status?.revision]);
   async function browse() {
-    const r = await api<Accounts>("/connections/google/accounts"); setLogins(r.logins); setLogin(""); setAccounts([]); setActions(null);
-    setNotice(r.logins.length ? "Choose the account that gives you access to Google Ads." : "Google connected, but this Google user has no directly accessible Ads accounts.");
+    const request = ++discovery.current;
+    setAccountsLoaded(false); setLogins([]); setLogin(""); setAccounts([]); setActions(null); setMoreAccounts(false);
+    const r = await api<Accounts>("/connections/google/accounts");
+    if (request !== discovery.current) return;
+    setLogins(r.logins); setAccountsLoaded(true);
+    const savedLogin = status?.validation?.login_customer_id;
+    if (r.logins.length === 1) await chooseLogin(r.logins[0]);
+    else if (savedLogin && r.logins.includes(savedLogin)) await chooseLogin(savedLogin);
   }
   async function chooseLogin(id: string) {
-    setLogin(id); setActions(null); setAccounts([]); setCustomer("");
+    const request = ++discovery.current;
+    setLogin(id); setActions(null); setAccounts([]); setCustomer(""); setManualCustomer(""); setMoreAccounts(false);
+    setQualified(""); setBooking("");
     if (!id) return;
     const r = await api<Accounts>(`/connections/google/accounts?login=${encodeURIComponent(id)}`);
+    if (request !== discovery.current) return;
     setAccounts(r.accounts); setMoreAccounts(r.has_more);
+    if (r.accounts.some(a => a.id === settings.customer_id)) await chooseCustomer(settings.customer_id, id);
   }
+  async function chooseCustomer(id: string, access = login) {
+    const request = ++discovery.current;
+    setCustomer(id); setActions(null); setQualified(""); setBooking("");
+    if (!id) return;
+    const r = await api<Actions>(`/connections/google/actions?login=${encodeURIComponent(access)}&customer=${encodeURIComponent(id)}`);
+    if (request !== discovery.current) return;
+    setActions(r);
+    if (id === settings.customer_id) { setQualified(settings.qualified_action_id); setBooking(settings.booking_action_id); }
+  }
+  const accountId = (id: string) => id.replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3");
+  const matchesSaved = customer === settings.customer_id && qualified === settings.qualified_action_id && booking === settings.booking_action_id;
+  const validSelection = !!actions && [qualified, booking].filter(Boolean).every(id => actions.actions.some(a => a.id === id && a.eligible));
   const validation = status?.validation?.settings_version === settings.version ? status.validation : null;
   return <section className="card site-panel google-connection">
-    <div className="section-heading"><div><span className="eyebrow">GOOGLE CONNECTION</span><h2>Connect Google Ads</h2></div><button className="secondary" disabled={busy} onClick={() => void run(async () => { await refresh(); setNotice("Connection refreshed."); })}>Refresh Google connection</button></div>
-    <p className="muted">Connect to browse accounts and check conversion actions. Sending requires separate event validation and explicit queuing below.</p>
+    <div className="section-heading"><div><span className="eyebrow">GOOGLE ADS SETUP</span><h2>Connect Google Ads</h2></div><button className="secondary" disabled={busy} onClick={() => void run(async () => { await refresh(); setNotice("Connection refreshed."); })}>Refresh Google connection</button></div>
+    <p className="muted">Sign in with Google, choose the account that runs your ads, then select the outcomes to track. Connecting an account does not send conversions.</p>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p className="notice" role="status">{notice}</p>}
     {!status ? <p>Loading Google connection…</p> : !status.configured ? <>
       <p>Google connection is not configured on this installation. Your administrator must add the Google OAuth application credentials and enable the Google Ads and Data Manager APIs.</p>
       <details><summary>Administrator setup</summary><p>Use a Web application OAuth client with this exact authorized redirect URI:</p><code className="google-callback">{status.redirect_uri}</code><p>Set <code>VISICONVERT_GOOGLE_CLIENT_ID</code> and <code>VISICONVERT_GOOGLE_CLIENT_SECRET</code> in the server’s private configuration, with its existing encryption key. See the Google connection guide in the installation documentation.</p></details>
     </> : <>
-      <p><strong>{status.connected ? "Google connected" : status.reconnect_required ? "Reconnect Google after the application configuration change" : "Google not connected"}</strong></p>
-      <div className="google-actions"><button className="primary" disabled={busy || pending} onClick={connect}>{status.connected ? "Reconnect Google" : "Connect Google"}</button>
+      <p><strong>{status.connected ? "Google sign-in complete" : status.reconnect_required ? "Reconnect Google after the application configuration change" : "Google not connected"}</strong></p>
+      <div className="google-actions"><button className="primary" disabled={busy || pending} onClick={connect}>{status.connected ? "Use a different Google login" : "Sign in with Google"}</button>
         {(status.connected || status.revision > 0 || pending) && <button className="secondary" disabled={busy} onClick={() => void run(async () => { await api("/connections/google", { revision: status.revision }, "DELETE"); cleanup.current(); setActions(null); setAccounts([]); setLogins([]); setLogin(""); setNotice("Google disconnected locally. You can also remove VisiConvert access in your Google Account permissions."); })}>Disconnect Google</button>}
-        {status.connected && <button className="secondary" disabled={busy} onClick={() => void run(browse)}>Browse Google Ads</button>}</div>
-      {status.connected && logins.length > 0 && <div className="site-form">
-        <div className="form-field"><label htmlFor="google-login">Google account for access</label><select id="google-login" disabled={busy} value={login} onChange={e => void run(() => chooseLogin(e.target.value))}><option value="">Select an account</option>{logins.map(id => <option key={id} value={id}>{id}</option>)}</select></div>
-        {login && <><div className="form-field"><label htmlFor="google-customer">Advertising account ID</label><input id="google-customer" list="google-accounts" disabled={busy} inputMode="numeric" maxLength={10} value={customer} onChange={e => { setCustomer(e.target.value); setActions(null); }} /><datalist id="google-accounts">{accounts.map(c => <option value={c.id} key={c.id}>{c.name}{c.manager ? " (manager)" : ""} · {c.status}</option>)}</datalist></div>
-          {moreAccounts && <p>Showing the first 200 accounts. You can enter another account ID accessible through this login account.</p>}
-          <div><button className="secondary" disabled={busy || !/^\d{10}$/.test(customer)} onClick={() => void run(async () => { const r = await api<Actions>(`/connections/google/actions?login=${encodeURIComponent(login)}&customer=${encodeURIComponent(customer)}`); setActions(r); setQualified(""); setBooking(""); })}>Load conversion actions</button></div>
+        {status.connected && <button className="secondary" disabled={busy} onClick={() => void run(browse)}>Refresh Google Ads accounts</button>}</div>
+      {status.connected && !accountsLoaded && !error && <p role="status">Loading your Google Ads accounts…</p>}
+      {status.connected && accountsLoaded && logins.length === 0 && <p>No Google Ads accounts are accessible with this Google login. Use a Google user who has access to the advertising account, then sign in again.</p>}
+      {status.connected && logins.length > 0 && <div className="site-form google-account-setup">
+        <h3>Choose your advertising account</h3>
+        {logins.length > 1 && <div className="form-field"><label htmlFor="google-login">Access through a Google Ads account</label><p className="muted" id="google-login-help">Choose your Ads account or manager account to see the advertising accounts it can access. These are Google Ads IDs, not email addresses.</p><select id="google-login" aria-describedby="google-login-help" disabled={busy} value={login} onChange={e => void run(() => chooseLogin(e.target.value))}><option value="">Choose an access account</option>{logins.map(id => <option key={id} value={id}>{accounts.find(a => a.id === id)?.name || "Google Ads account"} · {accountId(id)}</option>)}</select></div>}
+        {login && <>
+          <div className="form-field"><label htmlFor="google-customer">Advertising account</label><p className="muted" id="google-customer-help">Choose by name and check the ID against Google Ads. The name may be your legal business name.</p><select id="google-customer" aria-describedby="google-customer-help" disabled={busy} value={customer} onChange={e => void run(() => chooseCustomer(e.target.value))}><option value="">Choose an advertising account</option>{accounts.map(c => <option value={c.id} key={c.id}>{c.name || "Unnamed account"} · {accountId(c.id)}{c.manager ? " · Manager" : ""}{c.status !== "ENABLED" ? ` · ${c.status}` : ""}</option>)}{customer && !accounts.some(a => a.id === customer) && <option value={customer}>{actions?.account.name || "Entered account"} · {accountId(customer)}</option>}</select></div>
+          {!busy && accounts.length === 0 && <p>No advertising accounts were returned through this access account. Try another access account or enter a known account ID below.</p>}
+          {moreAccounts && <p>Showing the first 200 accounts. If yours is missing, enter its account ID below.</p>}
+          <details><summary>Can’t find your account? Enter its ID</summary><div className="site-form"><div className="form-field"><label htmlFor="google-manual-customer">Advertising account ID</label><input id="google-manual-customer" disabled={busy} inputMode="numeric" maxLength={12} placeholder="123-456-7890" value={manualCustomer} onChange={e => setManualCustomer(e.target.value.replace(/[^0-9]/g, "").slice(0, 10))} /></div><div><button className="secondary" disabled={busy || !/^\d{10}$/.test(manualCustomer)} onClick={() => void run(() => chooseCustomer(manualCustomer))}>Find advertising account</button></div></div></details>
+          {customer && !actions && <p>{busy ? "Loading conversion actions…" : "Conversion actions could not be loaded."}</p>}
+          {customer && <div><button className="secondary" disabled={busy} onClick={() => void run(() => chooseCustomer(customer))}>Refresh conversion actions</button></div>}
         </>}
-        {actions && <><p>Actions in <strong>{actions.account.name || customer}</strong>. Only enabled import actions owned by this account can be selected.</p>
-          {actions.account.conversion_owner && actions.account.conversion_owner !== customer && <p className="notice">Conversion tracking is owned by {actions.account.conversion_owner}. Select that account to validate its actions.</p>}
-          {actions.has_more && <p>Showing the first 200 actions. Use the destination fields below for other action IDs.</p>}
-          {([["google-qualified", "Qualification conversion action", qualified, setQualified], ["google-booking", "Booking conversion action", booking, setBooking]] as const).map(([id, title, value, setter]) => <div className="form-field" key={id}><label htmlFor={id}>{title}</label><select id={id} disabled={busy} value={value} onChange={e => setter(e.target.value)}><option value="">Not mapped</option>{actions.actions.map(a => <option key={a.id} value={a.id} disabled={!a.eligible}>{a.name} · {a.id}{a.eligible ? (a.primary ? " · primary" : " · secondary") : ` · ${a.kind} / ${a.status} / owner ${a.owner}`}</option>)}</select></div>)}
-          {!actions.actions.some(a => a.eligible) && <p>No enabled import actions owned by this account were found. Create the required action in Google Ads, then load actions again.</p>}
-          <div><button className="primary" disabled={busy || (!qualified && !booking) || (!!qualified && qualified === booking)} onClick={() => void run(async () => { await api("/conversions/settings", { ...settings, customer_id: customer, qualified_action_id: qualified, booking_action_id: booking }, "PUT"); await onChange(); setNotice("Selected actions saved. Validate the saved destination next."); })}>Use selected actions</button></div>
+        {actions && <>
+          <h3>Choose the outcomes to track</h3>
+          <p>Selected account: <strong>{actions.account.name || accountId(customer)}</strong> · {accountId(customer)}. Choose an existing import action for each outcome you want to send. Leave other outcomes unmapped.</p>
+          {actions.account.conversion_owner && actions.account.conversion_owner !== customer && <p className="notice">Conversion tracking is owned by {accountId(actions.account.conversion_owner)}. Choose that account above, or enter its ID, to select its actions.</p>}
+          {actions.has_more && <p>Showing the first 200 actions. Advanced destination settings below support other action IDs.</p>}
+          {([["google-qualified", "Qualification conversion action", qualified, setQualified], ["google-booking", "Booking conversion action", booking, setBooking]] as const).map(([id, title, value, setter]) => <div className="form-field" key={id}><label htmlFor={id}>{title}</label><select id={id} disabled={busy} value={value} onChange={e => setter(e.target.value)}><option value="">Not mapped</option>{value && !actions.actions.some(a => a.id === value) && <option value={value} disabled>Saved action {value} · unavailable</option>}{actions.actions.map(a => <option key={a.id} value={a.id} disabled={!a.eligible}>{a.name} · {a.id}{a.eligible ? (a.primary ? " · primary" : " · secondary") : ` · ${a.kind} / ${a.status} / owner ${a.owner}`}</option>)}</select></div>)}
+          {!actions.actions.some(a => a.eligible) && <p>No compatible conversion actions were found. Create an import conversion action in Google Ads, then refresh conversion actions here.</p>}
+          {!!qualified && qualified === booking && <p className="error">Choose separate actions for qualification and bookings to avoid counting both as the same outcome.</p>}
+          <div><button className="primary" disabled={busy || !validSelection || (!qualified && !booking) || (!!qualified && qualified === booking)} onClick={() => void run(async () => { await api("/conversions/settings", { ...settings, customer_id: customer, qualified_action_id: qualified, booking_action_id: booking }, "PUT"); await onChange(); setNotice("Conversion actions saved. Check the saved connection below to finish setup. Delivery remains unchanged."); })}>Save conversion actions</button></div>
         </>}
       </div>}
-      {status.connected && <div className="google-actions"><button className="secondary" disabled={busy || !login || settings.version === 0} onClick={() => void run(async () => { const r = await api<Check>("/connections/google/validate", { revision: status.revision, settings_version: settings.version, login }); setNotice(r.message); })}>Validate saved destination</button><p className="muted">Browse Google Ads and choose an access account before validating the saved destination.</p></div>}
+      {status.connected && settings.version > 0 && <div className="google-actions"><button className="secondary" disabled={busy || !login || !actions || !matchesSaved} onClick={() => void run(async () => { const r = await api<Check>("/connections/google/validate", { revision: status.revision, settings_version: settings.version, login }); setNotice(r.message); })}>Check saved connection</button><p className="muted">{matchesSaved && login && actions ? "Check account access and your saved conversion actions. This does not send conversions." : "Choose the saved advertising account and save any changes before checking the connection."}</p></div>}
     </>}
-    {validation && <div className={validation.valid ? "notice" : "error"}><strong>{validation.valid ? "Destination checks passed" : "Destination needs attention"}</strong><p>{validation.message}</p>{status?.checked_at && <small>Checked {new Date(status.checked_at).toLocaleString()}</small>}</div>}
+    {validation && matchesSaved && <div className={validation.valid ? "notice" : "error"}><strong>{validation.valid ? "Destination checks passed" : "Destination needs attention"}</strong><p>{validation.message}</p>{status?.checked_at && <small>Checked {new Date(status.checked_at).toLocaleString()}</small>}</div>}
   </section>;
 }

@@ -80,14 +80,14 @@ export function Conversions({ api }: { api: Client }) {
 }
 function Mapping({ value, busy, save }: { value: Settings; busy: boolean; save: (s: Settings) => Promise<void> }) {
   const [draft, setDraft] = useState(value);
-  return <section className="card site-panel"><h2>Conversion destination</h2><p className="muted">Use your Google Ads customer ID without dashes and existing import conversion action IDs. Map only the event types you want. Saving IDs does not verify them; use the Google connection’s validation control to check the saved destination.</p><form className="site-form" onSubmit={e => { e.preventDefault(); void save(draft); }}>
+  return <details className="card site-panel"><summary>Advanced destination settings</summary><h2>Enter account and action IDs</h2><p className="muted">Use your Google Ads customer ID without dashes and existing import conversion action IDs. Map only the event types you want. Saving IDs does not verify them; use the Google connection’s validation control to check the saved destination.</p><form className="site-form" onSubmit={e => { e.preventDefault(); void save(draft); }}>
     <div className="form-field"><label htmlFor="ads-customer">Google Ads customer ID</label><input id="ads-customer" required inputMode="numeric" pattern="[0-9]{10}" maxLength={10} value={draft.customer_id} onChange={e => setDraft({ ...draft, customer_id: e.target.value })} /></div>
     <div className="form-field"><label htmlFor="ads-qualified">Qualified inquiry action ID</label><input id="ads-qualified" inputMode="numeric" pattern="[0-9]{1,20}" maxLength={20} value={draft.qualified_action_id} onChange={e => setDraft({ ...draft, qualified_action_id: e.target.value })} /></div>
     <div className="form-field"><label htmlFor="ads-booking">Booking action ID</label><input id="ads-booking" inputMode="numeric" pattern="[0-9]{1,20}" maxLength={20} value={draft.booking_action_id} onChange={e => setDraft({ ...draft, booking_action_id: e.target.value })} /></div>
     <label className="site-toggle"><input type="checkbox" checked={draft.allow_inferred_calls} onChange={e => setDraft({ ...draft, allow_inferred_calls: e.target.checked })} />Allow preparing calls with inferred website attribution</label>
     <p className="muted">Use separate conversion actions for qualification and bookings. Choose your primary optimization action in Google Ads to avoid counting both stages as separate sales.</p>
     <div><button className="primary" disabled={busy}>Save destination</button></div>
-  </form></section>;
+  </form></details>;
 }
 function ConsentForm({ value, busy, save }: { value: Consent; busy: boolean; save: (c: Consent) => Promise<void> }) {
   const [draft, setDraft] = useState(value);

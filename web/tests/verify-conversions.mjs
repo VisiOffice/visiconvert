@@ -8,6 +8,7 @@ export async function verifyConversions({page,api,artifactDir}) {
   const booking={external_id:'ads-browser-booking',amount_minor:12345,currency:'USD',status:'booked',revision:1};
   assert.equal((await api(`/inquiries/${inquiry.id}/outcomes`,booking,'PUT')).status,200);
   await page.getByRole('button',{name:'Conversions',exact:true}).click();
+  await page.getByText('Advanced destination settings',{exact:true}).click();
   await page.getByLabel('Google Ads customer ID').fill('1234567890');
   await page.getByLabel('Qualified inquiry action ID').fill('123');
   await page.getByLabel('Booking action ID').fill('456');
