@@ -10,6 +10,14 @@ pub enum Error {
     #[error("Google authorization expired or was revoked. Reconnect Google.")]
     Credentials,
     #[error(
+        "A VisiConvert action already exists but its configuration changed or it was removed. Review it in Google Ads or use existing actions; no replacement was created."
+    )]
+    ActionConflict,
+    #[error(
+        "Google action creation could not be confirmed. Retry setup to recover any actions already created; do not create replacements manually."
+    )]
+    CreationUncertain,
+    #[error(
         "Google did not grant both required permissions. Reconnect and allow Google Ads and Data Manager access."
     )]
     Scope,
@@ -129,6 +137,18 @@ impl Client {
                 Some("invalid_client" | "redirect_uri_mismatch") => Error::Configuration,
                 _ => Error::Scope,
             }),
+            400 if value["error"]["details"].as_array().is_some_and(|details| {
+                details.iter().any(|d| {
+                    d["errors"].as_array().is_some_and(|errors| {
+                        errors
+                            .iter()
+                            .any(|e| e["errorCode"]["conversionActionError"] == "DUPLICATE_NAME")
+                    })
+                })
+            }) =>
+            {
+                Err(Error::CreationUncertain)
+            }
             400 => Err(Error::Access),
             _ => Err(Error::Response),
         }
@@ -278,6 +298,27 @@ impl Client {
         login: &str,
         customer: &str,
     ) -> Result<(Value, Vec<Action>, bool), Error> {
+        self.actions_matching(token, login, customer, &[]).await
+    }
+    pub async fn selected_actions(
+        &self,
+        token: &str,
+        login: &str,
+        customer: &str,
+        ids: &[&str],
+    ) -> Result<(Value, Vec<Action>, bool), Error> {
+        if ids.is_empty() || ids.len() > 2 || ids.iter().any(|id| !action_id(id)) {
+            return Err(Error::Access);
+        }
+        self.actions_matching(token, login, customer, ids).await
+    }
+    async fn actions_matching(
+        &self,
+        token: &str,
+        login: &str,
+        customer: &str,
+        ids: &[&str],
+    ) -> Result<(Value, Vec<Action>, bool), Error> {
         let (rows,_)=self.search(token,login,customer,"SELECT customer.id, customer.descriptive_name, customer.manager, customer.status, customer.currency_code, customer.time_zone, customer.conversion_tracking_setting.google_ads_conversion_customer FROM customer LIMIT 1").await?;
         let c = rows
             .first()
@@ -293,7 +334,15 @@ impl Client {
             .strip_prefix("customers/")
             .unwrap_or("");
         let account = json!({"id":customer,"name":c["descriptiveName"],"status":c["status"],"currency":c["currencyCode"],"time_zone":c["timeZone"],"conversion_owner":owner});
-        let (rows,more)=self.search(token,login,customer,"SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.owner_customer, conversion_action.primary_for_goal, conversion_action.click_through_lookback_window_days FROM conversion_action ORDER BY conversion_action.id LIMIT 201").await?;
+        let filter = if ids.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE conversion_action.id IN ({})", ids.join(","))
+        };
+        let query = format!(
+            "SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.owner_customer, conversion_action.primary_for_goal, conversion_action.click_through_lookback_window_days FROM conversion_action{filter} ORDER BY conversion_action.id LIMIT 201"
+        );
+        let (rows, more) = self.search(token, login, customer, &query).await?;
         let actions = rows
             .iter()
             .map(|r| {
@@ -322,6 +371,102 @@ impl Client {
             })
             .collect::<Result<_, _>>()?;
         Ok((account, actions, more))
+    }
+    /// Exact lookup avoids the 200-action discovery cap. Names are generated from
+    /// a workspace UUID, never from user input. Google enforces unique names.
+    pub async fn setup_action(
+        &self,
+        token: &str,
+        login: &str,
+        customer: &str,
+        name: &str,
+        known_id: Option<&str>,
+        kind: &str,
+        currency: &str,
+    ) -> Result<String, Error> {
+        if !customer_id(customer)
+            || !customer_id(login)
+            || !matches!(kind, "qualified" | "booking")
+            || currency.len() != 3
+            || !currency.bytes().all(|b| b.is_ascii_uppercase())
+            || name.len() > 100
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b" -()".contains(&b))
+            || known_id.is_some_and(|id| !action_id(id))
+        {
+            return Err(Error::Response);
+        }
+        let filter = match known_id {
+            Some(id) => format!("conversion_action.id = {id}"),
+            None => format!("conversion_action.name = '{name}'"),
+        };
+        let query = format!(
+            "SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.status, conversion_action.owner_customer, conversion_action.category, conversion_action.counting_type, conversion_action.value_settings.default_value, conversion_action.value_settings.default_currency_code, conversion_action.value_settings.always_use_default_value FROM conversion_action WHERE {filter} AND conversion_action.status IN ('ENABLED', 'HIDDEN', 'REMOVED') LIMIT 2"
+        );
+        let (rows, more) = self.search(token, login, customer, &query).await?;
+        let category = if kind == "qualified" {
+            "QUALIFIED_LEAD"
+        } else {
+            "PURCHASE"
+        };
+        let count = if kind == "qualified" {
+            "ONE_PER_CLICK"
+        } else {
+            "MANY_PER_CLICK"
+        };
+        if more || rows.len() > 1 {
+            return Err(Error::ActionConflict);
+        }
+        if let Some(row) = rows.first() {
+            let v = &row["conversionAction"];
+            let id = v["id"]
+                .as_str()
+                .filter(|id| action_id(id))
+                .ok_or(Error::Response)?;
+            let value = &v["valueSettings"];
+            if v["type"] != "UPLOAD_CLICKS"
+                || v["status"] != "ENABLED"
+                || v["ownerCustomer"] != format!("customers/{customer}")
+                || v["category"] != category
+                || v["countingType"] != count
+                || value["alwaysUseDefaultValue"].as_bool().unwrap_or(false)
+                    != (kind == "qualified")
+                || value["defaultValue"].as_f64().unwrap_or(0.0) != 0.0
+                || value["defaultCurrencyCode"] != currency
+            {
+                return Err(Error::ActionConflict);
+            }
+            return Ok(id.into());
+        }
+        if known_id.is_some() {
+            return Err(Error::ActionConflict);
+        }
+        let value = self.response(self.http
+            .post(format!("{}/customers/{customer}/conversionActions:mutate", self.ads))
+            .bearer_auth(token).header("login-customer-id", login)
+            .json(&json!({"partialFailure":false,"validateOnly":false,"operations":[{"create":{
+                "name":name,"type":"UPLOAD_CLICKS","status":"ENABLED","category":category,
+                "countingType":count,"primaryForGoal":false,"clickThroughLookbackWindowDays":90,
+                "valueSettings":{"defaultValue":0,"defaultCurrencyCode":currency,"alwaysUseDefaultValue":kind=="qualified"}
+            }}]})), false).await.map_err(|e| match e {
+                Error::Credentials | Error::Access => e,
+                _ => Error::CreationUncertain,
+            })?;
+        if value.get("partialFailureError").is_some() {
+            return Err(Error::CreationUncertain);
+        }
+        let rows = value["results"]
+            .as_array()
+            .filter(|r| r.len() == 1)
+            .ok_or(Error::CreationUncertain)?;
+        let prefix = format!("customers/{customer}/conversionActions/");
+        let id = rows[0]["resourceName"]
+            .as_str()
+            .and_then(|s| s.strip_prefix(&prefix))
+            .filter(|id| action_id(id))
+            .ok_or(Error::CreationUncertain)?;
+        Ok(id.into())
     }
 }
 

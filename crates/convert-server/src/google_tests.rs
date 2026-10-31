@@ -14,6 +14,10 @@ pub(super) struct Provider {
     pub(super) deliveries: Mutex<Vec<Value>>,
     pub(super) delivery_http: AtomicUsize,
     pub(super) processing: AtomicBool,
+    setup_actions: Mutex<Vec<Value>>,
+    setup_lost_response: AtomicBool,
+    setup_deny_booking: AtomicBool,
+    setup_other_owner: AtomicBool,
     challenge: Mutex<String>,
     exchanges: AtomicUsize,
     deny: AtomicBool,
@@ -78,6 +82,56 @@ async fn provider(
     if uri.path() == "/v26/customers:listAccessibleCustomers" {
         return Json(json!({"resourceNames":["customers/1234567890"]})).into_response();
     }
+    if uri.path().ends_with("/conversionActions:mutate") {
+        assert_eq!(headers["login-customer-id"], "1234567890");
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["partialFailure"], false);
+        assert_eq!(v["validateOnly"], false);
+        assert_eq!(v["operations"].as_array().unwrap().len(), 1);
+        let mut action = v["operations"][0]["create"].clone();
+        assert_eq!(action["type"], "UPLOAD_CLICKS");
+        assert_eq!(action["primaryForGoal"], false);
+        assert_eq!(action["clickThroughLookbackWindowDays"], 90);
+        assert_eq!(action["valueSettings"]["defaultCurrencyCode"], "USD");
+        let qualified = action["category"] == "QUALIFIED_LEAD";
+        assert_eq!(
+            action["countingType"],
+            if qualified {
+                "ONE_PER_CLICK"
+            } else {
+                "MANY_PER_CLICK"
+            }
+        );
+        assert_eq!(action["valueSettings"]["alwaysUseDefaultValue"], qualified);
+        assert_eq!(action["valueSettings"]["defaultValue"], 0);
+        if !qualified && p.setup_deny_booking.load(Ordering::SeqCst) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error":"PRIVATE_PROVIDER_ERROR"})),
+            )
+                .into_response();
+        }
+        let mut actions = p.setup_actions.lock().unwrap();
+        if actions.iter().any(|a| a["name"] == action["name"]) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":{"details":[{"errors":[{"errorCode":{"conversionActionError":"DUPLICATE_NAME"}}]}]}})),
+            )
+                .into_response();
+        }
+        let id = (1000 + actions.len()).to_string();
+        action["id"] = json!(id);
+        action["ownerCustomer"] = json!("customers/1234567890");
+        actions.push(action);
+        if p.setup_lost_response.swap(false, Ordering::SeqCst) {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error":"PRIVATE_PROVIDER_ERROR"})),
+            )
+                .into_response();
+        }
+        return Json(json!({"results":[{"resourceName":format!("customers/1234567890/conversionActions/{id}")}]})).into_response();
+    }
     assert!(
         uri.path().ends_with("/googleAds:search"),
         "Unexpected Google endpoint"
@@ -89,16 +143,52 @@ async fn provider(
         return Json(json!({"results":[{"customerClient":{"id":"1234567890","descriptiveName":"Google test account","manager":false,"status":"ENABLED"}}]})).into_response();
     }
     if query.contains("FROM customer LIMIT") {
-        return Json(json!({"results":[{"customer":{"id":"1234567890","descriptiveName":"Google test account","manager":false,"status":"ENABLED","currencyCode":"USD","timeZone":"America/Chicago","conversionTrackingSetting":{"googleAdsConversionCustomer":"customers/1234567890"}}}]})).into_response();
+        return Json(json!({"results":[{"customer":{"id":"1234567890","descriptiveName":"Google test account","manager":false,"status":"ENABLED","currencyCode":"USD","timeZone":"America/Chicago","conversionTrackingSetting":{"googleAdsConversionCustomer":if p.setup_other_owner.load(Ordering::SeqCst) {"customers/9999999999"} else {"customers/1234567890"}}}}]})).into_response();
     }
     assert!(query.contains("FROM conversion_action"));
-    Json(json!({"results":[
+    if query.contains(" WHERE ") && !query.contains("conversion_action.id IN (") {
+        let actions = p.setup_actions.lock().unwrap();
+        let rows: Vec<_> = actions
+            .iter()
+            .filter(|a| {
+                query.contains(&format!(
+                    "conversion_action.name = '{}'",
+                    a["name"].as_str().unwrap()
+                )) || query.contains(&format!(
+                    "conversion_action.id = {} ",
+                    a["id"].as_str().unwrap()
+                ))
+            })
+            .map(|a| json!({"conversionAction":a}))
+            .collect();
+        return Json(json!({"results":rows})).into_response();
+    }
+
+    let mut response = json!({"results":[
         {"conversionAction":{"id":"123","name":"Qualified","status":"ENABLED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/1234567890","primaryForGoal":false,"clickThroughLookbackWindowDays":30}},
         {"conversionAction":{"id":"456","name":"Booked","status":"ENABLED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/1234567890","primaryForGoal":true,"clickThroughLookbackWindowDays":30}},
         {"conversionAction":{"id":"789","name":"Wrong owner","status":"ENABLED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/9999999999"}},
         {"conversionAction":{"id":"987","name":"Wrong type","status":"ENABLED","type":"WEBPAGE","ownerCustomer":"customers/1234567890"}},
         {"conversionAction":{"id":"654","name":"Removed","status":"REMOVED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/1234567890"}}
-    ]})).into_response()
+    ]});
+    response["results"].as_array_mut().unwrap().extend(
+        p.setup_actions
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|a| json!({"conversionAction":a})),
+    );
+    if let Some(ids) = query
+        .split("conversion_action.id IN (")
+        .nth(1)
+        .and_then(|v| v.split(')').next())
+    {
+        response["results"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|r| ids.split(',').any(|id| r["conversionAction"]["id"] == id));
+    }
+    Json(response).into_response()
 }
 async fn request(
     app: Shared,
@@ -694,6 +784,240 @@ async fn google_discovery_validation_staleness_and_provider_errors() {
             .unwrap()
             .iter()
             .all(|s| !s.contains("ingest") && !s.contains("mutate"))
+    );
+    task.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn google_action_creation_recovery_and_mapping_guards() {
+    let (a, p, task) = fixture().await;
+    let path = "/api/connections/google/actions/create";
+    let key = &a.api_key;
+    let (state, cookie) = begin(a.clone(), &p, key, 0).await;
+    assert!(
+        callback(a.clone(), &state, &cookie, "ok")
+            .await
+            .ends_with("connected")
+    );
+    let mut input = json!({"revision":1,"settings_version":0,"login":"1234567890","customer":"1234567890","qualified":true,"booking":true});
+    // No authorization, invalid/stale request, or foreign conversion owner may mutate Google.
+    assert_ne!(
+        api(a.clone(), "POST", path, "wrong", input.clone()).await.0,
+        StatusCode::OK
+    );
+    for (field, value) in [
+        ("revision", json!(0)),
+        ("settings_version", json!(1)),
+        ("customer", json!("x'")),
+        ("login", json!("9999999999")),
+    ] {
+        let mut bad = input.clone();
+        bad[field] = value;
+        assert_ne!(
+            api(a.clone(), "POST", path, key, bad).await.0,
+            StatusCode::OK
+        );
+    }
+    p.setup_other_owner.store(true, Ordering::SeqCst);
+    assert_eq!(
+        api(a.clone(), "POST", path, key, input.clone()).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    p.setup_other_owner.store(false, Ordering::SeqCst);
+    assert!(p.setup_actions.lock().unwrap().is_empty());
+    // Google commits, but its response is lost. Retry finds the exact name.
+    p.setup_lost_response.store(true, Ordering::SeqCst);
+    assert_ne!(
+        api(a.clone(), "POST", path, key, input.clone()).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(p.setup_actions.lock().unwrap().len(), 1);
+    assert_eq!(
+        a.store.google_conversion_settings().await.unwrap().version,
+        0
+    );
+    // The recovered first action survives a failure on the second action.
+    p.setup_deny_booking.store(true, Ordering::SeqCst);
+    assert_ne!(
+        api(a.clone(), "POST", path, key, input.clone()).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        a.store
+            .created_google_action("1234567890", "qualified")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("1000")
+    );
+    assert_eq!(
+        a.store.google_conversion_settings().await.unwrap().version,
+        0
+    );
+    p.setup_deny_booking.store(false, Ordering::SeqCst);
+    let (code, result) = api(a.clone(), "POST", path, key, input.clone()).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["qualified_action_id"], "1000");
+    assert_eq!(result["booking_action_id"], "1001");
+    assert_eq!(p.setup_actions.lock().unwrap().len(), 2);
+    assert_eq!(a.store.delivery_settings().await.unwrap()["enabled"], false);
+    assert!(p.deliveries.lock().unwrap().is_empty());
+    let (checked, report) = api(
+        a.clone(),
+        "POST",
+        "/api/connections/google/validate",
+        key,
+        json!({"revision":1,"settings_version":1,"login":"1234567890"}),
+    )
+    .await;
+    assert_eq!(checked, StatusCode::OK);
+    assert_eq!(report["valid"], true, "{report}");
+    // Stale browser cannot overwrite mappings or create anything else.
+    assert_eq!(
+        api(a.clone(), "POST", path, key, input.clone()).await.0,
+        StatusCode::CONFLICT
+    );
+    // Known ID survives rename and changes to bidding preference without modifying Google.
+    p.setup_actions.lock().unwrap()[0]["name"] = json!("Renamed in Google Ads");
+    p.setup_actions.lock().unwrap()[0]["primaryForGoal"] = json!(true);
+    input["settings_version"] = json!(1);
+    assert_eq!(
+        api(a.clone(), "POST", path, key, input.clone()).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(p.setup_actions.lock().unwrap().len(), 2);
+    assert_eq!(p.setup_actions.lock().unwrap()[0]["primaryForGoal"], true);
+    input["settings_version"] = json!(2);
+    // Never recreate removed actions or silently accept wrong money/count semantics.
+    for (field, value) in [
+        ("status", json!("REMOVED")),
+        ("countingType", json!("MANY_PER_CLICK")),
+        ("category", json!("PURCHASE")),
+    ] {
+        let old = p.setup_actions.lock().unwrap()[0][field].clone();
+        p.setup_actions.lock().unwrap()[0][field] = value;
+        assert_ne!(
+            api(a.clone(), "POST", path, key, input.clone()).await.0,
+            StatusCode::OK
+        );
+        p.setup_actions.lock().unwrap()[0][field] = old;
+        assert_eq!(
+            a.store.google_conversion_settings().await.unwrap().version,
+            2
+        );
+    }
+    // Choosing only one outcome clears the other mapping, but never deletes it in Google.
+    input["qualified"] = json!(false);
+    assert_eq!(
+        api(a.clone(), "POST", path, key, input.clone()).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        a.store
+            .google_conversion_settings()
+            .await
+            .unwrap()
+            .qualified_action_id,
+        ""
+    );
+    assert_eq!(p.setup_actions.lock().unwrap().len(), 2);
+    // A reconnect reuses the same receipts, rather than resetting action identities.
+    a.store.disconnect_google(1, "operator").await.unwrap();
+    let (state, cookie) = begin(a.clone(), &p, key, 2).await;
+    assert!(
+        callback(a.clone(), &state, &cookie, "ok")
+            .await
+            .ends_with("connected")
+    );
+    input["revision"] = json!(3);
+    input["settings_version"] = json!(3);
+    assert_eq!(
+        api(a.clone(), "POST", path, key, input.clone()).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(p.setup_actions.lock().unwrap().len(), 2);
+    // Two simultaneous clicks cannot create extra actions or silently overwrite each other.
+    input["settings_version"] = json!(4);
+    let (x, y) = tokio::join!(
+        api(a.clone(), "POST", path, key, input.clone()),
+        api(a.clone(), "POST", path, key, input.clone())
+    );
+    assert!([x.0, y.0].contains(&StatusCode::OK));
+    assert!([x.0, y.0].contains(&StatusCode::CONFLICT));
+    assert_eq!(p.setup_actions.lock().unwrap().len(), 2);
+    task.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn google_action_creation_hosted_isolation_and_owner_only() {
+    let (a, p, task) = fixture().await;
+    let path = "/api/connections/google/actions/create";
+    let mut identities = Vec::new();
+    for _ in 0..2 {
+        let store = Store {
+            pool: a.store.pool.clone(),
+            workspace: Uuid::new_v4(),
+        };
+        let (key, user) = hosted_token(&store).await;
+        let (state, cookie) = begin(a.clone(), &p, &key, 0).await;
+        assert!(
+            callback(a.clone(), &state, &cookie, "ok")
+                .await
+                .ends_with("connected")
+        );
+        let input = json!({"revision":1,"settings_version":0,"login":"1234567890","customer":"1234567890","qualified":true,"booking":false});
+        // Race two initial creates, not just two requests reusing saved IDs.
+        let (left, right) = tokio::join!(
+            api(a.clone(), "POST", path, &key, input.clone()),
+            api(a.clone(), "POST", path, &key, input.clone())
+        );
+        let (code, value) = if left.0 == StatusCode::OK {
+            left
+        } else {
+            right
+        };
+        assert_eq!(code, StatusCode::OK, "{value}");
+        identities.push(value["qualified_action_id"].clone());
+        // Public scoped credentials (even write-capable) cannot access owner controls.
+        let minted = store
+            .issue_api_key(
+                &convert_store::api_keys::KeyInput {
+                    name: "Test".into(),
+                    scopes: vec!["read".into(), "setup:write".into()],
+                    expires_at: None,
+                },
+                Some(&hosted::digest(&key)),
+                None,
+            )
+            .await
+            .unwrap();
+        let public = minted["secret"].as_str().unwrap();
+        assert_ne!(
+            api(a.clone(), "POST", path, public, input.clone()).await.0,
+            StatusCode::OK
+        );
+        sqlx::query(
+            "UPDATE hosted_memberships SET enabled=false WHERE workspace_id=$1 AND user_id=$2",
+        )
+        .bind(store.workspace)
+        .bind(user)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        assert!(
+            api(a.clone(), "POST", path, &key, input)
+                .await
+                .0
+                .is_client_error()
+        );
+    }
+    assert_ne!(identities[0], identities[1]);
+    assert_eq!(p.setup_actions.lock().unwrap().len(), 2);
+    assert_eq!(
+        a.store.google_conversion_settings().await.unwrap().version,
+        0
     );
     task.abort();
 }

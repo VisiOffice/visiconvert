@@ -2,7 +2,7 @@
 
 This shared Rust/Vite feature works in hosted and self-hosted workspaces. It adds
 OAuth, read-only Google Ads account/action discovery and validation of saved
-conversion destinations. Connecting alone uploads no conversions and changes no account, campaign, action
+conversion destinations, plus explicit creation of workspace-specific import actions. Connecting alone uploads no conversions and changes no account, campaign, action
 or billing settings. [Reviewed delivery](CONVERSIONS.md) is a separate opt-in. Live Google configuration and
 acceptance remain separate from automated verification using a test provider.
 
@@ -42,11 +42,11 @@ installer preserves destination OAuth settings rather than silently importing th
 
 Google consent configuration needs both scopes:
 
-- `https://www.googleapis.com/auth/adwords` for account/action discovery.
+- `https://www.googleapis.com/auth/adwords` for account/action discovery and action creation.
 - `https://www.googleapis.com/auth/datamanager` for event validation, delivery and receipt checks.
 
-Google exposes broad OAuth scopes even though this implementation uses only
-read-only Ads methods. The app has no ingestion or mutation client method.
+Google Ads mutations are limited to owner-requested conversion action creation.
+Event validation and sending use the separate reviewed Data Manager delivery flow.
 Google Cloud production API access and OAuth verification are provider-side setup
 requirements. Testing-mode consent apps may restrict users and refresh-token
 lifetime. As of October 2026, Google Ads API access is associated with the Cloud
@@ -54,28 +54,34 @@ project; this implementation does not send a developer token.
 
 ## Workspace workflow
 
-1. Open **Conversions → Connect Google Ads** and allow the consent popup.
-2. Grant both requested permissions. The popup returns to VisiConvert; the main
-   workspace retains its in-memory credential. If your browser isolates popups,
-   use **Refresh Google connection** after returning.
-3. Choose **Browse Google Ads**, then a directly accessible account that provides
-   access. Choose an advertising account from its hierarchy or enter its ID.
-4. **Load conversion actions**. Enabled `UPLOAD_CLICKS` actions owned by the
-   selected account are selectable. Other types, removed actions and actions
-   owned elsewhere are shown but disabled. For cross-account tracking, select the
-   conversion-owning account as the destination.
-5. Map qualification and/or bookings to distinct actions, then choose **Use
-   selected actions**. Existing manual destination entry remains available.
-6. **Validate saved destination** checks the saved settings against Google again.
-   It records the account, selected actions, primary/secondary flags, lookback
-   windows, settings revision and check time. Changes to settings or credentials
-   invalidate the check. Validation requests clear a previous result before I/O,
-   so failed reauthorization never leaves an old success displayed as current.
+1. Open **Conversions → Sign in with Google** and allow the consent popup.
+2. Grant both requested permissions. If your browser isolates the popup, return
+   and use **Refresh Google connection**.
+3. Account selection opens automatically. Choose an access account if prompted,
+   then choose the advertising account by name and ID. For cross-account
+   conversion tracking, choose the account that owns the actions.
+4. Select qualified leads, bookings, or both and choose **Create conversion
+   actions**. Qualified leads count once per click with zero value; bookings count
+   each booking with its recorded value. New actions use a 90-day click window
+   and secondary status. Choose your bidding outcome in Google Ads after delivery
+   verification. Campaign goals and existing action bidding settings are untouched.
+5. Alternatively, expand **Use existing actions (advanced)**, map distinct enabled
+   import actions, and choose **Save conversion actions**. Creating actions
+   replaces saved mappings with the selected outcomes; unselected outcomes are
+   unmapped. Existing Google actions are not deleted.
+6. **Check saved connection** verifies the saved IDs directly, even if they fall
+   outside the first page of discovery results. Changes to settings or credentials
+   invalidate the check. A failed check cannot leave an old success current.
 
-Discovery shows up to 200 accounts/actions with an explicit truncation indicator.
-The access-account list is capped at 1000. This initial validation checks the
-first 200 actions; an action outside that list is not marked valid. It does not
-silently treat truncated discovery as complete.
+Discovery shows up to 200 accounts/actions with a truncation indicator; the
+access-account list is capped at 1000. Manual destination IDs remain available
+under **Advanced destination settings**.
+
+Creation uses stable workspace-specific names and stores provider IDs separately
+from destination mappings. Retries recover partial setup; renamed saved actions
+and OAuth reconnects reuse the same IDs. Removed or incompatible actions require
+review instead of automatic replacement. If a response is lost, retry with the
+same account and outcomes. This operation does not enable delivery or queue events.
 
 “Checks passed” means the account is readable and the selected actions are enabled
 import actions owned by that account. It does **not** prove Data Manager upload
@@ -113,15 +119,18 @@ and destination checks appear in conversion history without secrets.
 - `GET /api/connections/google/accounts`: directly accessible login account IDs.
 - `GET /api/connections/google/accounts?login=ID`: bounded account hierarchy.
 - `GET /api/connections/google/actions?login=ID&customer=ID`: action metadata.
+- `POST /api/connections/google/actions/create`: `{revision,settings_version,login,customer,qualified,booking}`; at least one outcome required. See [creation and retry semantics](CONVERSIONS.md#api).
 - `POST /api/connections/google/validate`: `{revision,settings_version,login}`.
 - `DELETE /api/connections/google`: `{revision}`; removes local credentials.
 
-Migration `0010_google_connection.sql` is additive; existing Twilio connections,
+Migrations `0010_google_connection.sql` and `0021_google_action_setup.sql` are additive; existing Twilio connections,
 conversion preparations and API keys are unchanged. Rails needs no new endpoint.
 
-Provider references checked October 23, 2026:
+Provider references checked October 31, 2026:
 - [Google web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server)
 - [Google Ads REST account discovery](https://developers.google.com/google-ads/api/rest/common/others)
 - [Conversion action fields](https://developers.google.com/google-ads/api/fields/v26/conversion_action)
 - [Google Cloud API access](https://developers.google.com/google-ads/api/docs/api-policy/developer-token)
 - [Data Manager API access](https://developers.google.com/data-manager/api/devguides/quickstart/set-up-access)
+
+- [Create and configure conversion actions](https://developers.google.com/google-ads/api/docs/conversions/getting-started)

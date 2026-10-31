@@ -1279,3 +1279,10 @@ footer button {
 .google-account-setup p { margin: 0; }
 .google-account-setup .form-field p { margin: 6px 0 10px; }
 .google-account-setup details > summary { cursor: pointer; }
+
+.google-create-actions { display: grid; gap: 14px; padding: 20px; border: 1px solid var(--border, #dce3d8); border-radius: 8px; }
+.google-create-actions p { margin: 0; }
+.google-create-actions > button { justify-self: start; }
+.google-create-actions .checkbox-row { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px; }
+.google-create-actions input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 auto; }
+.google-existing-actions > .site-form { margin-top: 16px; }
