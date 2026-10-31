@@ -1274,3 +1274,8 @@ footer button {
 .managed-usage-period dl { display: grid; gap: 8px; margin: 0; }
 .managed-usage-period dl > div { display: flex; justify-content: space-between; gap: 16px; }
 .managed-usage-period dd { margin: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.google-account-setup h3 { margin: 8px 0 0; font-size: 17px; }
+.google-account-setup p { margin: 0; }
+.google-account-setup .form-field p { margin: 6px 0 10px; }
+.google-account-setup details > summary { cursor: pointer; }

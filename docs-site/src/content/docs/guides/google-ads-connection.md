@@ -8,7 +8,7 @@ and self-hosted workspaces. Connecting alone uploads nothing. Use [reviewed deli
 
 ## Connect
 
-Open **Conversions → Connect Google Ads**. Allow the popup and grant Google Ads
+Open **Conversions → Sign in with Google**. Allow the popup and grant Google Ads
 and Data Manager permissions. Your workspace stays open while Google asks for
 consent. If your browser isolates the popup, return to VisiConvert and choose
 **Refresh Google connection**.
@@ -18,12 +18,21 @@ keys, the CLI and MCP do not manage provider credentials.
 
 ## Choose and check actions
 
-1. Choose **Browse Google Ads**, then the account that gives you access. This can
-   be a manager account.
-2. Select or enter the advertising account ID, then **Load conversion actions**.
+1. After Google sign-in, account selection opens automatically. If there is more
+   than one access account, choose the Google Ads account or manager account that
+   provides access to your business.
+2. Choose the **Advertising account** by name and ID. Conversion actions load
+   automatically. Google may use your legal business name rather than your site
+   or VisiConvert workspace name. If the account is missing, expand **Can’t find
+   your account? Enter its ID**.
 3. Select separate qualification and booking actions, or map just one stage.
    Only enabled import actions owned by this account are selectable.
-4. Choose **Use selected actions**, then **Validate saved destination**.
+4. Choose **Save conversion actions**, then **Check saved connection**. These steps
+   leave delivery unchanged and do not queue conversions.
+
+Reopening setup restores saved mappings when the account is found. Use
+**Refresh Google Ads accounts** to retry discovery or pick up access changes.
+Manual destination IDs are available under **Advanced destination settings**.
 
 For cross-account tracking, use the account that owns the conversion actions.
 The UI shows the owning account when Google returns it. Discovery lists are
@@ -32,8 +41,8 @@ limited to 200 entries and show when results are truncated.
 A successful check confirms readable account access and compatible enabled import
 actions at the displayed time. It does not prove upload permission, event
 acceptance or ad attribution. Changing the destination or reconnecting Google
-invalidates the check. Uploaded conversion corrections and delivery diagnostics
-belong to the next release.
+invalidates the check. See [reviewed delivery](/guides/google-ads-preparation/) for event validation,
+receipts and supported value corrections.
 
 ## Self-hosted setup
 
