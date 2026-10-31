@@ -185,3 +185,34 @@ impl Store {
         Ok(())
     }
 }
+
+impl Store {
+    pub async fn created_google_action(
+        &self,
+        customer: &str,
+        kind: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar("SELECT action_id FROM google_created_actions WHERE workspace_id=$1 AND customer_id=$2 AND kind=$3")
+            .bind(self.workspace).bind(customer).bind(kind).fetch_optional(&self.pool).await?)
+    }
+    // Save immediately after each provider response, even if the destination
+    // changes mid-request. This is a receipt, not permission to change settings.
+    pub async fn remember_google_action(
+        &self,
+        customer: &str,
+        kind: &str,
+        id: &str,
+        actor: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let r = sqlx::query("INSERT INTO google_created_actions(workspace_id,customer_id,kind,action_id) VALUES($1,$2,$3,$4) ON CONFLICT(workspace_id,customer_id,kind) DO UPDATE SET action_id=EXCLUDED.action_id WHERE google_created_actions.action_id=EXCLUDED.action_id")
+            .bind(self.workspace).bind(customer).bind(kind).bind(id).execute(&mut *tx).await?;
+        if r.rows_affected() != 1 {
+            return Err(Error::Conflict);
+        }
+        sqlx::query("INSERT INTO conversion_events(workspace_id,kind,actor,payload) VALUES($1,'google_action_confirmed',$2,$3)")
+            .bind(self.workspace).bind(actor).bind(json!({"customer_id":customer,"kind":kind,"action_id":id})).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}

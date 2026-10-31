@@ -34,6 +34,8 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 - Start from a workspace setup checklist or connect an agent through local MCP. Hosted installations with the paired [remote MCP release](docs/REMOTE_MCP.md) also support a connector URL with VisiConvert sign-in and workspace approval. Configure sites/DNI with scoped keys and inspect real tracker, form and call evidence.
 
+- Create or reuse workspace-specific Google Ads conversion actions from setup. New actions start as secondary; existing-action mapping remains available.
+
 - [Prepare Google Ads conversions](docs/CONVERSIONS.md) from qualified inquiries and bookings, with consent evidence and reviewed local staging. Explicitly validate and queue Google delivery, with durable receipts and bounded retries.
 
 - Connect Twilio or SignalWire per workspace with encrypted credentials and verified number ownership

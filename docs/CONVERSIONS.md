@@ -114,6 +114,19 @@ error bodies are never exposed in the UI or logs.
 
 All endpoints use existing private workspace authentication:
 
+- `POST /api/connections/google/actions/create`: Google connection `revision`,
+  `settings_version`, `login`, `customer`, and `qualified` / `booking` booleans.
+  Creates or recovers workspace-specific import actions and saves their mappings.
+  At least one outcome is required. Account ownership and current revisions are
+  checked before creation; settings use compare-and-swap after provider I/O.
+  Each confirmed provider ID is retained independently of the mapping save, so
+  retries recover partial setup. Names are stable per workspace/account/outcome;
+  Google's unique-name constraint protects concurrent or ambiguous creates.
+  Removed or incompatible actions require review, never automatic replacement.
+  New actions use secondary status, a 90-day click window, one-per-click qualified
+  leads (zero value), and every booking (uploaded value). Campaign goals and
+  delivery opt-in are untouched. Existing IDs are reused even after a rename or
+  OAuth reconnect. Only the workspace owner/self-hosted operator can invoke it.
 - `GET /api/conversions`: settings, candidates, frozen preparations, recent history, delivery settings and the latest 200 delivery records.
 - `PUT /api/conversions/settings`: customer/action IDs, inferred-call opt-in, version
   (zero on first save).

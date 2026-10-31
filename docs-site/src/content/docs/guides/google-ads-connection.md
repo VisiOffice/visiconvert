@@ -25,10 +25,28 @@ keys, the CLI and MCP do not manage provider credentials.
    automatically. Google may use your legal business name rather than your site
    or VisiConvert workspace name. If the account is missing, expand **Can’t find
    your account? Enter its ID**.
-3. Select separate qualification and booking actions, or map just one stage.
-   Only enabled import actions owned by this account are selectable.
-4. Choose **Save conversion actions**, then **Check saved connection**. These steps
-   leave delivery unchanged and do not queue conversions.
+3. Choose **Qualified leads**, **Bookings**, or both, then **Create conversion
+   actions**. This creates enabled Google Ads import actions and saves their IDs.
+   Qualified leads count once per click with zero value; bookings count each
+   booking using its recorded value. Both use a 90-day click window.
+4. Choose **Check saved connection**. Delivery remains unchanged; setup never
+   queues conversions. New actions are **secondary (reporting only)**. After
+   verifying delivery, choose your bidding outcome and review campaign goals in
+   Google Ads. Setup does not change existing campaign goals or bidding settings.
+
+Names include the workspace ID so workspaces using the same Ads account stay
+separate. Repeating setup reuses actions instead of creating duplicates, including
+when Google's response was lost. Saved IDs survive renaming and disconnecting.
+If an action was removed or its configuration changed, setup stops for review
+instead of replacing it. Retry an interrupted setup with the same account and
+outcomes to finish saving any actions already created.
+
+To reuse legacy actions, expand **Use existing actions (advanced)**, select enabled
+import actions owned by the account, and choose **Save conversion actions**.
+Do not send the same outcome through both your old uploader and VisiConvert.
+Creating actions replaces the saved mappings with the selected VisiConvert
+outcomes; unselected outcomes become unmapped. Existing Google actions are never
+deleted. Changing mappings invalidates previous destination and delivery checks.
 
 Reopening setup restores saved mappings when the account is found. Use
 **Refresh Google Ads accounts** to retry discovery or pick up access changes.

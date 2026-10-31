@@ -1,4 +1,4 @@
-//! Owner-only Google OAuth and read-only destination verification.
+//! Owner-only Google OAuth, action setup and destination verification.
 use super::*;
 use axum::{extract::Query, http::header, response::Redirect};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -100,6 +100,7 @@ impl From<google_api::Error> for ApiError {
     fn from(e: google_api::Error) -> Self {
         Self(
             match e {
+                google_api::Error::ActionConflict => StatusCode::CONFLICT,
                 google_api::Error::Credentials
                 | google_api::Error::Scope
                 | google_api::Error::Access => StatusCode::BAD_REQUEST,
@@ -115,6 +116,7 @@ pub fn routes() -> Router<Shared> {
         .route("/connections/google/start", post(start))
         .route("/connections/google/accounts", get(accounts))
         .route("/connections/google/actions", get(actions))
+        .route("/connections/google/actions/create", post(create_actions))
         .route("/connections/google/validate", post(validate))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
@@ -427,8 +429,13 @@ async fn validate(
         if !a.google_client.logins(&token).await?.contains(&input.login) {
             return Err(google_api::Error::Access);
         }
+        let ids: Vec<&str> = [&settings.qualified_action_id, &settings.booking_action_id]
+            .into_iter()
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
+            .collect();
         a.google_client
-            .actions(&token, &input.login, &settings.customer_id)
+            .selected_actions(&token, &input.login, &settings.customer_id, &ids)
             .await
     }
     .await;
@@ -481,4 +488,102 @@ async fn disconnect(
         .disconnect_google(input.revision, &actor)
         .await?;
     Ok(Json(json!({"ok":true})))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateActions {
+    revision: i64,
+    settings_version: i32,
+    login: String,
+    customer: String,
+    qualified: bool,
+    booking: bool,
+}
+async fn create_actions(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+    Json(input): Json<CreateActions>,
+) -> Api<Value> {
+    owner(&access).await?;
+    if !google_api::customer_id(&input.customer)
+        || !google_api::customer_id(&input.login)
+        || (!input.qualified && !input.booking)
+    {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Choose an advertising account and at least one outcome.".into(),
+        ));
+    }
+    let (connection, token) = token(&a, &access).await?;
+    let mut settings = access.store.google_conversion_settings().await?;
+    if connection.revision != input.revision || settings.version != input.settings_version {
+        return Err(convert_store::Error::Conflict.into());
+    }
+    if !a.google_client.logins(&token).await?.contains(&input.login) {
+        return Err(google_api::Error::Access.into());
+    }
+    let (account, _, _) = a
+        .google_client
+        .actions(&token, &input.login, &input.customer)
+        .await?;
+    if account["status"] != "ENABLED" || account["conversion_owner"] != input.customer {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Choose the enabled Google Ads account that owns conversion tracking before creating actions.".into()));
+    }
+    let currency = account["currency"]
+        .as_str()
+        .ok_or(google_api::Error::Response)?;
+    let actor = access
+        .store
+        .inquiry_actor(access.session_hash.as_deref())
+        .await?;
+    let mut ids = Vec::new();
+    for (kind, selected, title) in [
+        ("qualified", input.qualified, "Qualified lead"),
+        ("booking", input.booking, "Booking"),
+    ] {
+        if !selected {
+            ids.push(String::new());
+            continue;
+        }
+        owner(&access).await?;
+        if access.store.google_connection().await?.revision != input.revision
+            || access.store.google_conversion_settings().await?.version != input.settings_version
+        {
+            return Err(convert_store::Error::Conflict.into());
+        }
+        let known = access
+            .store
+            .created_google_action(&input.customer, kind)
+            .await?;
+        let name = format!("VisiConvert - {title} ({})", access.store.workspace);
+        let id = a
+            .google_client
+            .setup_action(
+                &token,
+                &input.login,
+                &input.customer,
+                &name,
+                known.as_deref(),
+                kind,
+                currency,
+            )
+            .await?;
+        access
+            .store
+            .remember_google_action(&input.customer, kind, &id, &actor)
+            .await?;
+        ids.push(id);
+    }
+    settings.customer_id = input.customer;
+    settings.qualified_action_id = ids[0].clone();
+    settings.booking_action_id = ids[1].clone();
+    owner(&access).await?;
+    access
+        .store
+        .save_conversion_settings_checked(&settings, &actor, Some(input.revision))
+        .await?;
+    Ok(Json(
+        json!({"ok":true,"qualified_action_id":ids[0],"booking_action_id":ids[1]}),
+    ))
 }

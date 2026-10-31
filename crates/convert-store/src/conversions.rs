@@ -297,9 +297,25 @@ impl Store {
         )
     }
     pub async fn save_conversion_settings(&self, input: &Settings, actor: &str) -> Result<()> {
+        self.save_conversion_settings_checked(input, actor, None)
+            .await
+    }
+    pub async fn save_conversion_settings_checked(
+        &self,
+        input: &Settings,
+        actor: &str,
+        google_revision: Option<i64>,
+    ) -> Result<()> {
         input.validate()?;
         let mut tx = self.pool.begin().await?;
         self.lock_inquiry_writes(&mut tx).await?;
+        if let Some(revision) = google_revision {
+            let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM google_connections WHERE workspace_id=$1 AND revision=$2 AND encrypted_token IS NOT NULL)")
+                .bind(self.workspace).bind(revision).fetch_one(&mut *tx).await?;
+            if !valid {
+                return Err(Error::Conflict);
+            }
+        }
         let current = settings(&mut tx, self.workspace).await?;
         if input.version != current.version {
             return Err(Error::Conflict);

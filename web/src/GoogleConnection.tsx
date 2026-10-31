@@ -18,6 +18,8 @@ export function GoogleConnection({ api, settings, onChange }: { api: Client; set
   const [actions, setActions] = useState<Actions | null>(null);
   const [qualified, setQualified] = useState("");
   const [booking, setBooking] = useState("");
+  const [createQualified, setCreateQualified] = useState(true);
+  const [createBooking, setCreateBooking] = useState(true);
   const [moreAccounts, setMoreAccounts] = useState(false);
   const [busyCount, setBusyCount] = useState(0);
   const busy = busyCount > 0;
@@ -139,13 +141,32 @@ export function GoogleConnection({ api, settings, onChange }: { api: Client; set
         </>}
         {actions && <>
           <h3>Choose the outcomes to track</h3>
-          <p>Selected account: <strong>{actions.account.name || accountId(customer)}</strong> · {accountId(customer)}. Choose an existing import action for each outcome you want to send. Leave other outcomes unmapped.</p>
+          <p>Selected account: <strong>{actions.account.name || accountId(customer)}</strong> · {accountId(customer)}. Create actions for the outcomes you want to measure. VisiConvert will reuse actions it has already created for this workspace and account.</p>
           {actions.account.conversion_owner && actions.account.conversion_owner !== customer && <p className="notice">Conversion tracking is owned by {accountId(actions.account.conversion_owner)}. Choose that account above, or enter its ID, to select its actions.</p>}
+          <div className="google-create-actions">
+            <label className="checkbox-row"><input type="checkbox" checked={createQualified} disabled={busy} onChange={e => setCreateQualified(e.target.checked)} />Qualified leads</label>
+            <p className="muted">Counts one qualified lead per ad click, with no monetary value.</p>
+            <label className="checkbox-row"><input type="checkbox" checked={createBooking} disabled={busy} onChange={e => setCreateBooking(e.target.checked)} />Bookings</label>
+            <p className="muted">Counts each booking and uses its recorded value and currency.</p>
+            <p>New actions use a 90-day click window and start as <strong>secondary (reporting only)</strong>. After verifying delivery, choose your bidding outcome in Google Ads. Existing actions keep their current bidding setting.</p>
+            <p className="muted">Creates VisiConvert actions in Google Ads and saves your selection here. Sending conversions is a separate step.</p>
+            {settings.version > 0 && <p className="notice">This replaces your saved destination mappings with the selected VisiConvert actions. Unselected outcomes will be unmapped. Existing Google actions are not deleted.</p>}
+            <button className="primary" disabled={busy || (!createQualified && !createBooking) || actions.account.conversion_owner !== customer} onClick={() => void run(async () => {
+              const r = await api<{ qualified_action_id: string; booking_action_id: string }>("/connections/google/actions/create", { revision: status.revision, settings_version: settings.version, login, customer, qualified: createQualified, booking: createBooking });
+              await onChange();
+              await chooseCustomer(customer);
+              setQualified(r.qualified_action_id); setBooking(r.booking_action_id);
+              setNotice("Conversion actions created or reused and saved. Check the saved connection below. Delivery remains unchanged.");
+            })}>Create conversion actions</button>
+          </div>
+          <details className="google-existing-actions"><summary>Use existing actions (advanced)</summary><div className="site-form">
+            <p>Select an enabled import action for each outcome, leaving others unmapped. Use separate actions for leads and bookings.</p>
           {actions.has_more && <p>Showing the first 200 actions. Advanced destination settings below support other action IDs.</p>}
-          {([["google-qualified", "Qualification conversion action", qualified, setQualified], ["google-booking", "Booking conversion action", booking, setBooking]] as const).map(([id, title, value, setter]) => <div className="form-field" key={id}><label htmlFor={id}>{title}</label><select id={id} disabled={busy} value={value} onChange={e => setter(e.target.value)}><option value="">Not mapped</option>{value && !actions.actions.some(a => a.id === value) && <option value={value} disabled>Saved action {value} · unavailable</option>}{actions.actions.map(a => <option key={a.id} value={a.id} disabled={!a.eligible}>{a.name} · {a.id}{a.eligible ? (a.primary ? " · primary" : " · secondary") : ` · ${a.kind} / ${a.status} / owner ${a.owner}`}</option>)}</select></div>)}
-          {!actions.actions.some(a => a.eligible) && <p>No compatible conversion actions were found. Create an import conversion action in Google Ads, then refresh conversion actions here.</p>}
+          {([["google-qualified", "Qualification conversion action", qualified, setQualified], ["google-booking", "Booking conversion action", booking, setBooking]] as const).map(([id, title, value, setter]) => <div className="form-field" key={id}><label htmlFor={id}>{title}</label><select id={id} disabled={busy} value={value} onChange={e => setter(e.target.value)}><option value="">Not mapped</option>{value && !actions.actions.some(a => a.id === value) && <option value={value} disabled>Saved action {value} · not in this list</option>}{actions.actions.map(a => <option key={a.id} value={a.id} disabled={!a.eligible}>{a.name} · {a.id}{a.eligible ? (a.primary ? " · primary" : " · secondary") : ` · ${a.kind} / ${a.status} / owner ${a.owner}`}</option>)}</select></div>)}
+          {!actions.actions.some(a => a.eligible) && <p>No compatible existing actions were found. Use Create conversion actions above.</p>}
           {!!qualified && qualified === booking && <p className="error">Choose separate actions for qualification and bookings to avoid counting both as the same outcome.</p>}
           <div><button className="primary" disabled={busy || !validSelection || (!qualified && !booking) || (!!qualified && qualified === booking)} onClick={() => void run(async () => { await api("/conversions/settings", { ...settings, customer_id: customer, qualified_action_id: qualified, booking_action_id: booking }, "PUT"); await onChange(); setNotice("Conversion actions saved. Check the saved connection below to finish setup. Delivery remains unchanged."); })}>Save conversion actions</button></div>
+          </div></details>
         </>}
       </div>}
       {status.connected && settings.version > 0 && <div className="google-actions"><button className="secondary" disabled={busy || !login || !actions || !matchesSaved} onClick={() => void run(async () => { const r = await api<Check>("/connections/google/validate", { revision: status.revision, settings_version: settings.version, login }); setNotice(r.message); })}>Check saved connection</button><p className="muted">{matchesSaved && login && actions ? "Check account access and your saved conversion actions. This does not send conversions." : "Choose the saved advertising account and save any changes before checking the connection."}</p></div>}
