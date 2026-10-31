@@ -82,7 +82,7 @@ export function GoogleConnection({ api, settings, onChange }: { api: Client; set
   const validation = status?.validation?.settings_version === settings.version ? status.validation : null;
   return <section className="card site-panel google-connection">
     <div className="section-heading"><div><span className="eyebrow">GOOGLE CONNECTION</span><h2>Connect Google Ads</h2></div><button className="secondary" disabled={busy} onClick={() => void run(async () => { await refresh(); setNotice("Connection refreshed."); })}>Refresh Google connection</button></div>
-    <p className="muted">Connect to browse accounts and check conversion actions. Uploads remain disabled.</p>
+    <p className="muted">Connect to browse accounts and check conversion actions. Sending requires separate event validation and explicit queuing below.</p>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p className="notice" role="status">{notice}</p>}
     {!status ? <p>Loading Google connection…</p> : !status.configured ? <>
       <p>Google connection is not configured on this installation. Your administrator must add the Google OAuth application credentials and enable the Google Ads and Data Manager APIs.</p>

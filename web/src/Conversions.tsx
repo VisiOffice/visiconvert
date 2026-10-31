@@ -8,7 +8,8 @@ type Consent = { ad_user_data: Decision; ad_personalization: Decision; effective
 type Snapshot = { lead_id: string; inquiry_id: string; channel: string; source: string; event_at: string | null; visit_at: string | null; amount_minor: number | null; confidence: string; consent: Consent; transaction_id: string };
 type Candidate = { display_name: string; kind: string; entity_key: string; snapshot: Snapshot; fingerprint: string; eligible: boolean; reasons: string[]; job_version: number; job_state: string | null };
 type Job = { id: string; kind: string; entity_key: string; state: string; version: number; transaction_id: string; snapshot: Snapshot };
-type Preview = { settings: Settings; candidates: Candidate[]; jobs: Job[]; limit: number; history: { id: number; kind: string; actor: string; created_at: string }[] };
+type Delivery = { id: string; outbox_id: string; outbox_version: number; state: string; review_required: boolean; request_id: string | null; diagnostic: string | null; warnings: boolean; attempts: number; polls: number };
+type Preview = { delivery_settings: { enabled: boolean; version: number }; deliveries: Delivery[]; settings: Settings; candidates: Candidate[]; jobs: Job[]; limit: number; history: { id: number; kind: string; actor: string; created_at: string }[] };
 const identity = (c: { kind: string; entity_key: string }) => `${c.kind}:${c.entity_key}`;
 const date = (s: string | null) => s ? new Date(s).toLocaleString() : "Not recorded";
 export function Conversions({ api }: { api: Client }) {
@@ -27,11 +28,15 @@ export function Conversions({ api }: { api: Client }) {
   }
   const candidate = data?.candidates.find(c => identity(c) === selected) ?? data?.candidates[0];
   return <div className="conversion-layout">
-    <p className="notice"><strong>Uploads disabled.</strong> Connect Google to check accounts and actions. Staged conversions stay local and are never sent in this release.</p>
+    <p className="notice"><strong>Reviewed Google delivery.</strong> Staging stays local. Validating checks the event with Google without recording a conversion; queuing sends it. Microsoft delivery is not available yet.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {!data ? <p>Loading conversion preparation…</p> : <>
       <GoogleConnection api={api} settings={data.settings} onChange={refresh} />
+      <section className="card site-panel" aria-label="Google delivery controls">
+        <div className="section-heading"><div><span className="eyebrow">GOOGLE DELIVERY</span><h2>{data.delivery_settings.enabled ? "Delivery enabled" : "Delivery paused"}</h2></div><button className="secondary" disabled={busy} onClick={() => void mutate("/conversions/delivery/settings", { enabled: !data.delivery_settings.enabled, version: data.delivery_settings.version }, data.delivery_settings.enabled ? "Pending sends paused. Existing receipts can still be checked." : "Delivery enabled. Only explicitly queued events will be sent.", "PUT")}>{data.delivery_settings.enabled ? "Pause Google delivery" : "Enable reviewed delivery"}</button></div>
+        <p className="muted">Use one uploader per conversion action. Turn off any overlapping CRM uploads before queuing here. Changes to consent or bookings stop pending sends for review. Google Data Manager cannot retract an already sent conversion; canceled bookings and withdrawn consent require manual correction in Google.</p>
+      </section>
       <Mapping key={data.settings.version} value={data.settings} busy={busy} save={s => mutate("/conversions/settings", s, "Destination saved. Prepared events require review.", "PUT")} />
       <section className="card site-panel">
         <div className="section-heading"><div><span className="eyebrow">GOOGLE ADS</span><h2>Conversion preview</h2></div><button className="secondary" disabled={busy} onClick={() => { setError(""); void refresh().catch(e => setError(e.message)); }}>Refresh conversions</button></div>
@@ -53,7 +58,20 @@ export function Conversions({ api }: { api: Client }) {
           <strong>{label(j.kind)} · {j.entity_key}</strong><span className="badge">{label(j.state)}</span>
           <small>Stable transaction ID: <code>{j.transaction_id}</code></small>
           <details className="conversion-snapshot"><summary>Saved snapshot</summary><pre>{JSON.stringify(j.snapshot, null, 2)}</pre></details>
+          {j.state === "awaiting_connection" && !data.deliveries.some(d => d.outbox_id === j.id && d.outbox_version === j.version && !["needs_review", "validated"].includes(d.state)) && <button className="secondary" disabled={busy} onClick={() => void mutate(`/conversions/${j.id}/validate`, { version: j.version }, "Google event validation passed. No conversion was recorded. Review and queue when ready.")}>Validate event with Google</button>}
           {j.state !== "canceled" && <button className="secondary" disabled={busy} onClick={() => void mutate(`/conversions/${j.id}/cancel`, { version: j.version }, "Local preparation canceled.")}>Cancel preparation</button>}
+        </article>)}</div>}
+      </section>
+      <section className="card site-panel" aria-label="Google delivery history"><h2>Google delivery history</h2>
+        <p className="muted">Processed means Google processed this request; it does not prove ad attribution or inclusion in bidding reports. Warnings and uncertain outcomes need review using the saved request ID. An uncertain send is never automatically submitted again.</p>
+        {!data.deliveries.length ? <p>No events validated or sent yet.</p> : <div className="conversion-jobs">{data.deliveries.map(d => <article className="conversion-job" key={d.id}>
+          <strong>{label(d.state)}{d.review_required ? " · Review required" : ""}</strong>
+          <small>Preparation {d.outbox_id} · revision {d.outbox_version} · {d.attempts} delivery attempts</small>
+          {d.request_id && <small>Google request ID: <code>{d.request_id}</code></small>}
+          {d.diagnostic && <p>{d.diagnostic}</p>}
+          {d.warnings && <p className="notice">Google reported warnings. Inspect the request in Google diagnostics.</p>}
+          {d.state === "validated" && !d.review_required && <button className="primary" disabled={busy || !data.delivery_settings.enabled} onClick={() => void mutate(`/conversions/deliveries/${d.id}/queue`, {}, "Delivery queued. Refresh to check Google processing status.")}>Queue conversion for Google</button>}
+          {d.request_id && ["uncertain", "needs_review", "failed"].includes(d.state) && <button className="secondary" disabled={busy} onClick={() => void mutate(`/conversions/deliveries/${d.id}/recheck`, {}, "Receipt check queued. The event will not be uploaded again.")}>Recheck Google receipt</button>}
         </article>)}</div>}
       </section>
       <details className="card site-panel"><summary>Preparation history (latest 100)</summary><ul className="inquiry-history">{data.history.map(h => <li key={h.id}>{label(h.kind)} · {h.actor} · {date(h.created_at)}</li>)}</ul></details>

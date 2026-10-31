@@ -23,9 +23,9 @@ The web app provides guided setup and daily lead management. MCP and the public 
 | Configure dynamic number insertion | ✓ | — | ✓ | ✓ |
 | Inspect setup activity per site and number | ✓ | ✓ | ✓ | ✓ |
 | Connect Google and validate destination actions | ✓ | — | — | — |
-| Prepare Google Ads conversions | ✓ | — | — | — |
+| Prepare and explicitly queue Google Ads conversions | ✓ | — | — | — |
 | Create, rotate or revoke API keys | ✓ | — | — | — |
 
 What a CLI or MCP session can change also depends on the key it logged in with. A read-only [API key](/api/public-api/) stays read-only, even if the MCP server is started with `--allow-changes`.
 
-Not available anywhere yet: buying numbers, setting carrier webhooks automatically, call recording, SMS, and sending conversions to Google.
+Not available anywhere yet: buying numbers, setting carrier webhooks automatically, call recording, SMS, and sending conversions to Microsoft.

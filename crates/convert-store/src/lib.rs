@@ -2,6 +2,7 @@ pub mod adoption;
 pub mod api_keys;
 pub mod connections;
 pub mod conversions;
+pub mod delivery;
 pub mod dni;
 pub mod google;
 pub mod hosted;

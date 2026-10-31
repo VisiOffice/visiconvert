@@ -1,4 +1,4 @@
-//! Google OAuth and read-only Ads discovery. Deliberately no ingestion/mutation API.
+//! Google OAuth, Ads discovery and bounded Data Manager transport.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -58,6 +58,7 @@ pub struct Client {
     http: reqwest::Client,
     oauth: String,
     ads: String,
+    manager: String,
 }
 pub fn customer_id(s: &str) -> bool {
     s.len() == 10 && s.bytes().all(|c| c.is_ascii_digit())
@@ -86,12 +87,14 @@ impl Client {
                 .map_err(|_| Error::Unavailable)?,
             oauth: "https://oauth2.googleapis.com".into(),
             ads: "https://googleads.googleapis.com/v26".into(),
+            manager: "https://datamanager.googleapis.com/v1".into(),
         })
     }
     #[cfg(feature = "test-support")]
     pub fn for_test(origin: String) -> Self {
         let mut c = Self::new().unwrap();
         c.oauth = origin.clone();
+        c.manager = format!("{origin}/v1");
         c.ads = format!("{origin}/v26");
         c
     }
@@ -319,5 +322,244 @@ impl Client {
             })
             .collect::<Result<_, _>>()?;
         Ok((account, actions, more))
+    }
+}
+
+/// Sanitized outcomes. Upstream bodies may contain identifiers and are never logged.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DeliveryError {
+    Retry,
+    Uncertain,
+    Authorization,
+    Invalid,
+    Response,
+}
+impl DeliveryError {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Retry => "Google is rate limited or unreachable; retry scheduled.",
+            Self::Uncertain => {
+                "Google may have received this request. Inspect Google diagnostics before any further delivery for this event."
+            }
+            Self::Authorization => {
+                "Reconnect Google and check Data Manager access for the destination."
+            }
+            Self::Invalid => {
+                "Google rejected the event. Check the action, identifiers, event window and consent; validate again after correction."
+            }
+            Self::Response => {
+                "Google returned an unexpected status. Inspect the saved request ID in Google diagnostics."
+            }
+        }
+    }
+}
+impl Client {
+    async fn delivery_response(
+        &self,
+        request: reqwest::RequestBuilder,
+        sending: bool,
+    ) -> Result<Value, DeliveryError> {
+        let mut r = request.send().await.map_err(|e| {
+            if !sending || e.is_connect() {
+                DeliveryError::Retry
+            } else {
+                DeliveryError::Uncertain
+            }
+        })?;
+        let status = r.status().as_u16();
+        match status {
+            200 => (),
+            401 | 403 => return Err(DeliveryError::Authorization),
+            429 => return Err(DeliveryError::Retry),
+            400 => return Err(DeliveryError::Invalid),
+            500..=599 if sending => return Err(DeliveryError::Uncertain),
+            500..=599 => return Err(DeliveryError::Retry),
+            _ => {
+                return Err(if sending {
+                    DeliveryError::Uncertain
+                } else {
+                    DeliveryError::Response
+                });
+            }
+        }
+        let invalid = if sending {
+            DeliveryError::Uncertain
+        } else {
+            DeliveryError::Response
+        };
+        let mut bytes = Vec::new();
+        while let Some(c) = r.chunk().await.map_err(|_| invalid)? {
+            if bytes.len() + c.len() > 1_048_576 {
+                return Err(invalid);
+            }
+            bytes.extend_from_slice(&c);
+        }
+        serde_json::from_slice(&bytes).map_err(|_| invalid)
+    }
+    pub async fn ingest(
+        &self,
+        token: &str,
+        payload: &Value,
+        validate: bool,
+    ) -> Result<Value, DeliveryError> {
+        let mut payload = payload.clone();
+        payload["validateOnly"] = json!(validate);
+        let v = self
+            .delivery_response(
+                self.http
+                    .post(format!("{}/events:ingest", self.manager))
+                    .bearer_auth(token)
+                    .json(&payload),
+                !validate,
+            )
+            .await?;
+        if !validate
+            && !v["requestId"].as_str().is_some_and(|s| {
+                !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control)
+            })
+        {
+            return Err(DeliveryError::Uncertain);
+        }
+        Ok(
+            json!({"requestId":v["requestId"],"warnings":v["fieldWarnings"].as_array().is_some_and(|a| !a.is_empty())}),
+        )
+    }
+    pub async fn delivery_status(
+        &self,
+        token: &str,
+        id: &str,
+        destination: &Value,
+    ) -> Result<Value, DeliveryError> {
+        let v = self
+            .delivery_response(
+                self.http
+                    .get(format!("{}/requestStatus:retrieve", self.manager))
+                    .bearer_auth(token)
+                    .query(&[("requestId", id)]),
+                false,
+            )
+            .await?;
+        let rows = v["requestStatusPerDestination"]
+            .as_array()
+            .ok_or(DeliveryError::Response)?;
+        if rows.len() != 1 {
+            return Err(DeliveryError::Response);
+        }
+        let r = &rows[0];
+        if r["destination"]["operatingAccount"] != destination["operatingAccount"]
+            || r["destination"]["productDestinationId"] != destination["productDestinationId"]
+        {
+            return Err(DeliveryError::Response);
+        }
+        let state = match r["requestStatus"].as_str() {
+            Some("SUCCESS") if r["eventsIngestionStatus"]["recordCount"] == "1" => "processed",
+            Some("PROCESSING" | "REQUEST_STATUS_UNKNOWN") => "submitted",
+            Some("FAILED" | "PARTIAL_SUCCESS") => "failed",
+            _ => return Err(DeliveryError::Response),
+        };
+        Ok(
+            json!({"state":state,"warnings":r["warningInfo"]["warningCounts"].as_array().is_some_and(|a| !a.is_empty()),"diagnostic":if state=="failed" {"Google reported processing errors. Inspect this request in Google diagnostics."} else {""}}),
+        )
+    }
+}
+/// Whitelist only the fields required by Data Manager; no names, notes, URLs or consent references.
+pub fn event_request(snapshot: &Value, login: &str) -> Result<Value, DeliveryError> {
+    let settings = &snapshot["settings"];
+    let customer = settings["customer_id"]
+        .as_str()
+        .ok_or(DeliveryError::Invalid)?;
+    let kind = snapshot["kind"].as_str().ok_or(DeliveryError::Invalid)?;
+    let action = settings[if kind == "booking" {
+        "booking_action_id"
+    } else {
+        "qualified_action_id"
+    }]
+    .as_str()
+    .ok_or(DeliveryError::Invalid)?;
+    if !customer_id(customer)
+        || !customer_id(login)
+        || !action_id(action)
+        || !["booking", "qualified"].contains(&kind)
+    {
+        return Err(DeliveryError::Invalid);
+    }
+    let mut identifiers = serde_json::Map::new();
+    for k in ["gclid", "gbraid", "wbraid"] {
+        if let Some(s) = snapshot["click_identifiers"][k]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() <= 2048 && !s.chars().any(char::is_control))
+        {
+            identifiers.insert(k.into(), json!(s));
+        }
+    }
+    if identifiers.is_empty() || snapshot["consent"]["ad_user_data"] != "granted" {
+        return Err(DeliveryError::Invalid);
+    }
+    let personalization = match snapshot["consent"]["ad_personalization"].as_str() {
+        Some("granted") => "CONSENT_GRANTED",
+        Some("denied") => "CONSENT_DENIED",
+        _ => return Err(DeliveryError::Invalid),
+    };
+    let mut event = json!({"transactionId":snapshot["transaction_id"],"eventTimestamp":snapshot["event_at"],"adIdentifiers":identifiers,"consent":{"adUserData":"CONSENT_GRANTED","adPersonalization":personalization},"eventSource":if snapshot["channel"]=="call" {"PHONE"} else {"WEB"}});
+    if kind == "booking" {
+        let cents = snapshot["amount_minor"]
+            .as_i64()
+            .filter(|c| *c >= 0 && *c <= 9_000_000_000_000)
+            .ok_or(DeliveryError::Invalid)?;
+        // Parse a decimal number from integer cents; never divide money using f64.
+        event["conversionValue"] =
+            serde_json::from_str(&format!("{}.{:02}", cents / 100, cents % 100))
+                .map_err(|_| DeliveryError::Invalid)?;
+        event["currency"] = json!("USD");
+    }
+    Ok(
+        json!({"destinations":[{"operatingAccount":{"accountType":"GOOGLE_ADS","accountId":customer},"loginAccount":{"accountType":"GOOGLE_ADS","accountId":login},"productDestinationId":action}],"events":[event]}),
+    )
+}
+/// Only value changes may be restated; identities and destinations stay pinned.
+pub fn same_delivery_identity(a: &Value, b: &Value) -> bool {
+    let strip = |v: &Value| {
+        let mut v = v.clone();
+        if let Some(e) = v["events"][0].as_object_mut() {
+            e.remove("conversionValue");
+        }
+        v
+    };
+    strip(a) == strip(b)
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+    fn snapshot() -> Value {
+        json!({"kind":"booking","channel":"call","transaction_id":"vc_test","event_at":"2026-10-30T10:00:00Z","amount_minor":1,"settings":{"customer_id":"1234567890","booking_action_id":"456"},"click_identifiers":{"gclid":"click","msclkid":"not-google"},"consent":{"ad_user_data":"granted","ad_personalization":"denied","reference":"private"},"notes":"private"})
+    }
+    #[test]
+    fn event_whitelist_money_consent_and_identity() {
+        let mut s = snapshot();
+        let request = event_request(&s, "1234567890").unwrap();
+        assert_eq!(request["events"][0]["conversionValue"], json!(0.01));
+        assert_eq!(request["events"][0]["eventSource"], "PHONE");
+        assert!(!request.to_string().contains("private"));
+        assert!(!request.to_string().contains("msclkid"));
+        s["amount_minor"] = json!(10001);
+        let update = event_request(&s, "1234567890").unwrap();
+        assert!(same_delivery_identity(&request, &update));
+        s["settings"]["booking_action_id"] = json!("789");
+        assert!(!same_delivery_identity(
+            &request,
+            &event_request(&s, "1234567890").unwrap()
+        ));
+        s["consent"]["ad_user_data"] = json!("denied");
+        assert_eq!(event_request(&s, "1234567890"), Err(DeliveryError::Invalid));
+        let mut s = snapshot();
+        s["consent"]["ad_personalization"] = json!("unknown");
+        assert_eq!(event_request(&s, "1234567890"), Err(DeliveryError::Invalid));
+        let mut s = snapshot();
+        s["click_identifiers"] = json!({});
+        assert_eq!(event_request(&s, "1234567890"), Err(DeliveryError::Invalid));
+        let mut s = snapshot();
+        s["amount_minor"] = json!(-1);
+        assert_eq!(event_request(&s, "1234567890"), Err(DeliveryError::Invalid));
     }
 }

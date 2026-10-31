@@ -1,10 +1,10 @@
-# Google Ads conversion preparation
+# Google Ads conversion delivery
 
 This shared Rust/Vite feature is available in both hosted and self-hosted builds.
-It prepares qualified inquiries and bookings for review. **Uploads are disabled:
-nothing is uploaded, accepted for delivery, or attributed by Google in this release.**
-There is no provider delivery worker, retry scheduler, or retraction yet. Google OAuth and
-read-only destination validation are available; see [Google connection](GOOGLE_CONNECTION.md).
+It prepares qualified inquiries and bookings for review and can deliver explicitly
+queued events through Google's Data Manager API. **Delivery is off by default.**
+An upgrade never queues existing preparations. See [Google connection](GOOGLE_CONNECTION.md)
+for OAuth and destination configuration. Microsoft delivery is not implemented.
 
 ## Workflow
 
@@ -31,6 +31,52 @@ read-only destination validation are available; see [Google connection](GOOGLE_C
    explicitly restaged; cancellations and invalidations are auditable. Notes-only
    changes and identical booking retries do not invalidate preparations.
 
+6. Validate the saved Google destination, then choose **Validate event with Google**
+   on a preparation. This sends identifiers to Google's validation endpoint with
+   `validateOnly=true`; it does not record a conversion. Destination checks expire
+   after 24 hours; event validation expires after one hour before queuing.
+7. Disable any overlapping CRM uploader for the same action. **Enable reviewed
+   delivery**, then **Queue conversion for Google** for each validated event.
+   There is no automatic enqueueing on qualification or booking in this slice.
+8. Refresh delivery history to see submitted, processed, failed or uncertain status.
+   Processed means request processing succeeded, not that Google matched the click,
+   attributed a conversion, or used it in bidding reports. Check Google diagnostics.
+
+## Delivery and revisions
+
+The Rust server runs the worker in hosted and standalone modes whenever Google
+OAuth is configured. It uses PostgreSQL leases and row locks; multiple instances
+cannot claim the same active job. The worker rechecks current eligibility, consent,
+connection revision and destination before every upload under the workspace write
+lock. It sends one event per request and stores Google's request ID separately
+from the stable conversion transaction ID. No contact details or consent references
+are sent. USD values are constructed from integer cents.
+
+429 responses and connection failures retry with bounded exponential backoff (five
+attempts). Upload timeouts, server errors, malformed receipts and interrupted sends
+become **uncertain**, since Google may have received them. They never automatically
+replay. Status polling is read-only and retries up to 24 times, with a one-hour
+maximum delay. **Recheck Google receipt** resumes polling an existing request ID
+without sending the event again. A send with no receipt requires manual provider
+investigation; this release has no unsafe reset-and-resend control.
+
+After successful processing, a reviewed booking revision can update its value
+using the original transaction ID, destination, identifiers and event timestamp.
+A revision cannot overtake an in-flight, failed or uncertain earlier attempt.
+Changing destination or identity after attempting delivery is blocked; this avoids
+counting an existing event in another action. Qualification events cannot be resent.
+
+**Google Data Manager does not support retractions.** Canceling a booking or
+withdrawing consent stops unsent work and flags already-attempted delivery for
+review. Existing receipts remain pollable. VisiConvert does not send a zero-value
+conversion and call it a retraction. Correct already-sent conversions in Google;
+automated retractions are not part of this release.
+
+Pause cancels pending send eligibility and requires review before resuming.
+Disconnecting Google prevents new sends; receipt polling may need reconnection.
+Warnings, stopped jobs and source changes are visible in delivery history. Provider
+error bodies are never exposed in the UI or logs.
+
 ## Eligibility and limitations
 
 - A captured website visit and gclid, gbraid, or wbraid are required. No enhanced
@@ -54,7 +100,7 @@ read-only destination validation are available; see [Google connection](GOOGLE_C
   opt-in. Timing is not proof of caller identity; saved numbers and delayed calls
   can refer to earlier visitors.
 - Preview eligibility is recalculated on staging. Aging alone does not rewrite a
-  frozen job's state. A future delivery worker must recheck current eligibility,
+  frozen job's state. The delivery worker rechecks current eligibility,
   consent, grouping, destination, and provider requirements before every send.
 - The displayed JSON is an **internal preparation record**, not a provider request.
   It excludes lead contact fields, notes, arbitrary form fields, and landing URLs.
@@ -68,7 +114,7 @@ read-only destination validation are available; see [Google connection](GOOGLE_C
 
 All endpoints use existing private workspace authentication:
 
-- `GET /api/conversions`: settings, candidates, frozen preparations, recent history.
+- `GET /api/conversions`: settings, candidates, frozen preparations, recent history, delivery settings and the latest 200 delivery records.
 - `PUT /api/conversions/settings`: customer/action IDs, inferred-call opt-in, version
   (zero on first save).
 - `PUT /api/leads/{id}/conversion-consent`: `ad_user_data`, `ad_personalization`
@@ -80,21 +126,28 @@ All endpoints use existing private workspace authentication:
   already-prepared snapshot returns the existing job.
 - `POST /api/conversions/{id}/cancel`: current preparation `version`.
 
-The API rechecks the candidate under the same workspace lock used for business
-mutations. No provider token, API request, or outbound network action occurs.
+- `PUT /api/conversions/delivery/settings`: `enabled` and current `version`
+  (zero initially). Enabling does not queue anything.
+- `POST /api/conversions/{id}/validate`: current preparation `version`;
+  sends a validation-only request to Google and returns a delivery ID.
+- `POST /api/conversions/deliveries/{id}/queue`: queue a validated delivery.
+- `POST /api/conversions/deliveries/{id}/recheck`: poll an existing uncertain,
+  failed or review-required receipt; never replay an upload.
 
-## Next provider slice
+These controls are owner-only private APIs. Public API keys and MCP connections
+cannot enable or queue advertising delivery. MCP setup status reports workspace
+opt-in, not proof of delivery. All tables are included in normal database backups.
 
-Google OAuth and read-only account/action validation are implemented. Next,
-map internal records to Data Manager requests, validate event requests without sending, then add
-explicit enablement and a worker with retries, request-status diagnostics, and
-clear distinctions between submitted, processed, and attributed. Pin destinations
-once actually sent; handle revisions, grouping/supersession, and cancellations
-without double counting. Provider cancellation support must be verified before
-claiming retractions. Automated consent capture/withdrawal and configurable action
-windows also remain follow-up work.
+## Remaining work
 
-Provider references checked while designing the preparation model:
-- [Google Ads offline events](https://developers.google.com/data-manager/api/devguides/events/google-ads/offline)
+Microsoft delivery, automated consent synchronization, automatic event rules,
+external monitoring alerts for stalled uploads and a supported automated Google
+retraction path remain follow-up work. Real Google acceptance and attribution
+must be verified with an eligible real event before a production cutover. Automated
+tests use a local mock provider and never send synthetic Google conversions.
+
+Provider references:
 - [Sending events](https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/send-events)
+- [Request status](https://developers.google.com/data-manager/api/reference/rest/v1/requestStatus/retrieve)
 - [Conversion adjustments](https://developers.google.com/data-manager/api/devguides/events/google-ads/conversion-adjustments)
+- [Retraction limitation](https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/upgrade)

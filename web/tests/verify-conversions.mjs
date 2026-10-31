@@ -29,6 +29,16 @@ export async function verifyConversions({page,api,artifactDir}) {
   let preview=(await api('/conversions')).body;
   let job=preview.jobs.find(j=>j.entity_key==='ads-browser-booking');
   assert.equal(job.snapshot.amount_minor,12345);assert.equal(preview.connected,false);
+  assert.equal(preview.delivery_settings.enabled,false);
+  await page.getByRole('button',{name:'Enable reviewed delivery',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Delivery enabled.'}).waitFor();
+  assert.equal((await api('/conversions')).body.delivery_settings.enabled,true);
+  await page.getByRole('button',{name:'Pause Google delivery',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Pending sends paused.'}).waitFor();
+  assert.equal((await api('/conversions')).body.delivery_settings.enabled,false);
+  await page.getByRole('button',{name:'Validate event with Google',exact:true}).click();
+  await page.getByRole('alert').waitFor(); // No provider configured in this fixture.
+  assert.deepEqual((await api('/conversions')).body.deliveries,[]);
   const originalId=job.id,originalTransaction=job.transaction_id;
   const c=preview.candidates.find(c=>c.entity_key==='ads-browser-booking');
   const retry=await api('/conversions/stage',{kind:c.kind,entity_key:c.entity_key,fingerprint:c.fingerprint,version:0});

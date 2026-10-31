@@ -2,8 +2,8 @@
 
 This shared Rust/Vite feature works in hosted and self-hosted workspaces. It adds
 OAuth, read-only Google Ads account/action discovery and validation of saved
-conversion destinations. **No conversions are uploaded, and no Google account,
-campaign, action or billing setting is changed.** Live Google configuration and
+conversion destinations. Connecting alone uploads no conversions and changes no account, campaign, action
+or billing settings. [Reviewed delivery](CONVERSIONS.md) is a separate opt-in. Live Google configuration and
 acceptance remain separate from automated verification using a test provider.
 
 ## Installation
@@ -43,7 +43,7 @@ installer preserves destination OAuth settings rather than silently importing th
 Google consent configuration needs both scopes:
 
 - `https://www.googleapis.com/auth/adwords` for account/action discovery.
-- `https://www.googleapis.com/auth/datamanager` for the forthcoming delivery slice.
+- `https://www.googleapis.com/auth/datamanager` for event validation, delivery and receipt checks.
 
 Google exposes broad OAuth scopes even though this implementation uses only
 read-only Ads methods. The app has no ingestion or mutation client method.
@@ -80,8 +80,8 @@ silently treat truncated discovery as complete.
 “Checks passed” means the account is readable and the selected actions are enabled
 import actions owned by that account. It does **not** prove Data Manager upload
 permission, acceptance, matching, attribution, or compatibility of a particular
-event. Those require the next delivery/validation slice. No synthetic event is
-sent to Google by this feature. Existing preparations remain local.
+event. Use the separate event validation and delivery controls for those checks.
+Existing preparations remain local until explicitly validated and queued.
 
 ## Credentials and authorization
 

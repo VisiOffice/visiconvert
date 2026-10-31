@@ -35,11 +35,14 @@ impl Store {
         Ok(())
     }
     pub async fn clear_google_validation(&self, revision: i64) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.lock_inquiry_writes(&mut tx).await?;
         let result=sqlx::query("UPDATE google_connections SET validation=NULL,validated_settings_version=NULL,checked_at=NULL WHERE workspace_id=$1 AND revision=$2")
-            .bind(self.workspace).bind(revision).execute(&self.pool).await?;
+            .bind(self.workspace).bind(revision).execute(&mut *tx).await?;
         if result.rows_affected() != 1 {
             return Err(Error::Conflict);
         }
+        tx.commit().await?;
         Ok(())
     }
     pub async fn google_connection(&self) -> Result<Connection> {
