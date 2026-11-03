@@ -13,6 +13,7 @@ pub mod service_policy;
 pub mod setup;
 pub mod signalwire;
 pub mod sites;
+pub mod webhooks;
 use convert_domain::*;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use uuid::Uuid;

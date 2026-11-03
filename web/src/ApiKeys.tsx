@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { type Client } from "./api";
 type Key = { id: string; name: string; prefix: string; scopes: string[]; expires_at: string | null; revoked_at: string | null; last_used_at: string | null; version: number };
 type Data = { keys: Key[]; history: { id: number; kind: string; actor: string; created_at: string }[] };
-const writeScopes = [["leads:write", "Create interactions and review inquiries"], ["bookings:write", "Record, revise, and cancel bookings"], ["numbers:write", "Register existing Twilio or SignalWire numbers"], ["setup:write", "Create and update websites and DNI pools"]];
+const writeScopes = [["leads:write", "Create interactions and review inquiries"], ["bookings:write", "Record, revise, and cancel bookings"], ["numbers:write", "Register existing Twilio or SignalWire numbers"], ["setup:write", "Create and update websites and DNI pools"], ["webhooks:write", "Create and manage webhook endpoints"]];
 export function ApiKeys({ api, setup = false }: { api: Client; setup?: boolean }) {
   const [data, setData] = useState<Data | null>(null);
   const [name, setName] = useState(setup ? "Agent setup" : "");

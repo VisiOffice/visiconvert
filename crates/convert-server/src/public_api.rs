@@ -32,6 +32,7 @@ pub fn routes(app: Shared) -> Router<Shared> {
         .route("/reports/sources", get(summary))
         .route("/numbers", get(numbers).post(register_number))
         .merge(managed::routes())
+        .merge(super::webhooks::routes())
         .route("/connections/signalwire", get(signalwire::show))
         .route(
             "/connections/signalwire/numbers",
@@ -206,6 +207,8 @@ async fn auth(State(app): State<Shared>, mut request: Request, next: Next) -> Re
         "read"
     } else if path == "/api/v1/sites" || path.starts_with("/api/v1/sites/") {
         "setup:write"
+    } else if path.starts_with("/api/v1/webhook") {
+        "webhooks:write"
     } else if path.ends_with("/outcomes") {
         "bookings:write"
     } else if path.ends_with("/numbers") {

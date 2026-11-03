@@ -48,6 +48,8 @@ provider charges. You can explore form leads and bookings without a carrier.
   allowlists, retry deduplication, and inspectable session source evidence.
   See [website setup](docs/WEBSITE_TRACKING.md). No automatic form listeners.
 - Submit form leads through the API or application, qualify leads, and save notes.
+- Send signed [webhooks](docs/WEBHOOKS.md) for new leads, completed calls, reviews,
+  bookings and conversion results, with retries and a delivery log.
 - Create scoped workspace keys for the [public API, CLI, and MCP](docs/PUBLIC_API.md),
   with expiration, rotation, revocation, and management history.
 - Record booked USD amounts in exact cents, revise or cancel outcomes, and

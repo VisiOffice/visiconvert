@@ -60,6 +60,28 @@ impl Vault {
             value,
         )
     }
+    pub fn seal_webhook(
+        &self,
+        workspace: Uuid,
+        endpoint: Uuid,
+        secret: &str,
+    ) -> Result<String, ()> {
+        self.seal_context(
+            &format!("visiconvert:webhook:v1:{workspace}:{endpoint}"),
+            secret,
+        )
+    }
+    pub fn open_webhook(
+        &self,
+        workspace: Uuid,
+        endpoint: Uuid,
+        sealed: &str,
+    ) -> Result<String, ()> {
+        self.open_context(
+            &format!("visiconvert:webhook:v1:{workspace}:{endpoint}"),
+            sealed,
+        )
+    }
     fn seal_context(&self, context: &str, token: &str) -> Result<String, ()> {
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let encrypted = self

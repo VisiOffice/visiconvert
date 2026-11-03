@@ -150,6 +150,12 @@ an older database can restore keys revoked after that backup; revoke affected ke
 before exposing a restored installation. Keep integration secrets in a separate
 secret manager. Existing operator/bootstrap access is unchanged.
 
+## Webhooks
+
+Keys with `webhooks:write` can create and manage signed outbound webhook endpoints
+under `/api/v1/webhooks`; listing endpoints and deliveries needs `read`. See
+[webhooks](WEBHOOKS.md) for events, signatures and retry behavior.
+
 ## SignalWire
 
 Read project status and callback readiness at `GET /api/v1/connections/signalwire`, and owned voice-number inventory at `GET /api/v1/connections/signalwire/numbers`. Both require `read`. Register a number with `POST /api/v1/numbers`, `numbers:write`, and `provider: "signalwire"`. Omitted provider remains `twilio`. Provider secrets are configured only in the workspace UI. See [SignalWire setup](SIGNALWIRE_CONNECTIONS.md).

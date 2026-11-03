@@ -1,3 +1,20 @@
+## Unreleased — signed outbound webhooks
+
+- Send signed events for new interactions, completed calls, inquiry reviews, bookings
+  and Google conversion results to up to 10 HTTPS endpoints per workspace, in hosted
+  and self-hosted mode. Signing follows Standard Webhooks, with 24-hour overlap on
+  secret rotation.
+- Record events with database triggers in the same transaction as each change. Nothing
+  is recorded until an endpoint exists; demo data never sends.
+- At-least-once delivery with about 28 hours of retries, identical bytes on retry, a
+  delivery log, redelivery and test events. Endpoints disable after 410 Gone or 5 days
+  of failures.
+- Reject private, loopback, link-local and reserved destinations, checked at send time
+  against the address actually used; no redirects. Self-hosted operators can opt in to
+  private destinations with `VISICONVERT_WEBHOOKS_ALLOW_PRIVATE=true`.
+- Manage endpoints under `/api/v1/webhooks` with the new `webhooks:write` key permission.
+  Additive migration 0022. See [webhooks](docs/WEBHOOKS.md).
+
 ## Unreleased — reviewed Google conversion delivery
 
 - Add shared Rust delivery for hosted and self-hosted workspaces: validation-only
