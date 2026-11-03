@@ -63,12 +63,14 @@
   const originals = new Map();
   let lease = null, refreshTimer = null, expiryTimer = null, numberJob = null;
   let numberGeneration = 0;
+  // A swapped number keeps the page's formatting: "(602) 428-7203" becomes "(602) 555-0105".
+  const styled = (original, number) => { const digits = (String(original).match(/[0-9]/g) || []).length === 11 ? `1${number.slice(2)}` : number.slice(2); let i = 0; return String(original).replace(/[0-9]/g, () => digits[i++]); };
   const phone = value => { if (!/^\s*\+?[0-9\s().-]+\s*$/.test(String(value || ""))) return ""; const digits = String(value || "").replace(/[^0-9]/g, ""); return digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits[0] === "1" ? `+${digits}` : ""; };
   function restoreNumbers() {
     lease = null;
     clearTimeout(expiryTimer);
     for (const [node, original] of originals) {
-      if (original.aria !== null && node.getAttribute("aria-label") === original.replacement) node.setAttribute("aria-label", original.aria);
+      if (original.aria !== null && node.getAttribute("aria-label") === original.ariaReplacement) node.setAttribute("aria-label", original.aria);
       if (node.textContent === original.replacement) node.textContent = original.text;
       if (node.getAttribute("href") === original.link) {
         if (original.href === null) node.removeAttribute("href"); else node.setAttribute("href", original.href);
@@ -87,12 +89,13 @@
       if (originals.has(node) || node.children.length || phone(node.textContent) !== lease.fallback_phone) continue;
       const href = node.getAttribute("href");
       if (href !== null && (!href.startsWith("tel:") || phone(href.slice(4)) !== lease.fallback_phone)) continue;
-      const replacement = lease.phone_number;
-      const link = href === null ? null : `tel:${replacement}`;
+      const replacement = styled(node.textContent, lease.phone_number);
+      const link = href === null ? null : `tel:${lease.phone_number}`;
       const aria = node.getAttribute("aria-label");
       if (aria !== null && phone(aria) !== lease.fallback_phone) continue;
-      originals.set(node, { text: node.textContent, href, replacement, link, aria });
-      if (aria !== null) node.setAttribute("aria-label", replacement);
+      const ariaReplacement = aria === null ? null : styled(aria, lease.phone_number);
+      originals.set(node, { text: node.textContent, href, replacement, ariaReplacement, link, aria });
+      if (aria !== null) node.setAttribute("aria-label", ariaReplacement);
       node.textContent = replacement;
       if (link !== null) node.setAttribute("href", link);
     }

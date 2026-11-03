@@ -28,15 +28,15 @@ export async function verifyDni({browser,page,origin,api,artifactDir}) {
     await visitor.waitForFunction(()=>!!window.VisiConvert);
     assert.equal(await visitor.locator('#phone').textContent(),'(202) 555-0107');
     await visitor.evaluate(()=>window.VisiConvert.setConsent(true));
-    assert.equal(await visitor.locator('#phone').textContent(),'+12025550105');
+    assert.equal(await visitor.locator('#phone').textContent(),'(202) 555-0105');
     assert.equal(await visitor.locator('#phone').getAttribute('href'),'tel:+12025550105');
-    assert.equal(await visitor.locator('#text').textContent(),'+12025550105');
-    assert.equal(await visitor.locator('#phone').getAttribute('aria-label'),'+12025550105');
+    assert.equal(await visitor.locator('#text').textContent(),'202-555-0105');
+    assert.equal(await visitor.locator('#phone').getAttribute('aria-label'),'(202) 555-0105');
     assert.equal(await visitor.locator('#unmarked').getAttribute('href'),'tel:+12025550107');
     assert.equal(await visitor.locator('#other').getAttribute('href'),'tel:+12025550109');
     assert.equal(await visitor.locator('#nested b').textContent(),'202-555-0107');
     await visitor.evaluate(()=>{const n=document.createElement('a');n.id='dynamic';n.dataset.visiconvertPhone='';n.href='tel:+12025550107';n.textContent='202-555-0107';document.body.append(n);});
-    await visitor.waitForFunction(()=>document.querySelector('#dynamic').textContent==='+12025550105');
+    await visitor.waitForFunction(()=>document.querySelector('#dynamic').textContent==='202-555-0105');
     await second.goto(business);await second.waitForFunction(()=>!!window.VisiConvert);await second.evaluate(()=>window.VisiConvert.setConsent(true));
     assert.equal(await second.locator('#phone').getAttribute('href'),'tel:+12025550107','Exhausted pool uses normal business line');
     // Explicit network fault injection: last number must not remain on failure.
@@ -46,7 +46,7 @@ export async function verifyDni({browser,page,origin,api,artifactDir}) {
     assert.equal(await visitor.locator('#dynamic').getAttribute('href'),'tel:+12025550107');
     await visitor.unroute('**/collect/sites/*/numbers');
     await visitor.evaluate(()=>window.VisiConvert.refreshNumbers());
-    assert.equal(await visitor.locator('#phone').textContent(),'+12025550105');
+    assert.equal(await visitor.locator('#phone').textContent(),'(202) 555-0105');
     // Exercise local expiry without waiting half an hour; preserve the real API response.
     await visitor.route('**/collect/sites/*/numbers',async route=>{const response=await route.fetch();const body=await response.json();body.expires_at=new Date(Date.now()+400).toISOString();await route.fulfill({response,json:body});});
     await visitor.evaluate(()=>window.VisiConvert.refreshNumbers());
