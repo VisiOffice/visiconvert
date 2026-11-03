@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { InquiryGrouping } from "./InquiryGrouping";
 import { Setup } from "./Setup";
 import { ApiKeys } from "./ApiKeys";
+import { Webhooks } from "./Webhooks";
 import { Conversions } from "./Conversions";
 import { Sites } from "./Sites";
 import { TwilioConnection } from "./TwilioConnection";
@@ -24,6 +25,7 @@ import {
   ShieldCheck,
   Sparkles,
   Users,
+  Activity,
   X,
 } from "./icons";
 import {
@@ -43,7 +45,7 @@ import initWasm, {
   preview_attribution,
 } from "./generated/attribution/convert_wasm";
 
-type Page = "Setup" | "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys";
+type Page = "Setup" | "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys" | "Webhooks";
 const pages = [
   { name: "Setup" as Page, icon: Sparkles },
   { name: "Overview" as Page, icon: BarChart3 },
@@ -53,6 +55,7 @@ const pages = [
   { name: "Connections" as Page, icon: Link2 },
   { name: "Conversions" as Page, icon: Check },
   { name: "API keys" as Page, icon: ShieldCheck },
+  { name: "Webhooks" as Page, icon: Activity },
 ];
 type HostedShell = { token: string; onManage: () => void; onSignOut: () => Promise<void>; onExpired: () => void };
 export default function App({ hosted }: { hosted?: HostedShell }) {
@@ -312,10 +315,11 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                       : page === "Sites"
                         ? "Connect website visits and successful forms to their source."
                         : page === "Conversions" ? "Review qualified inquiries and bookings for Google Ads."
+                        : page === "Webhooks" ? "Send signed events to your CRM and automations."
                         : "Start with your numbers and the tools you already use."}
               </p>
             </div>
-            {page !== "Setup" && page !== "Sites" && page !== "Conversions" && page !== "API keys" && <button
+            {page !== "Setup" && page !== "Sites" && page !== "Conversions" && page !== "API keys" && page !== "Webhooks" && <button
               className="primary"
               disabled={boot?.hosted && !connection?.connected && !signalwire?.connected && page === "Tracking numbers"}
               onClick={() => { setBusinessProfile(false); setModal(page === "Tracking numbers" ? "number" : "lead"); }}
@@ -587,6 +591,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
           {page === "Sites" && <Sites api={api} />}
           {page === "Conversions" && <Conversions api={api} />}
           {page === "API keys" && <ApiKeys api={api} setup={setupKey} />}
+          {page === "Webhooks" && <Webhooks api={api} />}
           {page === "Connections" && connection && <Connections api={api} connection={connection} signalwire={signalwire} refresh={refresh} />}
           <footer>
             VisiConvert <span>Make the connection.</span>

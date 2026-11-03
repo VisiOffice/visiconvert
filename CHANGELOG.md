@@ -14,6 +14,8 @@
   private destinations with `VISICONVERT_WEBHOOKS_ALLOW_PRIVATE=true`.
 - Manage endpoints under `/api/v1/webhooks` with the new `webhooks:write` key permission.
   Additive migration 0022. See [webhooks](docs/WEBHOOKS.md).
+- Add a Webhooks screen for workspace owners: create endpoints, copy the secret once,
+  send tests, view and redeliver deliveries, pause, rotate and delete.
 
 ## Unreleased — reviewed Google conversion delivery
 
