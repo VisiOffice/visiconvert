@@ -175,3 +175,9 @@ The **Setup** screen provides a key preset (read + setup:write, seven-day expiry
 a local stdio MCP configuration and a guided prompt. Registering owned numbers
 also requires `numbers:write`. Provider credentials remain in Connections; never
 send secrets to agent chat. Revoke temporary setup keys after acceptance checks.
+
+## Webhooks
+
+Keys with the `webhooks:write` permission can create and manage signed outbound webhook
+endpoints under `/api/v1/webhooks`. Listing endpoints and deliveries needs only `read`.
+See [Webhooks](/guides/webhooks/) for events, payloads, signature checks and retries.

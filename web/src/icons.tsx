@@ -45,3 +45,4 @@ export const Sparkles = icon(
 export const Filter = icon("M3 5h18l-7 8v7l-4-2v-5L3 5Z");
 export const LogOut = icon("M9 3H3v18h6m6-15 6 6-6 6M7 12h14");
 export const Loader2 = icon("M21 12a9 9 0 1 1-9-9");
+export const Activity = icon("M3 12h4l3-8 4 16 3-8h4");

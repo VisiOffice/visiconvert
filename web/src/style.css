@@ -1286,3 +1286,19 @@ footer button {
 .google-create-actions .checkbox-row { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px; }
 .google-create-actions input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 auto; }
 .google-existing-actions > .site-form { margin-top: 16px; }
+
+/* Webhooks */
+.webhook-events { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.webhook-events legend { font-weight: 600; margin-bottom: 8px; }
+.webhook-events code { font-size: 12px; color: var(--muted, #6b7280); overflow-wrap: anywhere; }
+.badge.webhook-paused, .badge.delivery-retry, .badge.delivery-pending, .badge.delivery-sending { background: #fef3c7; color: #92400e; }
+.badge.webhook-disabled, .badge.delivery-failed { background: #fee2e2; color: #991b1b; }
+.badge.webhook-enabled, .badge.delivery-succeeded { background: #dcfce7; color: #166534; }
+.badge.delivery-canceled { background: #f3f4f6; color: #4b5563; }
+.webhook-deliveries { display: grid; gap: 12px; min-width: 0; }
+.webhook-deliveries h3 { margin: 0; font-size: 15px; }
+.webhook-delivery-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.webhook-delivery-list li { display: grid; gap: 4px; border-top: 1px solid var(--border, #e5e7eb); padding-top: 10px; min-width: 0; overflow-wrap: anywhere; }
+.webhook-delivery-list .badge, .webhook-delivery-list button { justify-self: start; }
+.webhook-events .site-toggle { flex-wrap: wrap; }
+@media (max-width: 640px) { .webhook-events code { flex-basis: 100%; padding-left: 26px; overflow-wrap: normal; } }

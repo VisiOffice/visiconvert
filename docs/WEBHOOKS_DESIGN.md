@@ -1,6 +1,6 @@
 # Outbound webhooks — design
 
-Status: **implemented in the backend** (migration 0022); web app screens follow. Target: one shared Rust feature for hosted and
+Status: **implemented** (migration 0022, backend and web app Webhooks screen). Target: one shared Rust feature for hosted and
 self-hosted workspaces, like Google delivery. No Rails, billing, or VisiComms dependency.
 
 ## Why
