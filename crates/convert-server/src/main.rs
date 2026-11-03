@@ -14,6 +14,7 @@ mod secrets;
 mod service_policy;
 mod signalwire;
 mod sites;
+mod webhooks;
 use axum::{
     Extension, Json, Router,
     body::Bytes,
@@ -166,6 +167,13 @@ async fn main() -> anyhow::Result<()> {
     if app.google.is_some() {
         delivery::spawn(app.clone());
     }
+    // Private destinations are an explicit self-hosted choice; hosted mode never allows them.
+    let allow_private = app.cloud.is_none()
+        && std::env::var("VISICONVERT_WEBHOOKS_ALLOW_PRIVATE").is_ok_and(|v| v == "true");
+    webhooks::ALLOW_PRIVATE.store(allow_private, std::sync::atomic::Ordering::Relaxed);
+    if app.vault.is_some() {
+        webhooks::spawn(app.clone());
+    }
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address,"VisiConvert pilot listening");
     axum::serve(listener, router(app))
@@ -213,6 +221,7 @@ fn router(app: Shared) -> Router {
         .merge(delivery::routes())
         .merge(google::routes())
         .merge(api_keys::routes())
+        .merge(webhooks::routes())
         .route("/bootstrap", get(bootstrap))
         .route("/leads", get(leads).post(add_lead))
         .route("/leads/{id}", patch(update_lead))
@@ -788,3 +797,5 @@ mod adoption_tests;
 
 #[cfg(test)]
 mod delivery_tests;
+#[cfg(test)]
+mod webhook_tests;

@@ -1,6 +1,6 @@
 # Outbound webhooks — design
 
-Status: **proposal**, not implemented. Target: one shared Rust feature for hosted and
+Status: **implemented in the backend** (migration 0022); web app screens follow. Target: one shared Rust feature for hosted and
 self-hosted workspaces, like Google delivery. No Rails, billing, or VisiComms dependency.
 
 ## Why
@@ -218,12 +218,16 @@ behaviour. Ship in two PRs: (1) schema, triggers, worker, API; (2) web app scree
 (guide page on docs.visiconvert.com plus generated reference). Then update the website
 comparison row "API and webhooks" to In the beta.
 
-## Open questions
+## Decisions
 
-1. **Contact details default.** Default `include_contact` to on (simplest for CRM sync) or off
-   (data minimisation, receivers fetch)? Proposal: on, with the toggle at creation.
-2. **Hosted egress IPs.** Do we publish fixed egress addresses for customers who allowlist? Not
-   needed for v1 but affects the hosted gateway.
-3. **Form field payloads.** Include the allowlisted `submission_payload` fields in
-   `interaction.created`, or only name/phone/email? Proposal: include allowlisted fields when
-   `include_contact` is on.
+1. **Contact details default:** on, with a per-endpoint `include_contact` toggle.
+2. **Hosted egress IPs:** yes, publish fixed egress addresses for allowlisting. This is a
+   hosted gateway change outside this repository; until it ships, the docs do not list addresses.
+3. **Form fields:** included as `fields` (the stored submission) when `include_contact` is on.
+
+## Implementation notes
+
+- Demo leads are flagged just after insertion, so the worker re-checks `is_demo` before sending
+  and cancels such deliveries without counting them as endpoint failures.
+- A worker batch keeps claiming until nothing is due, since the two-in-flight cap per endpoint
+  can stop a batch early.

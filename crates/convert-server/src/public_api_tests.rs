@@ -558,6 +558,10 @@ fn openapi_covers_public_routes() {
         "/numbers/purchase",
         "/numbers/{id}/release",
         "/numbers/{id}/restore",
+        "/webhooks",
+        "/webhooks/{id}/rotate-secret",
+        "/webhooks/{id}/test",
+        "/webhook-deliveries/{id}/redeliver",
     ] {
         assert!(spec["paths"][path]["post"].is_object(), "{path}");
     }

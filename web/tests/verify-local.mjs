@@ -247,6 +247,9 @@ try {
   await check("Managed service: policy ordering, expiry, recovery, DNI fallback and release claims", async () => {
     await command("cargo", ["test", "-p", "convert-store", "--test", "service_policy", "--", "--ignored", "--test-threads=1"]);
   });
+  await check("Webhooks: triggers, signatures, retries, disabling, scopes and isolation", async () => {
+    await command("cargo", ["test", "-p", "convert-server", "webhook_tests::", "--", "--ignored", "--test-threads=1"]);
+  });
   await check("Website collection: consent, retries, rate limits, and workspace isolation", async () => {
     await command("cargo", ["test", "-p", "convert-server", "site_tests::", "--", "--ignored", "--test-threads=1"]);
   });

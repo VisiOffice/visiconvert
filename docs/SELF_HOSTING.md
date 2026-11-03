@@ -78,6 +78,7 @@ Shell exports and the repository's development `.env` do not override this file.
 | `VISICONVERT_POSTGRES_PASSWORD` | 64-character hex database password |
 | `VISICONVERT_WORKSPACE_ID` | Stable UUID identifying the workspace |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Both empty by default |
+| `VISICONVERT_WEBHOOKS_ALLOW_PRIVATE` | Optional. `true` lets webhooks reach private addresses and plain HTTP, such as an internal CRM or n8n. Leave empty to allow only public HTTPS hosts |
 
 For a remote server, use an SSH tunnel for initial access:
 
