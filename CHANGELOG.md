@@ -9,6 +9,9 @@
 - At-least-once delivery with about 28 hours of retries, identical bytes on retry, a
   delivery log, redelivery and test events. Endpoints disable after 410 Gone or 5 days
   of failures.
+- Hosted workspaces hold deliveries while billing is inactive and resume when it is
+  restored. The engine asks Rails per workspace, caches the answer for 5 minutes and
+  holds when Rails cannot answer. Held deliveries do not use up retries.
 - Reject private, loopback, link-local and reserved destinations, checked at send time
   against the address actually used; no redirects. Self-hosted operators can opt in to
   private destinations with `VISICONVERT_WEBHOOKS_ALLOW_PRIVATE=true`.

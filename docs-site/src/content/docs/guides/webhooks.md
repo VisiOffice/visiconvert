@@ -130,6 +130,9 @@ signatures from both the old and new secret for 24 hours, separated by a space.
   queued deliveries are canceled. Re-enable it by updating its `state` to `enabled`.
 - Delivery is at least once and not ordered. Deduplicate on `webhook-id`.
 - Pausing an endpoint holds its deliveries until it is resumed.
+- Hosted workspaces send only while billing is active. If billing lapses, deliveries
+  wait in the queue without using up retries and resume when it is restored. Events
+  still waiting after 30 days are dropped.
 - The delivery log keeps status codes and errors, never response bodies, for 30 days.
   Redelivering resends the original payload with the same `webhook-id`.
 

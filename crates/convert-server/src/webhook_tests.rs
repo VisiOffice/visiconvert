@@ -48,13 +48,16 @@ async fn call(
     )
 }
 fn app(store: Store) -> Shared {
+    hosted_app(store, None)
+}
+fn hosted_app(store: Store, cloud: Option<hosted::Config>) -> Shared {
     Arc::new(App {
         store,
         api_key: "webhook-test-operator-at-least-32-chars".into(),
         public_url: "https://api.example".into(),
         twilio_account: None,
         twilio_token: None,
-        cloud: None,
+        cloud,
         vault: Some(secrets::Vault::from_hex(&"c".repeat(64)).unwrap()),
         twilio_client: convert_adapters::twilio_api::Client::new().unwrap(),
         signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
@@ -690,4 +693,143 @@ async fn endpoint_limits_and_call_completion() {
         .execute(&store.pool)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn hosted_delivery_is_held_while_billing_is_inactive() {
+    webhooks::ALLOW_PRIVATE.store(true, Ordering::SeqCst);
+    let receiver = Arc::new(Receiver::default());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/hook", listener.local_addr().unwrap());
+    let r = receiver.clone();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route("/hook", post(receive)).with_state(r),
+        )
+        .await
+        .unwrap()
+    });
+    // Rails stand-in: answers the workspace-only delivery question with a settable status.
+    let billing = Arc::new(AtomicU16::new(403));
+    let asked = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let (b, q) = (billing.clone(), asked.clone());
+    let cloud_router = Router::new().route(
+        "/internal/api-access",
+        post(move |headers: HeaderMap, Json(body): Json<Value>| {
+            let (b, q) = (b.clone(), q.clone());
+            async move {
+                assert_eq!(
+                    headers["authorization"].to_str().unwrap(),
+                    format!("Bearer {}", "a".repeat(64))
+                );
+                q.lock().unwrap().push(body);
+                StatusCode::from_u16(b.load(Ordering::SeqCst)).unwrap()
+            }
+        }),
+    );
+    let cloud_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cloud_origin = format!("http://{}", cloud_listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(cloud_listener, cloud_router).await.unwrap() });
+
+    let db = std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap();
+    let store = Store::connect(&db, Uuid::new_v4()).await.unwrap();
+    store.migrate().await.unwrap();
+    let operator = app(store.clone());
+    let (s, endpoint) = call(
+        operator.clone(),
+        "POST",
+        "/api/webhooks",
+        &operator.api_key.clone(),
+        json!({"url":url,"event_types":["booking.recorded"]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{endpoint}");
+    let endpoint: Uuid = endpoint["id"].as_str().unwrap().parse().unwrap();
+    let hosted = hosted_app(
+        store.clone(),
+        Some(hosted::Config {
+            service_key: "a".repeat(64),
+            cloud_origin,
+            app_origin: None,
+        }),
+    );
+    let last = |delivery: Uuid| {
+        let pool = store.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT last_error FROM webhook_deliveries WHERE id=$1",
+            )
+            .bind(delivery)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .unwrap_or_default()
+        }
+    };
+
+    // Billing inactive: held, no attempt used, endpoint not marked failing, nothing sent.
+    webhooks::forget_billing();
+    let delivery = store.queue_webhook_test(endpoint).await.unwrap();
+    drain(&hosted).await;
+    assert_eq!(state(&store, delivery).await, ("retry".into(), 0));
+    assert!(last(delivery).await.contains("billing is inactive"));
+    assert!(receiver.requests.lock().unwrap().is_empty());
+    let failing: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT failing_since FROM webhook_endpoints WHERE id=$1")
+            .bind(endpoint)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert!(failing.is_none());
+    let held_until: bool = sqlx::query_scalar(
+        "SELECT due_at > now() + interval '14 minutes' FROM webhook_deliveries WHERE id=$1",
+    )
+    .bind(delivery)
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    assert!(held_until);
+    let question = asked.lock().unwrap()[0].clone();
+    assert_eq!(question["purpose"], "webhook_delivery");
+    assert_eq!(question["workspace_id"], store.workspace.to_string());
+    assert!(question.get("user_id").is_none());
+
+    // Rails unreachable or erroring: also held (fail closed), and not cached.
+    billing.store(500, Ordering::SeqCst);
+    webhooks::forget_billing();
+    due_now(&store).await;
+    drain(&hosted).await;
+    assert_eq!(state(&store, delivery).await, ("retry".into(), 0));
+    assert!(last(delivery).await.contains("could not be checked"));
+
+    // Billing restored: the held delivery goes out on its next turn.
+    billing.store(200, Ordering::SeqCst);
+    due_now(&store).await;
+    drain(&hosted).await;
+    assert_eq!(state(&store, delivery).await, ("succeeded".into(), 1));
+    assert_eq!(receiver.requests.lock().unwrap().len(), 1);
+
+    // The answer is cached: a lapse is noticed within the cache window, not per delivery.
+    let before = asked.lock().unwrap().len();
+    let second = store.queue_webhook_test(endpoint).await.unwrap();
+    drain(&hosted).await;
+    assert_eq!(state(&store, second).await.0, "succeeded");
+    assert_eq!(asked.lock().unwrap().len(), before);
+
+    // A lapse longer than retention drops the old event instead of sending a backlog.
+    billing.store(403, Ordering::SeqCst);
+    webhooks::forget_billing();
+    let stale = store.queue_webhook_test(endpoint).await.unwrap();
+    sqlx::query("UPDATE webhook_events SET occurred_at=now()-interval '31 days' WHERE id=(SELECT event_id FROM webhook_deliveries WHERE id=$1)")
+        .bind(stale)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    drain(&hosted).await;
+    assert_eq!(state(&store, stale).await, ("canceled".into(), 0));
+    assert!(last(stale).await.contains("not sent after 30 days"));
+    assert_eq!(receiver.requests.lock().unwrap().len(), 2);
+    webhooks::forget_billing();
 }

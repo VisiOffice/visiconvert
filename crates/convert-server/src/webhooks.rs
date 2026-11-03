@@ -24,6 +24,53 @@ use url::{Host, Url};
 
 /// Self-hosted operators may allow private addresses and plain HTTP. Never set in hosted mode.
 pub static ALLOW_PRIVATE: AtomicBool = AtomicBool::new(false);
+
+/// Hosted only: Rails' answer to "may this workspace send webhooks now?", per workspace.
+/// Cached so a busy endpoint does not ask on every delivery; errors are not cached.
+static BILLING: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<Uuid, (bool, std::time::Instant)>>,
+> = std::sync::LazyLock::new(Default::default);
+const BILLING_TTL: Duration = Duration::from_secs(300);
+
+#[cfg(test)]
+pub(crate) fn forget_billing() {
+    BILLING.lock().unwrap().clear();
+}
+
+/// None when delivery may proceed; otherwise why it is held. Self-hosted engines never ask.
+async fn billing_hold(cloud: Option<&hosted::Config>, workspace: Uuid) -> Option<String> {
+    let cloud = cloud?;
+    if let Some((allowed, at)) = BILLING.lock().unwrap().get(&workspace).copied()
+        && at.elapsed() < BILLING_TTL
+    {
+        return (!allowed).then(|| "Paused: workspace billing is inactive".into());
+    }
+    let unverified = || Some("Paused: billing status could not be checked".to_string());
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+    else {
+        return unverified();
+    };
+    let response = client
+        .post(format!("{}/internal/api-access", cloud.cloud_origin))
+        .bearer_auth(&cloud.service_key)
+        .json(&serde_json::json!({"workspace_id": workspace, "purpose": "webhook_delivery"}))
+        .send()
+        .await;
+    let allowed = match response.map(|r| r.status()) {
+        Ok(status) if status.is_success() => true,
+        Ok(reqwest::StatusCode::FORBIDDEN) => false,
+        _ => return unverified(),
+    };
+    BILLING
+        .lock()
+        .unwrap()
+        .insert(workspace, (allowed, std::time::Instant::now()));
+    (!allowed).then(|| "Paused: workspace billing is inactive".into())
+}
 const TIMEOUT: Duration = Duration::from_secs(10);
 const CONCURRENCY: usize = 8;
 
@@ -386,8 +433,12 @@ pub(crate) async fn run_batch(a: &App) -> Result<bool, convert_store::Error> {
     for claim in claims {
         let store = a.store.for_workspace(claim.workspace);
         let vault = a.vault.clone();
+        let cloud = a.cloud.clone();
         set.spawn(async move {
-            let attempt = send(&store, vault.as_ref(), &claim).await;
+            let attempt = match billing_hold(cloud.as_ref(), claim.workspace).await {
+                Some(reason) => Attempt::Held(reason),
+                None => send(&store, vault.as_ref(), &claim).await,
+            };
             match store.finish_webhook(&claim, attempt).await {
                 Ok(true) => {
                     tracing::info!(endpoint = %claim.endpoint_id, "Webhook endpoint disabled")
