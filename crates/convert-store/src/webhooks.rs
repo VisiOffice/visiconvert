@@ -25,6 +25,8 @@ pub const MAX_ATTEMPTS: i32 = 8;
 pub const RETRY_SECONDS: [i64; 7] = [5, 300, 1800, 7200, 18000, 36000, 36000];
 pub const DISABLE_AFTER_DAYS: i64 = 5;
 pub const RETENTION_DAYS: i64 = 30;
+/// How long a held delivery (for example, hosted billing inactive) waits before it is checked again.
+pub const HOLD_SECONDS: i64 = 900;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,6 +109,9 @@ pub enum Attempt {
     Gone,
     /// Not sent, e.g. a lead later marked as demo data. Not an endpoint failure.
     Skipped(String),
+    /// Not sent yet, e.g. hosted billing is inactive. Kept queued for HOLD_SECONDS
+    /// without using up an attempt or counting against the endpoint.
+    Held(String),
 }
 
 macro_rules! endpoint_json {
@@ -525,6 +530,24 @@ impl Store {
     }
     /// Record an attempt. Returns true when the endpoint was disabled as a result.
     pub async fn finish_webhook(&self, claim: &Claim, attempt: Attempt) -> Result<bool> {
+        if let Attempt::Held(reason) = attempt {
+            // Past retention a held event is dropped, so a long lapse never resumes with a backlog.
+            let expired = claim.occurred_at < Utc::now() - chrono::Duration::days(RETENTION_DAYS);
+            let reason = if expired {
+                format!("{reason}; not sent after {RETENTION_DAYS} days")
+            } else {
+                reason
+            };
+            let reason = reason.chars().take(300).collect::<String>();
+            sqlx::query("UPDATE webhook_deliveries SET state=CASE WHEN $4 THEN 'canceled' ELSE 'retry' END,attempts=GREATEST(attempts-1,0),last_error=$2,due_at=CASE WHEN $4 THEN NULL ELSE now()+make_interval(secs=>$3::bigint) END,updated_at=now() WHERE id=$1 AND state='sending'")
+                .bind(claim.id)
+                .bind(reason)
+                .bind(HOLD_SECONDS)
+                .bind(expired)
+                .execute(&self.pool)
+                .await?;
+            return Ok(false);
+        }
         let mut tx = self.pool.begin().await?;
         let (state, status, error, delay, gone) = match attempt {
             Attempt::Succeeded(status) => ("succeeded", Some(status), None, None, false),
@@ -541,6 +564,7 @@ impl Store {
             Attempt::Retry { status, error, .. } => ("failed", status, Some(error), None, false),
             Attempt::Failed { status, error } => ("failed", status, Some(error), None, false),
             Attempt::Skipped(reason) => ("canceled", None, Some(reason), None, false),
+            Attempt::Held(_) => unreachable!("handled above"),
             Attempt::Gone => (
                 "failed",
                 Some(410),
