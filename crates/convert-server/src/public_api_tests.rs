@@ -1011,3 +1011,132 @@ async fn setup_scope_sites_pool_versions_evidence_and_tenant_isolation() {
         StatusCode::CONFLICT
     );
 }
+/// Remote MCP sessions carry the tool-table fingerprint: a session started before a
+/// release that changed the tools gets 404, so the client initializes again and reloads
+/// tools/list. Requests without a session keep working.
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn remote_mcp_sessions_follow_the_tool_table() {
+    let store = Store::connect(
+        &std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap(),
+        Uuid::new_v4(),
+    )
+    .await
+    .unwrap();
+    store.migrate().await.unwrap();
+    let workspace = Uuid::new_v4();
+    token(&store, workspace).await;
+    let user: Uuid =
+        sqlx::query_scalar("SELECT owner_id FROM hosted_workspaces WHERE workspace_id=$1")
+            .bind(workspace)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let cloud = format!("http://{address}");
+    let grant = json!({"workspace_id":workspace,"user_id":user,"credential_version":0,"grant_id":Uuid::new_v4(),"scopes":["read"],"resource":format!("{cloud}/mcp")});
+    let cloud_router = Router::new()
+        .route(
+            "/internal/mcp-access",
+            post(move || {
+                let grant = grant.clone();
+                async move { Json(grant) }
+            }),
+        )
+        .route(
+            "/internal/api-access",
+            post(|Json(body): Json<Value>| async move {
+                Json(json!({"allowed":true,"workspace_id":body["workspace_id"],"user_id":body["user_id"],"credential_version":body["credential_version"]}))
+            }),
+        );
+    let task = tokio::spawn(async move { axum::serve(listener, cloud_router).await.unwrap() });
+    let app = app(
+        store.clone(),
+        Some(hosted::Config {
+            service_key: "a".repeat(64),
+            cloud_origin: cloud,
+            app_origin: None,
+        }),
+    );
+    let bearer = format!("vcm_{}", "a".repeat(43));
+    let send = |method: &str, session: Option<&str>, body: Value| {
+        let mut request = Request::builder()
+            .method(method)
+            .uri("/mcp")
+            .header("authorization", format!("Bearer {bearer}"))
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-06-18");
+        if let Some(id) = session {
+            request = request.header("mcp-session-id", id);
+        }
+        let request = request.body(Body::from(body.to_string())).unwrap();
+        let app = app.clone();
+        async move {
+            let response = router(app).oneshot(request).await.unwrap();
+            let status = response.status();
+            let headers = response.headers().clone();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (
+                status,
+                headers,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        }
+    };
+    let list = json!({"jsonrpc":"2.0","id":2,"method":"tools/list"});
+    // initialize starts a session and says the lists can change.
+    let init = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}});
+    let (status, headers, v) = send("POST", None, init.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["result"]["capabilities"]["tools"]["listChanged"], true);
+    assert_eq!(v["result"]["capabilities"]["prompts"]["listChanged"], true);
+    let session = headers["mcp-session-id"].to_str().unwrap().to_string();
+    let parts: Vec<&str> = session.split('.').collect();
+    assert_eq!(parts.len(), 3, "{session}");
+    assert_eq!(parts[0], "v1");
+    // The current session works, and so does no session at all (existing connections).
+    let (status, _, v) = send("POST", Some(&session), list.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert!(v["result"]["tools"].as_array().unwrap().len() > 5);
+    let (status, headers, v) = send("POST", None, list.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert!(headers.get("mcp-session-id").is_none());
+    let (status, _, _) = send(
+        "POST",
+        Some(&session),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    // A session from an older tool table, or a malformed one, is ended.
+    let stale = format!("v1.0000000000000000.{}", parts[2]);
+    for bad in [stale.as_str(), "garbage", "v1..", &format!("{session}x")] {
+        let (status, _, v) = send("POST", Some(bad), list.clone()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{bad}");
+        assert_eq!(v["id"], 2);
+        let (status, _, _) = send(
+            "POST",
+            Some(bad),
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{bad}");
+    }
+    // initialize itself is never refused for a stale session; it starts a new one.
+    let (status, headers, v) = send("POST", Some(&stale), init).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let fresh = headers["mcp-session-id"].to_str().unwrap();
+    assert_ne!(fresh, session);
+    assert!(fresh.starts_with(&format!("v1.{}.", parts[1])));
+    // No server-initiated stream; DELETE ends the session (nothing to clean up).
+    let (status, headers, _) = send("GET", Some(&session), Value::Null).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(headers["allow"], "POST, DELETE");
+    let (status, _, _) = send("DELETE", Some(&session), Value::Null).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _, _) = send("DELETE", None, Value::Null).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    task.abort();
+}

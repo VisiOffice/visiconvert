@@ -1,3 +1,13 @@
+## Unreleased — remote MCP reloads tools after a release
+
+- Remote MCP `initialize` advertises `tools.listChanged` and `prompts.listChanged` and
+  returns a stateless `Mcp-Session-Id` (`v1.<toolset fingerprint>.<random>`). Later
+  requests with a malformed session or one from an older tool table get 404, so clients
+  initialize again and reload tools/list without the user reconnecting. Requests without
+  a session ID behave as before; `initialize` is never refused.
+- DELETE `/mcp` with a session ID returns 204; GET returns 405 with `Allow: POST, DELETE`.
+- `review_google_conversion_setup` now carries `openWorldHint` like the other Google tools.
+
 ## Unreleased — Google Ads conversion review
 
 - New `GET /api/v1/conversion-setup/google-review` (`read`) and MCP tool
