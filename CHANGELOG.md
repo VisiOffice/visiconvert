@@ -1,3 +1,21 @@
+## Unreleased — Google Ads conversion review
+
+- New `GET /api/v1/conversion-setup/google-review` (`read`) and MCP tool
+  `review_google_conversion_setup`: every non-removed conversion action in the saved
+  Google Ads account with its type, category, status, primary/secondary, counting, click
+  window, value settings, owner and 30/90-day conversions, flagged in plain language:
+  `mapped`, `active_other_uploader`, `dead_upload` and `call_overlap` (website call
+  actions also note the conflict with number swapping). Calls from ads are not flagged.
+  Results are saved (additive migration 0025).
+- `get_conversion_setup` adds advisory steps (`"advisory": true`, never blocking `ready`):
+  run the review, then review its warnings with the owner. The automatic-sending warning
+  names actions the last review found still receiving uploads from another tool.
+- New `PUT /api/v1/conversion-setup/google-actions/{id}/goal` `{primary, login?}` and MCP
+  tool `set_google_action_goal`, requiring `conversions:send`: changes only
+  `primary_for_goal` on an action owned by the saved account, records
+  `google_action_goal_changed` with the key or connection, and returns 422 with a clear
+  message when Google refuses.
+
 ## Unreleased — agent-chosen Google destination
 
 - `PUT /api/v1/conversion-setup/destination`

@@ -35,7 +35,7 @@ Permissions:
 | `numbers:purchase` | Search, buy, and release SignalWire numbers (`/numbers/search`, `/numbers/purchase`, `/numbers/{id}/release`, `/numbers/{id}/restore`). Billable: each number is charged monthly until released. Owners grant it under **Billable permission** in API Keys; the expiration defaults to 24 hours. |
 | `setup:write` | Create/update website settings and DNI pools (engine migration 0012) |
 | `conversions:write` | Define and map pipeline conversion actions (`PUT /conversion-actions/{key}`, `POST /conversion-actions/{key}/google-action`) and post pipeline conversion events (`POST /conversion-events`) that VisiConvert matches and sends to Google Ads (engine migration 0023) |
-| `conversions:send` | Choose the advertising account and whether inferred calls are sent (`PUT /conversion-setup/destination`), and turn Google delivery and automatic sending on or off and set the consent policy (`PUT /conversion-delivery`), on the owner's behalf. Attestations are recorded for the owner who created the key. Conversions sent to Google cannot be retracted. Owners grant it under **Sending permission** in API Keys; the expiration defaults to 24 hours (engine migration 0024). |
+| `conversions:send` | Choose the advertising account and whether inferred calls are sent (`PUT /conversion-setup/destination`), and turn Google delivery and automatic sending on or off and set the consent policy (`PUT /conversion-delivery`), on the owner's behalf. Attestations are recorded for the owner who created the key. It also makes a Google Ads conversion action primary or secondary (`PUT /conversion-setup/google-actions/{id}/goal`). Conversions sent to Google cannot be retracted. Owners grant it under **Sending permission** in API Keys; the expiration defaults to 24 hours (engine migration 0024). |
 
 Keys cannot manage keys, billing, provider credentials, inquiry grouping,
 reviewed conversion preparation, or the Google connection. Google delivery, automatic sending and the consent policy need `conversions:send`. Use the workspace UI for the rest. Read-only
@@ -194,7 +194,9 @@ consent policy with `PUT /api/v1/conversion-delivery`; setting
 owner who created the key. `conversions:write` can also run the read-only destination check
 (`POST /api/v1/conversion-setup/check`). `conversions:send` can also save the advertising
 account and inferred-call opt-in (`PUT /api/v1/conversion-setup/destination`).
-`conversion-setup` says which steps are left; no key can connect Google. See [pipeline conversions](/guides/pipeline-conversions/).
+`GET /api/v1/conversion-setup/google-review` (`read`) flags other conversion actions in
+the Google Ads account that would double count, and `conversions:send` can make one
+secondary. `conversion-setup` says which steps are left; no key can connect Google. See [pipeline conversions](/guides/pipeline-conversions/).
 
 ## Webhooks
 

@@ -18,6 +18,9 @@ pub(super) struct Provider {
     pub(super) setup_lost_response: AtomicBool,
     setup_deny_booking: AtomicBool,
     pub(super) setup_other_owner: AtomicBool,
+    /// Goal updates received, and primary overrides they applied to the review fixture.
+    pub(super) goal_updates: Mutex<Vec<Value>>,
+    review_primary: Mutex<std::collections::HashMap<String, bool>>,
     challenge: Mutex<String>,
     exchanges: AtomicUsize,
     deny: AtomicBool,
@@ -88,6 +91,28 @@ async fn provider(
         assert_eq!(v["partialFailure"], false);
         assert_eq!(v["validateOnly"], false);
         assert_eq!(v["operations"].as_array().unwrap().len(), 1);
+        if let Some(update) = v["operations"][0].get("update") {
+            // Goal changes may touch only primary_for_goal.
+            assert_eq!(v["operations"][0]["updateMask"], "primary_for_goal");
+            let mut keys: Vec<_> = update.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            assert_eq!(keys, ["primaryForGoal", "resourceName"]);
+            let resource = update["resourceName"].as_str().unwrap().to_string();
+            let id = resource.rsplit('/').next().unwrap().to_string();
+            p.goal_updates.lock().unwrap().push(update.clone());
+            if id == "506" {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error":{"details":[{"errors":[{"errorCode":{"mutateError":"MUTATE_NOT_ALLOWED"}}]}]}})),
+                )
+                    .into_response();
+            }
+            p.review_primary
+                .lock()
+                .unwrap()
+                .insert(id, update["primaryForGoal"].as_bool().unwrap());
+            return Json(json!({"results":[{"resourceName":resource}]})).into_response();
+        }
         let mut action = v["operations"][0]["create"].clone();
         assert_eq!(action["type"], "UPLOAD_CLICKS");
         assert_eq!(action["primaryForGoal"], false);
@@ -151,7 +176,23 @@ async fn provider(
     if query.contains("FROM customer LIMIT") {
         return Json(json!({"results":[{"customer":{"id":"1234567890","descriptiveName":"Google test account","manager":false,"status":"ENABLED","currencyCode":"USD","timeZone":"America/Chicago","conversionTrackingSetting":{"googleAdsConversionCustomer":if p.setup_other_owner.load(Ordering::SeqCst) {"customers/9999999999"} else {"customers/1234567890"}}}}]})).into_response();
     }
+    if query.contains("metrics.all_conversions") {
+        return Json(review_metrics(query)).into_response();
+    }
     assert!(query.contains("FROM conversion_action"));
+    if query.contains("conversion_action.status != 'REMOVED'") {
+        let overrides = p.review_primary.lock().unwrap();
+        let rows: Vec<Value> = review_fixture()
+            .into_iter()
+            .map(|mut a| {
+                if let Some(v) = overrides.get(a["id"].as_str().unwrap()) {
+                    a["primaryForGoal"] = json!(v);
+                }
+                json!({"conversionAction":a})
+            })
+            .collect();
+        return Json(json!({"results":rows})).into_response();
+    }
     if query.contains(" WHERE ") && !query.contains("conversion_action.id IN (") {
         let actions = p.setup_actions.lock().unwrap();
         let rows: Vec<_> = actions
@@ -195,6 +236,119 @@ async fn provider(
             .retain(|r| ids.split(',').any(|id| r["conversionAction"]["id"] == id));
     }
     Json(response).into_response()
+}
+/// A Google Ads account like Quarry's: mapped VisiConvert actions, a dead and a live
+/// upload from earlier trackers, Google call actions, a call-from-ads action, a system
+/// action Google will not change, and one owned by another account.
+fn review_fixture() -> Vec<Value> {
+    let a = |id: &str, name: &str, kind: &str, category: &str, primary: bool, owner: &str| {
+        json!({"id":id,"name":name,"status":"ENABLED","type":kind,"category":category,"ownerCustomer":format!("customers/{owner}"),
+            "primaryForGoal":primary,"countingType":"ONE_PER_CLICK","clickThroughLookbackWindowDays":30,
+            "valueSettings":{"defaultValue":1.0,"defaultCurrencyCode":"USD","alwaysUseDefaultValue":false}})
+    };
+    let c = "1234567890";
+    vec![
+        a(
+            "123",
+            "Qualified",
+            "UPLOAD_CLICKS",
+            "QUALIFIED_LEAD",
+            false,
+            c,
+        ),
+        a("456", "Booked", "UPLOAD_CLICKS", "PURCHASE", true, c),
+        a(
+            "501",
+            "Phone Call",
+            "UPLOAD_CLICKS",
+            "PHONE_CALL_LEAD",
+            true,
+            c,
+        ),
+        a(
+            "502",
+            "Leads (91576)",
+            "UPLOAD_CLICKS",
+            "SUBMIT_LEAD_FORM",
+            true,
+            c,
+        ),
+        a(
+            "503",
+            "Clicks to call",
+            "GOOGLE_HOSTED",
+            "PHONE_CALL_LEAD",
+            true,
+            c,
+        ),
+        a(
+            "504",
+            "LAD Onsite Calls",
+            "WEBSITE_CALL",
+            "PHONE_CALL_LEAD",
+            true,
+            c,
+        ),
+        a(
+            "505",
+            "Calls from ads",
+            "AD_CALL",
+            "PHONE_CALL_LEAD",
+            true,
+            c,
+        ),
+        a(
+            "506",
+            "Store visits",
+            "STORE_VISITS",
+            "STORE_VISIT",
+            true,
+            c,
+        ),
+        a(
+            "789",
+            "Manager action",
+            "UPLOAD_CLICKS",
+            "DEFAULT",
+            true,
+            "9999999999",
+        ),
+    ]
+}
+/// Daily all_conversions per action, answered for the requested date range.
+fn review_metrics(query: &str) -> Value {
+    let today = chrono::Utc::now().date_naive();
+    let days = [
+        ("502", 10, 3.0),
+        ("456", 5, 2.0),
+        ("502", 40, 1.0),
+        ("504", 2, 4.0),
+    ];
+    let range: Vec<&str> = query
+        .split("BETWEEN '")
+        .nth(1)
+        .unwrap()
+        .split('\'')
+        .collect();
+    let (from, to) = (range[0], range[2]);
+    let rows = days.iter().filter_map(|(id, ago, n)| {
+        let date = (today - chrono::Duration::days(*ago))
+            .format("%Y-%m-%d")
+            .to_string();
+        (date.as_str() >= from && date.as_str() <= to).then(|| (id.to_string(), date, *n))
+    });
+    let resource = |id: &str| format!("customers/1234567890/conversionActions/{id}");
+    if query.contains("segments.date,") {
+        let mut rows: Vec<_> = rows.collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        json!({"results":rows.iter().map(|(id,date,n)| json!({"segments":{"conversionAction":resource(id),"date":date},"metrics":{"allConversions":n}})).collect::<Vec<_>>()})
+    } else {
+        let mut totals = std::collections::BTreeMap::<String, f64>::new();
+        for (id, _, n) in rows {
+            *totals.entry(id).or_default() += n;
+        }
+        json!({"results":totals.iter().map(|(id,n)| json!({"segments":{"conversionAction":resource(id)},"metrics":{"allConversions":n}})).collect::<Vec<_>>()})
+    }
 }
 async fn request(
     app: Shared,

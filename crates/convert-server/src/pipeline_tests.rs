@@ -864,8 +864,15 @@ async fn pipeline_keys_and_mcp_cannot_flip_owner_switches() {
     assert_eq!(status, StatusCode::OK, "{setup}");
     assert_eq!(setup["ready"], false);
     assert_eq!(setup["google_connected"], true);
+    let blocking: Vec<_> = setup["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["advisory"] != true)
+        .cloned()
+        .collect();
     assert_eq!(
-        setup["next_steps"],
+        json!(blocking),
         json!([{"actor":"owner_approval","step":"Turn on automatic sending: the owner in Conversions, or an agent with conversions:send (set_conversion_delivery) after the owner confirms that no other uploader sends the same Google actions."}])
     );
     assert!(
@@ -1486,6 +1493,299 @@ async fn conversions_send_saves_the_google_destination() {
             .unwrap()
             .allow_inferred_calls
     );
+    server.abort();
+    w.task.abort();
+}
+
+/// The Google Ads review reads every action, flags overlap with VisiConvert in plain
+/// language, and the goal switch changes only primary_for_goal, with conversions:send.
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn google_review_flags_overlap_and_goal_switch_needs_send() {
+    let w = world("per_lead", false).await;
+    let a = &w.a;
+    let issue = |name: &str, scopes: &[&str]| {
+        let scopes: Vec<String> = scopes.iter().map(|s| s.to_string()).collect();
+        let name = name.to_string();
+        async move {
+            let v = a
+                .store
+                .issue_api_key(
+                    &convert_store::api_keys::KeyInput {
+                        name,
+                        scopes,
+                        expires_at: None,
+                    },
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            (
+                v["secret"].as_str().unwrap().to_string(),
+                v["id"].as_str().unwrap().to_string(),
+            )
+        }
+    };
+    let (read, _) = issue("Read", &["read"]).await;
+    let (send, send_id) = issue("Send", &["read", "conversions:write", "conversions:send"]).await;
+    // Before any review the checklist asks the agent to run one, without blocking.
+    let (_, setup) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        &read,
+        Value::Null,
+    )
+    .await;
+    let step = setup["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["advisory"] == true)
+        .cloned()
+        .unwrap_or_else(|| panic!("{setup}"));
+    assert_eq!(step["actor"], "agent");
+    assert!(
+        step["step"]
+            .as_str()
+            .unwrap()
+            .contains("review_google_conversion_setup")
+    );
+    // A read key can review.
+    let (status, r) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup/google-review",
+        &read,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    assert_eq!(r["customer_id"], "1234567890");
+    let by_id = |r: &Value, id: &str| {
+        r["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} missing: {r}"))
+    };
+    let codes = |x: &Value| -> Vec<String> {
+        x["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["code"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(codes(&by_id(&r, "123")), ["mapped"]);
+    assert_eq!(codes(&by_id(&r, "456")), ["mapped"]);
+    assert_eq!(codes(&by_id(&r, "501")), ["dead_upload"]);
+    let live = by_id(&r, "502");
+    assert_eq!(codes(&live), ["active_other_uploader"]);
+    assert_eq!(live["conversions_30d"], 3.0);
+    assert_eq!(live["conversions_90d"], 4.0);
+    assert!(live["last_conversion_date"].is_string());
+    assert!(
+        live["flags"][0]["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("count")
+    );
+    assert!(live["flags"][0]["suggestion"].is_string());
+    assert_eq!(codes(&by_id(&r, "503")), ["call_overlap"]);
+    let website = by_id(&r, "504");
+    assert_eq!(codes(&website), ["call_overlap"]);
+    assert!(
+        website["flags"][0]["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("number"),
+        "{website}"
+    );
+    let ad_call = by_id(&r, "505");
+    assert!(codes(&ad_call).is_empty(), "{ad_call}");
+    assert!(ad_call["note"].is_string());
+    assert!(
+        by_id(&r, "789")["note"]
+            .as_str()
+            .unwrap()
+            .contains("9999999999")
+    );
+    for field in [
+        "category",
+        "status",
+        "primary_for_goal",
+        "counting",
+        "click_window_days",
+        "owner",
+    ] {
+        assert!(!by_id(&r, "502")[field].is_null(), "{field}");
+    }
+    // The checklist now carries the finding for the owner, still advisory.
+    let (_, setup) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        &read,
+        Value::Null,
+    )
+    .await;
+    let step = setup["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["advisory"] == true)
+        .cloned()
+        .unwrap_or_else(|| panic!("{setup}"));
+    assert_eq!(step["actor"], "owner_approval");
+    assert!(
+        step["step"]
+            .as_str()
+            .unwrap()
+            .contains("set_google_action_goal")
+    );
+    assert!(setup["google_review"]["reviewed_at"].is_string());
+    // Changing a goal needs conversions:send.
+    let goal = "/api/v1/conversion-setup/google-actions/502/goal";
+    for key in [&read, &w.key] {
+        let (status, v) = api(a.clone(), "PUT", goal, key, json!({"primary":false})).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
+        assert!(v["error"].as_str().unwrap().contains("conversions:send"));
+    }
+    assert!(w.p.goal_updates.lock().unwrap().is_empty());
+    let (status, v) = api(a.clone(), "PUT", goal, &send, json!({"primary":false})).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["changed"], true);
+    assert_eq!(v["action"]["primary_for_goal"], false);
+    // Still reported, but secondary uploads no longer count, so it leaves the warnings.
+    assert_eq!(v["action"]["flags"][0]["severity"], "info", "{v}");
+    assert!(!v["warnings"].to_string().contains("\"502\""), "{v}");
+    let updates = w.p.goal_updates.lock().unwrap().clone();
+    assert_eq!(
+        updates,
+        [
+            json!({"resourceName":"customers/1234567890/conversionActions/502","primaryForGoal":false})
+        ]
+    );
+    let (actor, payload): (String, Value) = sqlx::query_as("SELECT actor,payload FROM conversion_events WHERE workspace_id=$1 AND kind='google_action_goal_changed' ORDER BY id DESC LIMIT 1")
+        .bind(a.store.workspace).fetch_one(&a.store.pool).await.unwrap();
+    assert_eq!(actor, format!("API key {send_id}"));
+    assert_eq!(payload["action_id"], "502");
+    assert_eq!(payload["primary_before"], true);
+    assert_eq!(payload["primary"], false);
+    // Repeating it is a no-op that does not call Google.
+    let (status, v) = api(a.clone(), "PUT", goal, &send, json!({"primary":false})).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["changed"], false);
+    assert_eq!(w.p.goal_updates.lock().unwrap().len(), 1);
+    // Google refusing, another account's action, unknown and malformed ids.
+    let path = |id: &str| format!("/api/v1/conversion-setup/google-actions/{id}/goal");
+    let (status, v) = api(
+        a.clone(),
+        "PUT",
+        &path("506"),
+        &send,
+        json!({"primary":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(
+        v["error"].as_str().unwrap().contains("Google refused"),
+        "{v}"
+    );
+    let (status, _) = api(
+        a.clone(),
+        "PUT",
+        &path("789"),
+        &send,
+        json!({"primary":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = api(
+        a.clone(),
+        "PUT",
+        &path("999"),
+        &send,
+        json!({"primary":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = api(
+        a.clone(),
+        "PUT",
+        &path("abc"),
+        &send,
+        json!({"primary":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = api(
+        a.clone(),
+        "PUT",
+        goal,
+        &send,
+        json!({"primary":false,"name":"x"}),
+    )
+    .await;
+    assert!(status.is_client_error());
+    assert_eq!(w.p.goal_updates.lock().unwrap().len(), 2);
+    // With a live uploader still flagged, the automatic-sending warning names it.
+    sqlx::query("UPDATE google_conversion_reviews SET report=jsonb_set(report,'{warnings}',$2) WHERE workspace_id=$1")
+        .bind(a.store.workspace)
+        .bind(json!([{"id":"502","name":"Leads (91576)","type":"UPLOAD_CLICKS","primary_for_goal":true,"flags":["active_other_uploader"]}]))
+        .execute(&a.store.pool).await.unwrap();
+    let policy = a.store.pipeline_policy().await.unwrap();
+    let (status, on) = api(a.clone(), "PUT", "/api/v1/conversion-delivery", &send, json!({"auto_send":true,"consent_policy":"not_required_outside_eea","attest_no_eea_advertising":true,"version":policy["version"]})).await;
+    assert_eq!(status, StatusCode::OK, "{on}");
+    assert!(
+        on["warning"]
+            .as_str()
+            .unwrap()
+            .contains("still uploading to: Leads (91576) (502)"),
+        "{on}"
+    );
+    // MCP: review is read-only, the goal switch exists only with conversions:send.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = router(a.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for (key, scopes, allowed) in [
+        (&read, vec!["read"], false),
+        (
+            &send,
+            vec!["read", "conversions:write", "conversions:send"],
+            true,
+        ),
+    ] {
+        let mcp = convert_cli::mcp::Server::scoped(
+            Ok(convert_cli::client::Client::new(&origin, key).unwrap()),
+            scopes.into_iter().map(String::from).collect(),
+        );
+        let call = |name: &str, args: Value| {
+            let message = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}});
+            let mcp = &mcp;
+            async move { mcp.handle(message).await.unwrap()["result"].clone() }
+        };
+        let r = call("review_google_conversion_setup", json!({})).await;
+        assert_eq!(r["isError"], false, "{r}");
+        assert!(
+            r["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Phone Call")
+        );
+        let r = call(
+            "set_google_action_goal",
+            json!({"action_id":"501","primary":false}),
+        )
+        .await;
+        assert_eq!(r["isError"], !allowed, "{r}");
+    }
+    assert_eq!(w.p.goal_updates.lock().unwrap().len(), 3);
     server.abort();
     w.task.abort();
 }
