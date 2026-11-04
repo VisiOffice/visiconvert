@@ -212,8 +212,8 @@ async fn provider(
     }
 
     let mut response = json!({"results":[
-        {"conversionAction":{"id":"123","name":"Qualified","status":"ENABLED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/1234567890","primaryForGoal":false,"clickThroughLookbackWindowDays":30}},
-        {"conversionAction":{"id":"456","name":"Booked","status":"ENABLED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/1234567890","primaryForGoal":true,"clickThroughLookbackWindowDays":30}},
+        {"conversionAction":{"id":"123","name":"Qualified","status":"ENABLED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/1234567890","primaryForGoal":false,"clickThroughLookbackWindowDays":"30"}},
+        {"conversionAction":{"id":"456","name":"Booked","status":"ENABLED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/1234567890","primaryForGoal":true,"clickThroughLookbackWindowDays":"30"}},
         {"conversionAction":{"id":"789","name":"Wrong owner","status":"ENABLED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/9999999999"}},
         {"conversionAction":{"id":"987","name":"Wrong type","status":"ENABLED","type":"WEBPAGE","ownerCustomer":"customers/1234567890"}},
         {"conversionAction":{"id":"654","name":"Removed","status":"REMOVED","type":"UPLOAD_CLICKS","ownerCustomer":"customers/1234567890"}}
@@ -243,7 +243,7 @@ async fn provider(
 fn review_fixture() -> Vec<Value> {
     let a = |id: &str, name: &str, kind: &str, category: &str, primary: bool, owner: &str| {
         json!({"id":id,"name":name,"status":"ENABLED","type":kind,"category":category,"ownerCustomer":format!("customers/{owner}"),
-            "primaryForGoal":primary,"countingType":"ONE_PER_CLICK","clickThroughLookbackWindowDays":30,
+            "primaryForGoal":primary,"countingType":"ONE_PER_CLICK","clickThroughLookbackWindowDays":"30",
             "valueSettings":{"defaultValue":1.0,"defaultCurrencyCode":"USD","alwaysUseDefaultValue":false}})
     };
     let c = "1234567890";
