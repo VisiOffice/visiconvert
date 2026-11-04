@@ -429,8 +429,8 @@ pub(super) async fn save_pool(
     Json(input): Json<convert_store::dni::PoolInput>,
 ) -> Api<Value> {
     owner(&access).await?;
-    access.store.save_dni_pool(id, &input).await?;
-    Ok(Json(json!({"saved":true})))
+    let pool_id = access.store.save_dni_pool(id, &input).await?;
+    Ok(Json(json!({"saved":true,"pool_id":pool_id})))
 }
 async fn dni_evidence(
     Extension(access): Extension<hosted::Access>,
@@ -443,6 +443,9 @@ async fn dni_evidence(
 struct NumberInput {
     session_id: Uuid,
     consent: String,
+    /// Published numbers marked on the page. Omitted by single-pool trackers.
+    #[serde(default)]
+    targets: Option<Vec<String>>,
 }
 async fn numbers(
     State(a): State<Shared>,
@@ -455,7 +458,12 @@ async fn numbers(
     }
     Ok(Json(
         a.store
-            .allocate_dni(id, origin(&headers), input.session_id)
+            .allocate_dni(
+                id,
+                origin(&headers),
+                input.session_id,
+                input.targets.as_deref(),
+            )
             .await?,
     ))
 }

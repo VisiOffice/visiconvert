@@ -1,3 +1,18 @@
+## Unreleased — Several number pools per site
+
+- A site can run several DNI pools. Each replaces one published website number (its swap
+  target) with its own forwarding destination, so LA pages showing an LA line, Phoenix pages
+  showing a Phoenix line and the rest of a site showing a toll-free number each swap from
+  their own pool. A visit holds one number from each pool whose number is on the page.
+- The tracker sends the published numbers marked on the page (`targets`); the server leases
+  only from pools replacing them and answers `{status:"ok", assignments:[{replaces, ...}]}`.
+  Requests without `targets` keep the single-pool response.
+- `PUT /api/sites/{id}/number-pool` accepts `pool_id` or `new_pool`; `GET` adds `pools` and
+  each number's `pool_id`. MCP `configure_site_pool` takes the same fields. The Sites screen
+  adds a pool selector.
+- A number can move between pools on its site after it is removed from its current pool.
+- Migration 0026 gives existing pools an id; their numbers, assignments and versions are kept.
+
 ## Unreleased — Google click window fix
 
 - Google's API returns int64 fields such as `clickThroughLookbackWindowDays` as strings.

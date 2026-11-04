@@ -227,7 +227,7 @@ impl Store {
             return Err(Error::NotFound);
         }
         // Bump the pool version so an open pool editor cannot re-enable it unnoticed.
-        sqlx::query("UPDATE dni_pools SET version=version+1 WHERE workspace_id=$1 AND site_id IN (SELECT site_id FROM dni_pool_numbers WHERE workspace_id=$1 AND number_id=$2 AND enabled)")
+        sqlx::query("UPDATE dni_pools SET version=version+1 WHERE workspace_id=$1 AND id IN (SELECT pool_id FROM dni_pool_numbers WHERE workspace_id=$1 AND number_id=$2 AND enabled)")
             .bind(self.workspace).bind(number).execute(&mut *tx).await?;
         sqlx::query(
             "UPDATE dni_pool_numbers SET enabled=false WHERE workspace_id=$1 AND number_id=$2",

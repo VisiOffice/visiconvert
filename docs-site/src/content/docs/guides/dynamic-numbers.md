@@ -24,6 +24,12 @@ From **Setup**, choose **Set up a website pool**, then open the site under **Sit
 
 For example, an LA website can display its local number, swap it for a visitor’s LA pool number, and send the call to your central call center. Phoenix uses its own published number and dedicated pool. Confirm the published numbers already reach your business, since they remain the fallback. Saving a pool does not change any carrier route.
 
+## Several numbers on one site
+
+A site can have several pools, one for each published number it shows. Each pool replaces only its own published number, so the page decides which pool is used. For example, a national site can show your LA line on LA pages, your Phoenix line on Phoenix pages and a toll-free number elsewhere. Each of those swaps from its own pool, and each pool forwards to its own line. A page showing two published numbers swaps both, and gives the visitor one number from each pool.
+
+To add one, choose **Pool → Add a pool for another website number** and repeat step 2. A tracking number belongs to one pool. To move it to another pool on the same site, remove it from its current pool first. Numbers never move between websites.
+
 ## 3. Mark the numbers on your site
 
 Add `data-dni="true"` to the tracker script, and `data-visiconvert-phone` to each element that shows your phone number:
@@ -36,7 +42,7 @@ Add `data-dni="true"` to the tracker script, and `data-visiconvert-phone` to eac
 <a data-visiconvert-phone href="tel:+12025550106">(202) 555-0106</a>
 ```
 
-The marked element must contain only the phone number, matching your fallback, with no icons or other words inside it. The visitor's number is shown in the same format, so `(202) 555-0106` becomes something like `(202) 555-0105`. Unmarked text is never changed.
+The marked element must contain only the phone number, matching one of the site's published numbers, with no icons or other words inside it. The visitor's number is shown in the same format, so `(202) 555-0106` becomes something like `(202) 555-0105`. Unmarked text is never changed.
 
 If your app replaces marked elements after load, call `await window.VisiConvert.refreshNumbers()` afterwards.
 

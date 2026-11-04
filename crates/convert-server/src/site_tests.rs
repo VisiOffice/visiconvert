@@ -534,6 +534,50 @@ async fn dni_routes_require_owner_origin_and_consent() {
     assert_eq!(result.0, StatusCode::OK);
     assert_eq!(result.2, json!({"status":"not_configured"}));
     assert_eq!(result.1["access-control-allow-origin"], origin);
+    // Multi-pool trackers send the published numbers on the page.
+    let targeted = call(
+        app.clone(),
+        "POST",
+        &collect,
+        "",
+        origin,
+        json!({"session_id":session,"consent":"granted","targets":["+12025550181"]}),
+    )
+    .await;
+    assert_eq!(targeted.0, StatusCode::OK);
+    assert_eq!(targeted.2, json!({"status":"ok","assignments":[]}));
+    assert_eq!(
+        call(
+            app.clone(),
+            "POST",
+            &collect,
+            "",
+            origin,
+            json!({"session_id":session,"consent":"granted","targets":["not a number"]})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    // A new pool is created explicitly and reported by id.
+    let saved = call(app.clone(), "PUT", &pool, &token, origin, json!({"fallback_phone":"+12025550181","number_ids":[],"version":0,"enabled":false,"dedicated_numbers":false,"new_pool":true})).await;
+    assert_eq!(saved.0, StatusCode::OK);
+    let pool_id = saved.2["pool_id"].as_str().unwrap().to_owned();
+    let listed = call(app.clone(), "GET", &pool, &token, origin, Value::Null)
+        .await
+        .2;
+    assert_eq!(listed["pools"][0]["id"], pool_id.as_str());
+    let disabled = call(
+        app.clone(),
+        "POST",
+        &collect,
+        "",
+        origin,
+        json!({"session_id":session,"consent":"granted","targets":["+12025550181"]}),
+    )
+    .await;
+    assert_eq!(disabled.2["assignments"][0]["status"], "disabled");
+    assert_eq!(disabled.2["assignments"][0]["replaces"], "+12025550181");
     assert_eq!(
         call(
             app.clone(),

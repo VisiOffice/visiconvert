@@ -40,6 +40,8 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
         version: 0,
         number_ids: vec![number_id],
         dedicated_numbers: true,
+        pool_id: None,
+        new_pool: false,
     };
     assert!(other.save_dni_pool(site, &input).await.is_err());
     assert!(other.dni_pool(site).await.is_err());
@@ -78,6 +80,8 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
         version: 0,
         number_ids: vec![static_id],
         dedicated_numbers: true,
+        pool_id: None,
+        new_pool: false,
     };
     assert!(store.save_dni_pool(second_site, &invalid).await.is_err());
     invalid.fallback_phone = num.phone_number.clone();
@@ -97,7 +101,9 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
                     enabled: false,
                     version: 0,
                     number_ids: vec![],
-                    dedicated_numbers: false
+                    dedicated_numbers: false,
+                    pool_id: None,
+                    new_pool: false
                 }
             )
             .await
@@ -114,6 +120,8 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
                 version: 0,
                 number_ids: vec![],
                 dedicated_numbers: false,
+                pool_id: None,
+                new_pool: false,
             },
         )
         .await
@@ -150,19 +158,19 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     }
     assert!(
         store
-            .allocate_dni(site, "https://wrong.example", a)
+            .allocate_dni(site, "https://wrong.example", a, None)
             .await
             .is_err()
     );
     assert!(
         store
-            .allocate_dni(site, &site_input.origin, Uuid::new_v4())
+            .allocate_dni(site, &site_input.origin, Uuid::new_v4(), None)
             .await
             .is_err()
     );
     let (first, second) = tokio::join!(
-        store.allocate_dni(site, &site_input.origin, a),
-        store.allocate_dni(site, &site_input.origin, b)
+        store.allocate_dni(site, &site_input.origin, a, None),
+        store.allocate_dni(site, &site_input.origin, b, None)
     );
     let first = first.unwrap();
     let second = second.unwrap();
@@ -186,7 +194,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
         (b, a, "bing")
     };
     let lease = store
-        .allocate_dni(site, &site_input.origin, winner)
+        .allocate_dni(site, &site_input.origin, winner, None)
         .await
         .unwrap();
     assert_eq!(lease, if winner == a { first } else { second });
@@ -209,7 +217,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     assert_eq!(before_change["reusable_at"], after_change["reusable_at"]);
     assert_eq!(
         store
-            .allocate_dni(site, &site_input.origin, winner)
+            .allocate_dni(site, &site_input.origin, winner, None)
             .await
             .unwrap()["status"],
         "expired"
@@ -270,7 +278,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     sqlx::query("UPDATE dni_assignments SET assigned_at=clock_timestamp()-interval '31 minutes',expires_at=clock_timestamp()-interval '1 minute',reusable_at=clock_timestamp()+interval '29 minutes' WHERE site_id=$1").bind(site).execute(&store.pool).await.unwrap();
     assert_eq!(
         store
-            .allocate_dni(site, &site_input.origin, loser)
+            .allocate_dni(site, &site_input.origin, loser, None)
             .await
             .unwrap()["status"],
         "exhausted"
@@ -296,7 +304,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     sqlx::query("UPDATE dni_assignments SET assigned_at=clock_timestamp()-interval '61 minutes',expires_at=clock_timestamp()-interval '31 minutes',reusable_at=clock_timestamp()-interval '1 minute' WHERE site_id=$1").bind(site).execute(&store.pool).await.unwrap();
     assert_eq!(
         store
-            .allocate_dni(site, &site_input.origin, loser)
+            .allocate_dni(site, &site_input.origin, loser, None)
             .await
             .unwrap()["status"],
         "assigned"
@@ -359,7 +367,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     store.save_site(Some(site), &site_input).await.unwrap();
     assert!(
         store
-            .allocate_dni(site, "https://dni.example", loser)
+            .allocate_dni(site, "https://dni.example", loser, None)
             .await
             .is_err()
     );
@@ -371,7 +379,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     store.save_dni_pool(site, &input).await.unwrap();
     assert_eq!(
         store
-            .allocate_dni(site, &site_input.origin, loser)
+            .allocate_dni(site, &site_input.origin, loser, None)
             .await
             .unwrap()["status"],
         "disabled"
@@ -381,7 +389,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
     store.save_dni_pool(site, &input).await.unwrap();
     assert_eq!(
         store
-            .allocate_dni(site, &site_input.origin, loser)
+            .allocate_dni(site, &site_input.origin, loser, None)
             .await
             .unwrap()["status"],
         "expired"
@@ -398,7 +406,7 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
         .unwrap();
     assert_eq!(
         store
-            .allocate_dni(site, &site_input.origin, fresh)
+            .allocate_dni(site, &site_input.origin, fresh, None)
             .await
             .unwrap()["status"],
         "exhausted"
@@ -455,6 +463,280 @@ async fn allocation_concurrency_cooldown_evidence_and_isolation() {
         ] {
             sqlx::query(sql).bind(ws).execute(&mut *tx).await.unwrap();
         }
+    }
+    tx.commit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn several_pools_each_replace_their_own_published_number() {
+    let db = std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap();
+    let store = Store::connect(&db, Uuid::new_v4()).await.unwrap();
+    store.migrate().await.unwrap();
+    let origin = "https://multi-pool.example";
+    let site = store
+        .save_site(
+            None,
+            &SiteInput {
+                name: "Multi pool".into(),
+                origin: origin.into(),
+                allowed_fields: vec![],
+                enabled: true,
+                version: 0,
+            },
+        )
+        .await
+        .unwrap();
+    // LA numbers ring the LA line; toll-free numbers ring the main line.
+    let (la_line, main_line) = ("+12025559301", "+12025559302");
+    let (la_published, main_published) = ("+12025559311", "+12025559312");
+    let mut ids = vec![];
+    for (phone, destination) in [
+        ("+12025559321", la_line),
+        ("+12025559322", main_line),
+        ("+12025559323", main_line),
+    ] {
+        store
+            .add_number(&NewNumber {
+                provider: Default::default(),
+                label: "Pool".into(),
+                phone_number: phone.into(),
+                destination: destination.into(),
+                source: "Static must not leak".into(),
+                campaign: "Pool campaign".into(),
+            })
+            .await
+            .unwrap();
+        ids.push(
+            store
+                .numbers()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|n| n.phone_number == phone)
+                .unwrap()
+                .id,
+        );
+    }
+    let pool = |fallback: &str, destination: &str, numbers: Vec<Uuid>| PoolInput {
+        fallback_phone: fallback.into(),
+        destination_phone: Some(destination.into()),
+        enabled: true,
+        version: 0,
+        number_ids: numbers,
+        dedicated_numbers: true,
+        pool_id: None,
+        new_pool: true,
+    };
+    let la = store
+        .save_dni_pool(site, &pool(la_published, la_line, vec![ids[0]]))
+        .await
+        .unwrap();
+    // Two pools cannot replace the same published number.
+    assert!(
+        store
+            .save_dni_pool(site, &pool(la_published, main_line, vec![ids[1]]))
+            .await
+            .is_err()
+    );
+    // A number already in one pool cannot join another while enabled there.
+    assert!(
+        store
+            .save_dni_pool(site, &pool(main_published, la_line, vec![ids[0]]))
+            .await
+            .is_err()
+    );
+    let main = store
+        .save_dni_pool(site, &pool(main_published, main_line, vec![ids[1], ids[2]]))
+        .await
+        .unwrap();
+    assert_ne!(la, main);
+    let config = store.dni_pool(site).await.unwrap();
+    assert_eq!(config["pools"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        config["pool"]["id"],
+        json!(la),
+        "single-pool clients see the first pool"
+    );
+    // Editing by id leaves the other pool alone.
+    let mut edit = pool(main_published, main_line, vec![ids[1], ids[2]]);
+    edit.new_pool = false;
+    edit.pool_id = Some(main);
+    edit.version = 1;
+    store.save_dni_pool(site, &edit).await.unwrap();
+    edit.pool_id = Some(Uuid::new_v4());
+    assert!(matches!(
+        store.save_dni_pool(site, &edit).await,
+        Err(Error::NotFound)
+    ));
+
+    let session = |id: Uuid| {
+        let entry = json!({"source":"google","utm_campaign":"Multi","landing_url":"https://multi-pool.example/la"});
+        let store = &store;
+        async move { store.capture_session(site, origin, id, &entry).await }
+    };
+    let visit = Uuid::new_v4();
+    session(visit).await.unwrap();
+    let targets = vec![
+        la_published.to_string(),
+        main_published.to_string(),
+        "+12025559399".to_string(),
+    ];
+    let both = store
+        .allocate_dni(site, origin, visit, Some(&targets))
+        .await
+        .unwrap();
+    assert_eq!(both["status"], "ok");
+    let assignments = both["assignments"].as_array().unwrap();
+    assert_eq!(assignments.len(), 2, "unknown targets are ignored");
+    let by_target = |target: &str| {
+        assignments
+            .iter()
+            .find(|a| a["replaces"] == target)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(by_target(la_published)["phone_number"], "+12025559321");
+    assert_eq!(by_target(la_published)["status"], "assigned");
+    assert_eq!(by_target(main_published)["status"], "assigned");
+    // Retrying returns the same leases.
+    assert_eq!(
+        store
+            .allocate_dni(site, origin, visit, Some(&targets))
+            .await
+            .unwrap(),
+        both
+    );
+    // A page that shows only the main number leases nothing from the LA pool.
+    let generic = Uuid::new_v4();
+    session(generic).await.unwrap();
+    let only_main = store
+        .allocate_dni(site, origin, generic, Some(&[main_published.to_string()]))
+        .await
+        .unwrap();
+    let only_main = only_main["assignments"].as_array().unwrap();
+    assert_eq!(only_main.len(), 1);
+    assert_eq!(only_main[0]["replaces"], main_published);
+    assert_eq!(only_main[0]["status"], "assigned");
+    // The LA pool (one number) is exhausted for a third visit; main still has none
+    // left either, but each pool reports on its own.
+    let third = Uuid::new_v4();
+    session(third).await.unwrap();
+    let exhausted = store
+        .allocate_dni(site, origin, third, Some(&targets))
+        .await
+        .unwrap();
+    for a in exhausted["assignments"].as_array().unwrap() {
+        assert_eq!(a["status"], "exhausted");
+        assert_eq!(a["fallback_phone"], a["replaces"]);
+    }
+    let config = store.dni_pool(site).await.unwrap();
+    for p in config["pools"].as_array().unwrap() {
+        assert_eq!(p["fallback_count"], 1);
+    }
+    // Single-pool clients still get the original response from the first pool.
+    let legacy = store.allocate_dni(site, origin, visit, None).await.unwrap();
+    assert_eq!(legacy["status"], "assigned");
+    assert_eq!(legacy["fallback_phone"], la_published);
+    assert!(legacy.get("assignments").is_none());
+    // Too many targets is refused.
+    let many: Vec<String> = (0..11).map(|i| format!("+120255594{i:02}")).collect();
+    assert!(
+        store
+            .allocate_dni(site, origin, visit, Some(&many))
+            .await
+            .is_err()
+    );
+
+    // Each call is attributed through the pool of the number dialed and rings
+    // that pool's forwarding line.
+    for (to, line) in [
+        (
+            by_target(la_published)["phone_number"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            la_line,
+        ),
+        (
+            by_target(main_published)["phone_number"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            main_line,
+        ),
+    ] {
+        let sid = format!("CA{}", Uuid::new_v4().simple());
+        assert_eq!(
+            store
+                .call_event(&CallEvent {
+                    sid: sid.clone(),
+                    to: to.clone(),
+                    from: "+12025559384".into(),
+                    fingerprint: sid.clone(),
+                    kind: CallEventKind::Voice,
+                })
+                .await
+                .unwrap(),
+            line
+        );
+        let lead = store
+            .leads()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.tracking_number.as_deref() == Some(to.as_str()))
+            .unwrap();
+        assert_eq!(lead.source, "google");
+        let evidence = store.dni_evidence(lead.id).await.unwrap().unwrap();
+        assert_eq!(evidence["status"], "inferred_window");
+        assert_eq!(evidence["evidence"]["session_id"], json!(visit));
+    }
+
+    // Moving a number: disable it in its pool first, then another pool may take it.
+    let mut shrink = pool(main_published, main_line, vec![ids[1]]);
+    shrink.new_pool = false;
+    shrink.pool_id = Some(main);
+    shrink.version = 2;
+    store.save_dni_pool(site, &shrink).await.unwrap();
+    let toll_free_line_pool = store
+        .save_dni_pool(site, &pool("+12025559313", main_line, vec![ids[2]]))
+        .await
+        .unwrap();
+    assert_ne!(toll_free_line_pool, main);
+    let status = store.setup_status().await.unwrap();
+    let site_status = status["sites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == json!(site))
+        .unwrap()
+        .clone();
+    assert_eq!(site_status["pool_count"], 3);
+    assert_eq!(site_status["pool_enabled"], true);
+    assert_eq!(site_status["pool_number_count"], 3);
+
+    let mut tx = store.pool.begin().await.unwrap();
+    for sql in [
+        "DELETE FROM dni_call_evidence WHERE workspace_id=$1",
+        "DELETE FROM dni_assignments WHERE workspace_id=$1",
+        "DELETE FROM dni_pool_numbers WHERE workspace_id=$1",
+        "DELETE FROM dni_pools WHERE workspace_id=$1",
+        "DELETE FROM website_sessions WHERE site_id IN (SELECT id FROM sites WHERE workspace_id=$1)",
+        "DELETE FROM sites WHERE workspace_id=$1",
+        "DELETE FROM audit_events WHERE workspace_id=$1",
+        "DELETE FROM webhook_receipts WHERE workspace_id=$1",
+        "DELETE FROM inquiry_events WHERE workspace_id=$1",
+        "DELETE FROM inquiries WHERE workspace_id=$1",
+        "DELETE FROM leads WHERE workspace_id=$1",
+        "DELETE FROM tracking_numbers WHERE workspace_id=$1",
+        "DELETE FROM workspaces WHERE id=$1",
+    ] {
+        sqlx::query(sql)
+            .bind(store.workspace)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
     }
     tx.commit().await.unwrap();
 }
