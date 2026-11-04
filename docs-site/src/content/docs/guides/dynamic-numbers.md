@@ -36,7 +36,7 @@ Add `data-dni="true"` to the tracker script, and `data-visiconvert-phone` to eac
 <a data-visiconvert-phone href="tel:+12025550106">(202) 555-0106</a>
 ```
 
-The marked element must contain only the phone number, matching your fallback, with no icons or other words inside it. Unmarked text is never changed.
+The marked element must contain only the phone number, matching your fallback, with no icons or other words inside it. The visitor's number is shown in the same format, so `(202) 555-0106` becomes something like `(202) 555-0105`. Unmarked text is never changed.
 
 If your app replaces marked elements after load, call `await window.VisiConvert.refreshNumbers()` afterwards.
 

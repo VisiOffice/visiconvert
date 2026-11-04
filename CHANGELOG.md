@@ -1,3 +1,8 @@
+## Unreleased — DNI number formatting
+
+- Swapped website numbers keep the page's formatting (for example `(602) 555-0105`)
+  instead of showing raw E.164. `tel:` links still use E.164.
+
 ## Unreleased — signed outbound webhooks
 
 - Send signed events for new interactions, completed calls, inquiry reviews, bookings
