@@ -33,6 +33,9 @@ export function ApiKeys({ api, setup = false }: { api: Client; setup?: boolean }
         <div className="form-field"><label htmlFor="key-expiration">Expires at (UTC, optional)</label><input id="key-expiration" type="datetime-local" step="1" value={expires} onChange={e => setExpires(e.target.value)} /></div>
         <p>Read access is included. Optional write permissions:</p>
         {writeScopes.map(([scope, title]) => <label className="site-toggle" key={scope}><input type="checkbox" checked={scopes.includes(scope)} onChange={e => setScopes(e.target.checked ? [...scopes, scope] : scopes.filter(s => s !== scope))} />{title}</label>)}
+        <p>Billable permission:</p>
+        <label className="site-toggle"><input type="checkbox" checked={scopes.includes("numbers:purchase")} onChange={e => { setScopes(e.target.checked ? [...scopes, "numbers:purchase"] : scopes.filter(s => s !== "numbers:purchase")); if (e.target.checked && !expires) setExpires(new Date(Date.now() + 86400000).toISOString().slice(0, 19)); }} />Search, buy, and release phone numbers (billable)</label>
+        {scopes.includes("numbers:purchase") && <p className="notice">Every number this key buys is billed monthly until it is released: by VisiConvert for managed numbers, or by your carrier for your own SignalWire project. Purchases are capped per workspace and by your spending limit. The expiration defaults to 24 hours; revoke the key as soon as the numbers are bought.</p>}
         <div><button className="primary" disabled={busy || !!secret}>Create API key</button></div>
       </form>
     </section>

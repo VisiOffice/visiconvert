@@ -32,6 +32,7 @@ Permissions:
 | `leads:write` | Create form interactions; update shared inquiry qualification/notes |
 | `bookings:write` | Record, revise, cancel bookings |
 | `numbers:write` | Register an existing voice number in the connected Twilio or SignalWire account |
+| `numbers:purchase` | Search, buy, and release SignalWire numbers (`/numbers/search`, `/numbers/purchase`, `/numbers/{id}/release`, `/numbers/{id}/restore`). Billable: each number is charged monthly until released. Owners grant it under **Billable permission** in API Keys; the expiration defaults to 24 hours. |
 | `setup:write` | Create/update website settings and DNI pools (engine migration 0012) |
 
 Keys cannot manage keys, billing, provider credentials, inquiry grouping,

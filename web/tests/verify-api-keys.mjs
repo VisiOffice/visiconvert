@@ -45,6 +45,16 @@ export async function verifyApiKeys({page,api,origin,artifactDir,root}) {
   const list=cli(['leads','list','--source','API verification','--json']);assert.equal(list.status,0,list.stderr);assert(JSON.parse(list.stdout).some(l=>l.id===lead));
   const booking=(await (await request(writer,'/bookings')).json()).data.find(b=>b.external_id==='PUBLIC-CLI-BOOKING');assert.equal(booking.amount_minor,12345);
   await page.getByRole('button',{name:'I saved the key',exact:true}).click();
+  await page.getByLabel('Key name',{exact:true}).fill('Number buyer');
+  await page.getByLabel('Search, buy, and release phone numbers (billable)',{exact:true}).check();
+  assert.notEqual(await page.getByLabel('Expires at (UTC, optional)',{exact:true}).inputValue(),'','Billable keys default to an expiration');
+  await page.getByRole('button',{name:'Create API key',exact:true}).click();
+  const buyer=await page.getByLabel('New API key',{exact:true}).inputValue();
+  const buyerInfo=await (await request(buyer,'/workspace')).json();assert(buyerInfo.scopes.includes('numbers:purchase'));
+  await page.getByRole('button',{name:'I saved the key',exact:true}).click();
+  const buyerCard=page.getByRole('article',{name:'API key Number buyer',exact:true});assert((await buyerCard.textContent()).includes('numbers:purchase'));
+  await buyerCard.getByRole('button',{name:'Revoke key',exact:true}).click();await page.getByRole('button',{name:'Confirm revoke',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Key revoked.'}).waitFor();
   await page.screenshot({path:path.join(artifactDir,'api-keys-desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'API keys must fit mobile');
   await page.screenshot({path:path.join(artifactDir,'api-keys-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1000});
