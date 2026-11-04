@@ -1,4 +1,5 @@
-//! Google delivery for both self-hosted and hosted workspaces. No automatic staging.
+//! Google delivery for both self-hosted and hosted workspaces. Reviewed conversions are
+//! staged by hand; pipeline events are planned automatically when a workspace opts in.
 use super::*;
 use convert_adapters::google_api::{self, DeliveryError};
 use convert_store::conversions::Revision;
@@ -101,6 +102,9 @@ pub fn spawn(a: Shared) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
+            if plan(&a).await.is_err() {
+                tracing::error!("Pipeline conversion planning failed; due events are retried");
+            }
             for _ in 0..20 {
                 match run_one(&a).await {
                     Ok(true) => (),
@@ -116,6 +120,59 @@ pub fn spawn(a: Shared) {
         }
     });
 }
+/// Request builder handed to the store planner, which has no provider dependency.
+pub(crate) fn build(
+    snapshot: &Value,
+    login: &str,
+    prior: Option<&Value>,
+) -> Result<Value, &'static str> {
+    let request = google_api::event_request(snapshot, login)
+        .map_err(|_| "This event cannot be expressed as a Google conversion")?;
+    if prior.is_some_and(|p| !google_api::same_delivery_identity(p, &request)) {
+        return Err(
+            "Only the value of a sent conversion can change. Its time, click and action must stay the same.",
+        );
+    }
+    Ok(request)
+}
+/// At most one automatic destination check per workspace every 10 minutes, so a
+/// failing token or account never turns into a request loop.
+static REFRESHED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<Uuid, std::time::Instant>>,
+> = std::sync::LazyLock::new(Default::default);
+async fn refresh(a: &App, store: &Store) -> Result<(), convert_store::Error> {
+    let Some(login) = store.pipeline_refresh_login().await? else {
+        return Ok(());
+    };
+    {
+        let mut seen = REFRESHED.lock().unwrap();
+        if seen
+            .get(&store.workspace)
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(600))
+        {
+            return Ok(());
+        }
+        seen.insert(store.workspace, std::time::Instant::now());
+    }
+    // Provider error bodies are never logged; the saved report carries a sanitized message.
+    if google::refresh_destination(a, store, &login).await.is_err() {
+        tracing::warn!(workspace = %store.workspace, "Automatic Google destination check failed");
+    }
+    Ok(())
+}
+/// Record new_lead events, refresh expired destination checks, then plan due revisions.
+pub(crate) async fn plan(a: &App) -> Result<(), convert_store::Error> {
+    for workspace in a.store.pipeline_workspaces().await? {
+        let store = Store {
+            pool: a.store.pool.clone(),
+            workspace,
+        };
+        store.create_lead_events().await?;
+        refresh(a, &store).await?;
+        store.plan_pipeline(None, &build).await?;
+    }
+    Ok(())
+}
 /// One durable job; testable with a local provider and a disposable database.
 pub(crate) async fn run_one(a: &App) -> Result<bool, convert_store::Error> {
     let Some((workspace, id)) = a.store.claim_delivery().await? else {
@@ -126,6 +183,10 @@ pub(crate) async fn run_one(a: &App) -> Result<bool, convert_store::Error> {
         workspace,
     };
     // Refresh before acquiring the workspace lock; refresh rotation uses the DB.
+    let pipeline = store.pipeline_delivery_action(id).await?;
+    if pipeline.is_some() {
+        refresh(a, &store).await?;
+    }
     let credentials = google::worker_token(a, &store).await;
     let mut guard = store.claimed_guard(id).await?;
     let d = guard.delivery.as_ref().unwrap().clone();
@@ -175,6 +236,13 @@ pub(crate) async fn run_one(a: &App) -> Result<bool, convert_store::Error> {
                     .await?;
             }
         }
+        return Ok(true);
+    }
+    if let Some(action) = &pipeline
+        && guard.delivery.as_ref().unwrap()["attempted_at"].is_null()
+        && let Some(reason) = store.pipeline_destination_problem(action).await?
+    {
+        guard.hold(&reason).await?;
         return Ok(true);
     }
     let report = match guard.fresh(connection.revision, true).await {

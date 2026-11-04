@@ -1,3 +1,44 @@
+## Unreleased — automatic pipeline conversions (Google)
+
+- Workspaces define conversion actions (`lead`, `quote_sent`, `order`, …) with a trigger
+  (posted events or each new attributed lead), once-per-click or every-event counting,
+  an optional default value and a Google conversion action. Manage them under
+  **Conversions**, the private `PUT /api/conversions/actions/{key}`, or with a key/MCP (below).
+- `new_lead` conversions are held for 6 hours after the lead arrives and are not sent
+  while the inquiry is marked spam or unqualified, since Google cannot retract them.
+- New `POST /api/v1/conversion-events` (new `conversions:write` key permission) and
+  `GET /api/v1/conversion-events` (`read`). Events match a lead by ID, phone (last 10
+  digits) or email, first or latest click. Identical reposts are no-ops; changed values
+  become revisions that restate the value under the same transaction ID. Cancel stops
+  unsent work; sent conversions are flagged because Google cannot retract them.
+- Blocked events are kept with a reason (no lead, no Google click, outside the click
+  window, no consent, already counted for this click, …).
+- Off by default. Owners turn on automatic sending and choose a consent policy: recorded
+  consent per lead, or an attested "does not advertise in the EEA, UK or Switzerland"
+  that sends without a consent signal and records who attested and when. Events recorded
+  while sending is off are never sent later.
+- The delivery worker plans events every tick and refreshes the read-only Google
+  destination check when it is older than 24 hours. A failed check holds sends and
+  emits `conversion.failed` once. `conversion.*` webhooks for pipeline sends include a
+  `pipeline_event` object.
+- Pipeline outbox rows (kind `pipeline`) are excluded from the workspace-wide
+  invalidation trigger, so booking, inquiry, settings and consent edits do not stall
+  them. A destination may now be saved without reviewed qualification/booking actions.
+- The Conversions page is now one pipeline-first flow: connect Google and choose the
+  account, define and map actions (pick an existing Google action, or **Create in Google
+  Ads** for a recoverable VisiConvert action), consent policy, automatic sending with a
+  setup checklist, then results. The fixed qualified-lead/booking setup and the manual
+  stage/validate/queue workflow moved, unchanged, under **Advanced: manual review**.
+- Keys and MCP (`conversions:write`) can create, map and update actions, create a
+  Google action for one, and post events; `GET /api/v1/conversion-setup`,
+  `/conversion-actions` and read-only Google discovery need `read`. New MCP tools:
+  `get_conversion_setup`, `list_google_accounts`, `list_google_conversion_actions`,
+  `list_conversion_actions`, `create_conversion_action`, `update_conversion_action`,
+  `create_google_conversion_action`, `record_conversion_event`, `list_conversion_events`.
+  Keys and agents still cannot connect Google, change the consent policy or turn on
+  delivery or automatic sending. Hosted remote MCP needs Rails to offer `conversions:write`.
+- Additive migration 0023 (also widens `google_created_actions.kind` for pipeline actions). See [pipeline conversions](docs/PIPELINE_CONVERSIONS.md).
+
 ## Unreleased — billable number-purchase keys
 
 - Owners can grant `numbers:purchase` (search, buy, and release SignalWire numbers) in

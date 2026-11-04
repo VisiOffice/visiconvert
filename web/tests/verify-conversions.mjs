@@ -8,6 +8,12 @@ export async function verifyConversions({page,api,artifactDir}) {
   const booking={external_id:'ads-browser-booking',amount_minor:12345,currency:'USD',status:'booked',revision:1};
   assert.equal((await api(`/inquiries/${inquiry.id}/outcomes`,booking,'PUT')).status,200);
   await page.getByRole('button',{name:'Conversions',exact:true}).click();
+  // Pipeline steps come first; nothing steers a new workspace to the fixed reviewed actions.
+  await page.getByRole('region',{name:'Recent pipeline events',exact:true}).waitFor();
+  const order=await page.locator('section[aria-label], details[aria-label]').evaluateAll(n=>n.map(e=>e.getAttribute('aria-label')));
+  assert.deepEqual(order.filter(l=>['Conversion actions','Advertising consent','Automatic sending','Recent pipeline events','Advanced: manual review'].includes(l)),['Conversion actions','Advertising consent','Automatic sending','Recent pipeline events','Advanced: manual review']);
+  assert(!(await page.getByRole('button',{name:'Enable reviewed delivery',exact:true}).isVisible()),'Manual review starts collapsed');
+  await page.locator('summary').filter({hasText:/^Advanced: manual review/}).click();
   await page.getByText('Advanced destination settings',{exact:true}).click();
   await page.getByLabel('Google Ads customer ID').fill('1234567890');
   await page.getByLabel('Qualified inquiry action ID').fill('123');
@@ -31,10 +37,11 @@ export async function verifyConversions({page,api,artifactDir}) {
   let job=preview.jobs.find(j=>j.entity_key==='ads-browser-booking');
   assert.equal(job.snapshot.amount_minor,12345);assert.equal(preview.connected,false);
   assert.equal(preview.delivery_settings.enabled,false);
-  await page.getByRole('button',{name:'Enable reviewed delivery',exact:true}).click();
+  const controls=page.getByRole('region',{name:'Google delivery controls',exact:true});
+  await controls.getByRole('button',{name:'Enable reviewed delivery',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Delivery enabled.'}).waitFor();
   assert.equal((await api('/conversions')).body.delivery_settings.enabled,true);
-  await page.getByRole('button',{name:'Pause Google delivery',exact:true}).click();
+  await controls.getByRole('button',{name:'Pause Google delivery',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Pending sends paused.'}).waitFor();
   assert.equal((await api('/conversions')).body.delivery_settings.enabled,false);
   await page.getByRole('button',{name:'Validate event with Google',exact:true}).click();
@@ -63,4 +70,53 @@ export async function verifyConversions({page,api,artifactDir}) {
   await card.getByText('canceled',{exact:true}).waitFor();
   const stale=await api(`/conversions/${job.id}/cancel`,{version:job.version});assert.equal(stale.status,409);
   assert.equal((await api('/conversions')).body.jobs.filter(j=>j.entity_key==='ads-browser-booking').length,1);
+  await verifyPipeline({page,api,lead,artifactDir});
+}
+// Automatic conversions: actions, consent attestation, auto-send and event status.
+async function verifyPipeline({page,api,lead,artifactDir}) {
+  const section=page.getByRole('region',{name:'Conversion actions',exact:true});
+  await section.getByRole('button',{name:'Add action',exact:true}).click();
+  const form=section.getByRole('form',{name:'New action',exact:true});
+  await form.getByLabel('Action key',{exact:true}).fill('order');
+  await form.getByLabel('Action name',{exact:true}).fill('Order');
+  await form.getByLabel('Counting',{exact:true}).selectOption('every');
+  await form.getByLabel('Default value (USD, optional)',{exact:true}).fill('20.5');
+  await form.getByLabel('Google conversion action ID',{exact:true}).fill('456');
+  await form.getByRole('button',{name:'Create action',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Action created.'}).waitFor();
+  const card=section.getByRole('article',{name:'Action order',exact:true});
+  await card.getByText('Default $20.50',{exact:false}).waitFor();
+  await card.getByRole('button',{name:'Edit action',exact:true}).click();
+  const edit=card.getByRole('form',{name:'Edit action order',exact:true});
+  assert(await edit.getByLabel('Counting',{exact:true}).isDisabled(),'Counting is fixed after creation');
+  await edit.getByLabel('Action name',{exact:true}).fill('Completed order');
+  await edit.getByRole('button',{name:'Save action',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Action saved.'}).waitFor();
+  let overview=(await api('/conversions/pipeline')).body;
+  assert.deepEqual(overview.actions.map(a=>[a.key,a.name,a.default_value_minor,a.google_action_id,a.version]),[['order','Completed order',2050,'456',2]]);
+  const consent=page.getByRole('region',{name:'Advertising consent',exact:true});
+  const auto=page.getByRole('region',{name:'Automatic sending',exact:true});
+  assert.match(await auto.getByLabel('Setup checklist').innerText(),/Owner must turn on automatic sending in Conversions\./);
+  await consent.getByLabel('Not required: this workspace does not advertise in the EEA, UK or Switzerland').check();
+  const save=consent.getByRole('button',{name:'Save consent policy',exact:true});
+  assert(await save.isDisabled(),'The attestation must be confirmed first');
+  await consent.getByLabel(/I confirm this workspace does not advertise/).check();
+  await save.click();
+  await page.getByRole('status').filter({hasText:'Consent policy saved.'}).waitFor();
+  await consent.getByText(/^Attested by workspace operator/).waitFor();
+  await auto.getByRole('button',{name:'Turn on automatic sending',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Automatic sending turned on.'}).waitFor();
+  overview=(await api('/conversions/pipeline')).body;
+  assert.equal(overview.policy.auto_send,true);assert.equal(overview.policy.consent_policy,'not_required_outside_eea');
+  // Google delivery is paused in this fixture, so the event is recorded and never sent.
+  const posted=await api('/v1/conversion-events',{action:'order',external_id:'browser-order-1',lead_id:lead.id,value_minor:41250});
+  assert.equal(posted.status,200,JSON.stringify(posted.body));
+  assert.equal(posted.body.delivery.google,'blocked');
+  await page.getByRole('button',{name:'Refresh events',exact:true}).click();
+  const event=page.getByRole('article',{name:'Event order browser-order-1',exact:true});
+  await event.getByText(/Recorded while automatic sending was off/).waitFor();
+  await event.getByText('$412.50',{exact:false}).waitFor();
+  await page.screenshot({path:path.join(artifactDir,'conversions-pipeline.png'),fullPage:true});
+  await auto.getByRole('button',{name:'Turn off automatic sending',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Automatic sending turned off.'}).waitFor();
 }

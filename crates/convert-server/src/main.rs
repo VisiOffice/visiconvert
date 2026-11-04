@@ -8,6 +8,7 @@ mod hosted;
 mod inquiries;
 mod managed;
 mod managed_usage;
+mod pipeline;
 mod public_api;
 mod remote_mcp;
 mod secrets;
@@ -219,6 +220,7 @@ fn router(app: Shared) -> Router {
         .merge(inquiries::routes())
         .merge(conversions::routes())
         .merge(delivery::routes())
+        .merge(pipeline::private_routes())
         .merge(google::routes())
         .merge(api_keys::routes())
         .merge(webhooks::routes())
@@ -799,3 +801,6 @@ mod adoption_tests;
 mod delivery_tests;
 #[cfg(test)]
 mod webhook_tests;
+
+#[cfg(test)]
+mod pipeline_tests;

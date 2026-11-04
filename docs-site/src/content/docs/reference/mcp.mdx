@@ -162,6 +162,101 @@ No arguments.
 | `reference` | string | Yes | Job or invoice number. |
 | `status` | `booked`, `canceled` | Yes |  |
 
+## `get_conversion_setup`
+
+**Read.** Google pipeline conversion checklist: connection, saved advertising account, actions and mappings, destination check, delivery and automatic sending, with next_steps naming who acts. Connecting Google, consent policy, Google delivery and automatic sending are owner-only switches in Conversions; no tool can change them.
+
+No arguments.
+
+## `list_google_accounts`
+
+**Read.** Google Ads access accounts (login customer IDs) for the connected Google login and, with login, the advertising accounts it can reach. The owner connects Google in Conversions; this cannot start or replace a connection.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `login` | string | No | Access account from a previous call. |
+
+## `list_google_conversion_actions`
+
+**Read.** Conversion actions in a Google Ads account. Only eligible (enabled UPLOAD_CLICKS actions owned by the account) can be mapped. Use the saved customer_id from get_conversion_setup.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `customer` | string | Yes |  |
+| `login` | string | Yes |  |
+
+## `list_conversion_actions`
+
+**Read.** VisiConvert pipeline actions with their Google mapping and current versions.
+
+No arguments.
+
+## `create_conversion_action`
+
+**Change.** Define a pipeline action and, preferably, map it to an existing eligible Google import action. Requires conversions:write. Key, trigger and counting cannot change later. Does not turn on sending.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `counting` | `once_per_click`, `every` | Yes | once_per_click for a lead or first quote; every for each order. Fixed after creation. |
+| `default_value_minor` | any | No | USD cents used when an event has no value. |
+| `enabled` | boolean | Yes |  |
+| `google_action_id` | any | No | An existing eligible Google import action from list_google_conversion_actions (preferred). Null leaves it unmapped. |
+| `key` | string | Yes | Name your system posts, e.g. lead, quote_sent, order. Fixed after creation. |
+| `name` | string | Yes |  |
+| `trigger` | `events`, `new_lead` | Yes | events: posted by your system with record_conversion_event. new_lead: VisiConvert records one for each new lead with a Google click. Fixed after creation. |
+
+## `update_conversion_action`
+
+**Change.** Rename, re-map, change the default value of, or disable a pipeline action at its current version. Requires conversions:write. Re-mapping affects future sends only.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `counting` | `once_per_click`, `every` | Yes | once_per_click for a lead or first quote; every for each order. Fixed after creation. |
+| `default_value_minor` | any | No | USD cents used when an event has no value. |
+| `enabled` | boolean | Yes |  |
+| `google_action_id` | any | No | An existing eligible Google import action from list_google_conversion_actions (preferred). Null leaves it unmapped. |
+| `key` | string | Yes | Name your system posts, e.g. lead, quote_sent, order. Fixed after creation. |
+| `name` | string | Yes |  |
+| `trigger` | `events`, `new_lead` | Yes | events: posted by your system with record_conversion_event. new_lead: VisiConvert records one for each new lead with a Google click. Fixed after creation. |
+| `version` | integer | Yes | Current version from list_conversion_actions. On conflict re-read and review before retrying. |
+
+## `create_google_conversion_action`
+
+**Change.** Create a new VisiConvert import action in the saved Google Ads account for an unmapped pipeline action, and map it. Requires conversions:write. Prefer mapping an existing action; use this only when the owner wants a new one. Safe to retry: a retry finds the action an interrupted attempt created. New actions are secondary (reporting only) with a 90-day click window.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `category` | `QUALIFIED_LEAD`, `CONVERTED_LEAD`, `SUBMIT_LEAD_FORM`, `REQUEST_QUOTE`, `BOOK_APPOINTMENT`, `PURCHASE`, `DEFAULT` | No | Defaults to QUALIFIED_LEAD for once_per_click and PURCHASE for every. |
+| `key` | string | Yes |  |
+| `login` | string | Yes | Google Ads access account. |
+| `version` | integer | Yes | Current action version. |
+
+## `record_conversion_event`
+
+**Change.** Post one pipeline event (for example a sent quote or an order) for an exact lead or a phone/email match. Requires conversions:write. Reposting the same external_id with the same fields is a no-op; a changed value creates a revision. The result includes the Google delivery state and any blocked reason.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `action` | string | Yes | Key of an action with trigger events. |
+| `attribution` | `first_click`, `latest_click` | No |  |
+| `external_id` | string | Yes | Your ID for this event, e.g. an order number. |
+| `lead_id` | string | No |  |
+| `match` | object | No | Instead of lead_id. |
+| `occurred_at` | string | No |  |
+| `status` | `active`, `canceled` | No |  |
+| `value_minor` | integer | No | USD cents. |
+
+## `list_conversion_events`
+
+**Read.** Pipeline events newest first, with revision, matched lead, Google delivery state and blocked reason.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `action` | string | No |  |
+| `cursor` | string | No |  |
+| `external_id` | string | No |  |
+| `limit` | integer | No | Default: `50`. |
+
 ## Prompt: `set_up_call_tracking`
 
 Walks an agent through setup:
@@ -172,5 +267,5 @@ Walks an agent through setup:
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
 6. For DNI, call get_site_pool. Confirm the published website number (fallback_phone), common forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before configure_site_pool. Supply the current version (0 if absent); on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
-7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. Google Ads delivery requires separate owner-only validation and explicit queuing in Conversions; MCP setup never enables it.
+7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google, the consent policy, Google delivery and automatic sending are owner-only switches in Conversions; tell the owner which are left rather than trying to change them.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.

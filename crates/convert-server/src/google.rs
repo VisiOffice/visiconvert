@@ -128,6 +128,14 @@ pub fn routes() -> Router<Shared> {
             },
         ))
 }
+/// Connected with the OAuth client this installation is configured with now.
+pub(crate) fn connected(a: &App, c: &Connection) -> bool {
+    c.encrypted_token.is_some()
+        && a.vault.is_some()
+        && a.google
+            .as_ref()
+            .is_some_and(|g| c.client_fingerprint.as_deref() == Some(g.fingerprint().as_str()))
+}
 async fn show(State(a): State<Shared>, Extension(access): Extension<hosted::Access>) -> Api<Value> {
     owner(&access).await?;
     let c = access.store.google_connection().await?;
@@ -362,11 +370,11 @@ pub(crate) async fn worker_token(a: &App, store: &Store) -> Result<(Connection, 
     Ok((c, t.access_token))
 }
 #[derive(Deserialize)]
-struct Discovery {
+pub(crate) struct Discovery {
     login: Option<String>,
     customer: Option<String>,
 }
-async fn accounts(
+pub(crate) async fn accounts(
     State(a): State<Shared>,
     Extension(access): Extension<hosted::Access>,
     Query(q): Query<Discovery>,
@@ -387,7 +395,7 @@ async fn accounts(
         ))
     }
 }
-async fn actions(
+pub(crate) async fn actions(
     State(a): State<Shared>,
     Extension(access): Extension<hosted::Access>,
     Query(q): Query<Discovery>,
@@ -425,44 +433,7 @@ async fn validate(
     {
         return Err(convert_store::Error::Conflict.into());
     }
-    let result = async {
-        if !a.google_client.logins(&token).await?.contains(&input.login) {
-            return Err(google_api::Error::Access);
-        }
-        let ids: Vec<&str> = [&settings.qualified_action_id, &settings.booking_action_id]
-            .into_iter()
-            .map(String::as_str)
-            .filter(|s| !s.is_empty())
-            .collect();
-        a.google_client
-            .selected_actions(&token, &input.login, &settings.customer_id, &ids)
-            .await
-    }
-    .await;
-    let report = match result {
-        Ok((account, actions, more)) => {
-            let chosen: Vec<_> = [&settings.qualified_action_id, &settings.booking_action_id]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect();
-            let valid = account["status"] == "ENABLED"
-                && !chosen.is_empty()
-                && chosen.iter().all(|id| {
-                    actions
-                        .iter()
-                        .any(|a| a.id.as_str() == id.as_str() && a.eligible)
-                });
-            let selected: Vec<_> = actions
-                .iter()
-                .filter(|a| chosen.iter().any(|id| a.id.as_str() == id.as_str()))
-                .collect();
-            json!({"valid":valid,"login_customer_id":input.login,"account":account,"actions":selected,"settings_version":settings.version,"uploads_enabled":access.store.delivery_settings().await?["enabled"],
-                "message":if valid {"Account is readable and the selected actions are enabled import actions owned by this account. Upload acceptance and attribution are not checked."}else if more {"A selected action is not verified in the first 200 results. Narrow the destination or check the action IDs."}else{"Check that this account is enabled and owns every selected, enabled import conversion action. Select the conversion-owning account when using cross-account tracking."}})
-        }
-        Err(e) => {
-            json!({"valid":false,"settings_version":settings.version,"uploads_enabled":access.store.delivery_settings().await?["enabled"],"message":e.to_string()})
-        }
-    };
+    let report = destination_report(&a, &access.store, &token, &input.login).await?;
     let actor = access
         .store
         .inquiry_actor(access.session_hash.as_deref())
@@ -473,6 +444,83 @@ async fn validate(
         .save_google_validation(connection.revision, settings.version, &report, &actor)
         .await?;
     Ok(Json(report))
+}
+/// Read-only destination check covering the reviewed actions and every enabled pipeline
+/// action. `valid` follows the reviewed actions when any are mapped, so a misconfigured
+/// pipeline action never stops reviewed delivery; pipeline sends check their own action.
+pub(crate) async fn destination_report(
+    a: &App,
+    store: &Store,
+    token: &str,
+    login: &str,
+) -> Result<Value, ApiError> {
+    let settings = store.google_conversion_settings().await?;
+    let manual: Vec<String> = [&settings.qualified_action_id, &settings.booking_action_id]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect();
+    let pipeline = store.pipeline_action_ids().await?;
+    let mut ids: Vec<&str> = manual.iter().chain(&pipeline).map(String::as_str).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let result = async {
+        if !a
+            .google_client
+            .logins(token)
+            .await?
+            .iter()
+            .any(|l| l == login)
+        {
+            return Err(google_api::Error::Access);
+        }
+        if ids.is_empty() {
+            return Err(google_api::Error::Access);
+        }
+        a.google_client
+            .selected_actions(token, login, &settings.customer_id, &ids)
+            .await
+    }
+    .await;
+    let enabled = store.delivery_settings().await?["enabled"].clone();
+    Ok(match result {
+        Ok((account, actions, more)) => {
+            let ok = |list: &[String]| {
+                list.iter()
+                    .all(|id| actions.iter().any(|a| &a.id == id && a.eligible))
+            };
+            let valid = account["status"] == "ENABLED"
+                && if manual.is_empty() {
+                    !pipeline.is_empty() && ok(&pipeline)
+                } else {
+                    ok(&manual)
+                };
+            let selected: Vec<_> = actions
+                .iter()
+                .filter(|a| ids.contains(&a.id.as_str()))
+                .collect();
+            json!({"valid":valid,"login_customer_id":login,"account":account,"actions":selected,"settings_version":settings.version,"uploads_enabled":enabled,
+                "pipeline_actions_valid":ok(&pipeline),
+                "message":if valid {"Account is readable and the selected actions are enabled import actions owned by this account. Upload acceptance and attribution are not checked."}else if more {"A selected action is not verified in the first 200 results. Narrow the destination or check the action IDs."}else{"Check that this account is enabled and owns every selected, enabled import conversion action. Select the conversion-owning account when using cross-account tracking."}})
+        }
+        Err(e) => {
+            json!({"valid":false,"login_customer_id":login,"settings_version":settings.version,"uploads_enabled":enabled,"message":if ids.is_empty() {"Map at least one conversion action before checking the destination.".to_string()} else {e.to_string()}})
+        }
+    })
+}
+/// Worker refresh of an expired check, with the login the owner last checked with.
+pub(crate) async fn refresh_destination(
+    a: &App,
+    store: &Store,
+    login: &str,
+) -> Result<(), ApiError> {
+    let (connection, token) = worker_token(a, store).await?;
+    let settings = store.google_conversion_settings().await?;
+    let report = destination_report(a, store, &token, login).await?;
+    store
+        .save_google_validation(connection.revision, settings.version, &report, "worker")
+        .await?;
+    Ok(())
 }
 async fn disconnect(
     Extension(access): Extension<hosted::Access>,
@@ -565,8 +613,8 @@ async fn create_actions(
                 &input.customer,
                 &name,
                 known.as_deref(),
-                kind,
-                currency,
+                &google_api::ActionSpec::reviewed(kind, currency)
+                    .ok_or(google_api::Error::Response)?,
             )
             .await?;
         access
@@ -586,4 +634,102 @@ async fn create_actions(
     Ok(Json(
         json!({"ok":true,"qualified_action_id":ids[0],"booking_action_id":ids[1]}),
     ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CreatePipelineAction {
+    /// Current version of the VisiConvert action; the mapping is saved with it.
+    version: i32,
+    /// The Google Ads access account (login-customer-id) to create through.
+    login: String,
+    /// Optional Google category; defaults from the action's counting.
+    category: Option<String>,
+}
+/// Create, or recover after an interrupted attempt, a VisiConvert import action in the
+/// saved advertising account for one pipeline action, and map the action to it.
+/// Mapping an existing Google action is preferred; this never replaces a mapping.
+pub(crate) async fn create_pipeline_action(
+    a: &App,
+    store: &Store,
+    key: &str,
+    input: &CreatePipelineAction,
+    actor: &str,
+) -> Result<Value, ApiError> {
+    let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.into());
+    let current = store
+        .conversion_actions()
+        .await?
+        .into_iter()
+        .find(|v| v["key"] == key)
+        .ok_or(convert_store::Error::NotFound)?;
+    if current["version"].as_i64() != Some(input.version.into()) {
+        return Err(convert_store::Error::Conflict.into());
+    }
+    if current["google_action_id"].is_string() {
+        return Err(ApiError(StatusCode::CONFLICT, "This action is already mapped to a Google conversion action. Clear the mapping first to create a new one.".into()));
+    }
+    let settings = store.google_conversion_settings().await?;
+    if settings.version == 0 || !google_api::customer_id(&settings.customer_id) {
+        return Err(bad(
+            "The workspace owner must choose and save the Google Ads account in Conversions first.",
+        ));
+    }
+    if !google_api::customer_id(&input.login) {
+        return Err(bad("Use a 10-digit Google Ads access account ID."));
+    }
+    let counting = current["counting"].as_str().unwrap_or("");
+    let customer = settings.customer_id.clone();
+    let (_, token) = worker_token(a, store).await?;
+    if !a.google_client.logins(&token).await?.contains(&input.login) {
+        return Err(google_api::Error::Access.into());
+    }
+    let (account, _, _) = a
+        .google_client
+        .actions(&token, &input.login, &customer)
+        .await?;
+    if account["status"] != "ENABLED" || account["conversion_owner"] != customer {
+        return Err(bad(
+            "The saved Google Ads account must be enabled and own conversion tracking before creating actions.",
+        ));
+    }
+    let currency = account["currency"]
+        .as_str()
+        .ok_or(google_api::Error::Response)?;
+    let spec = google_api::ActionSpec::pipeline(counting, input.category.as_deref(), currency)
+        .ok_or_else(|| {
+            bad(&format!(
+                "category must be one of {}",
+                google_api::PIPELINE_CATEGORIES.join(", ")
+            ))
+        })?;
+    let kind = format!("pipeline:{key}");
+    let known = store.created_google_action(&customer, &kind).await?;
+    let name = format!("VisiConvert - {key} ({})", store.workspace);
+    let id = a
+        .google_client
+        .setup_action(
+            &token,
+            &input.login,
+            &customer,
+            &name,
+            known.as_deref(),
+            &spec,
+        )
+        .await?;
+    store
+        .remember_google_action(&customer, &kind, &id, actor)
+        .await?;
+    let text = |k: &str| current[k].as_str().unwrap_or("").to_string();
+    let update = convert_store::pipeline::ActionInput {
+        key: text("key"),
+        name: text("name"),
+        trigger: text("trigger"),
+        default_value_minor: current["default_value_minor"].as_i64(),
+        counting: text("counting"),
+        google_action_id: Some(id),
+        enabled: current["enabled"].as_bool().unwrap_or(false),
+        version: input.version,
+    };
+    Ok(store.save_conversion_action(&update, actor).await?)
 }

@@ -5,6 +5,72 @@ use std::time::Duration;
 pub const SCOPES: &str =
     "https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/datamanager";
 
+/// What VisiConvert creates in Google for one outcome. Categories are a fixed allowlist.
+#[derive(Debug, Clone)]
+pub struct ActionSpec {
+    pub category: &'static str,
+    pub counting: &'static str,
+    pub always_default: bool,
+    pub currency: String,
+}
+pub const PIPELINE_CATEGORIES: &[&str] = &[
+    "QUALIFIED_LEAD",
+    "CONVERTED_LEAD",
+    "SUBMIT_LEAD_FORM",
+    "REQUEST_QUOTE",
+    "BOOK_APPOINTMENT",
+    "PURCHASE",
+    "DEFAULT",
+];
+impl ActionSpec {
+    /// The fixed reviewed outcomes: one valueless qualified lead per click, or each booking.
+    pub fn reviewed(kind: &str, currency: &str) -> Option<Self> {
+        Some(match kind {
+            "qualified" => Self {
+                category: "QUALIFIED_LEAD",
+                counting: "ONE_PER_CLICK",
+                always_default: true,
+                currency: currency.into(),
+            },
+            "booking" => Self {
+                category: "PURCHASE",
+                counting: "MANY_PER_CLICK",
+                always_default: false,
+                currency: currency.into(),
+            },
+            _ => return None,
+        })
+    }
+    /// A pipeline action: values come from events, counting follows the VisiConvert action.
+    pub fn pipeline(counting: &str, category: Option<&str>, currency: &str) -> Option<Self> {
+        let once = match counting {
+            "once_per_click" => true,
+            "every" => false,
+            _ => return None,
+        };
+        let category = match category {
+            Some(c) => *PIPELINE_CATEGORIES.iter().find(|v| **v == c)?,
+            None if once => "QUALIFIED_LEAD",
+            None => "PURCHASE",
+        };
+        Some(Self {
+            category,
+            counting: if once {
+                "ONE_PER_CLICK"
+            } else {
+                "MANY_PER_CLICK"
+            },
+            always_default: false,
+            currency: currency.into(),
+        })
+    }
+    fn valid(&self) -> bool {
+        PIPELINE_CATEGORIES.contains(&self.category)
+            && matches!(self.counting, "ONE_PER_CLICK" | "MANY_PER_CLICK")
+            && self.currency.len() == 3
+            && self.currency.bytes().all(|b| b.is_ascii_uppercase())
+    }
+}
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Google authorization expired or was revoked. Reconnect Google.")]
@@ -307,7 +373,7 @@ impl Client {
         customer: &str,
         ids: &[&str],
     ) -> Result<(Value, Vec<Action>, bool), Error> {
-        if ids.is_empty() || ids.len() > 2 || ids.iter().any(|id| !action_id(id)) {
+        if ids.is_empty() || ids.len() > 50 || ids.iter().any(|id| !action_id(id)) {
             return Err(Error::Access);
         }
         self.actions_matching(token, login, customer, ids).await
@@ -373,7 +439,8 @@ impl Client {
         Ok((account, actions, more))
     }
     /// Exact lookup avoids the 200-action discovery cap. Names are generated from
-    /// a workspace UUID, never from user input. Google enforces unique names.
+    /// a workspace UUID and validated action keys, never free text. Google enforces
+    /// unique names, so a retry finds the action an interrupted attempt created.
     pub async fn setup_action(
         &self,
         token: &str,
@@ -381,22 +448,25 @@ impl Client {
         customer: &str,
         name: &str,
         known_id: Option<&str>,
-        kind: &str,
-        currency: &str,
+        spec: &ActionSpec,
     ) -> Result<String, Error> {
         if !customer_id(customer)
             || !customer_id(login)
-            || !matches!(kind, "qualified" | "booking")
-            || currency.len() != 3
-            || !currency.bytes().all(|b| b.is_ascii_uppercase())
+            || !spec.valid()
             || name.len() > 100
             || !name
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b" -()".contains(&b))
+                .all(|b| b.is_ascii_alphanumeric() || b" -()_".contains(&b))
             || known_id.is_some_and(|id| !action_id(id))
         {
             return Err(Error::Response);
         }
+        let (category, count, fixed, currency) = (
+            spec.category,
+            spec.counting,
+            spec.always_default,
+            spec.currency.as_str(),
+        );
         let filter = match known_id {
             Some(id) => format!("conversion_action.id = {id}"),
             None => format!("conversion_action.name = '{name}'"),
@@ -405,16 +475,6 @@ impl Client {
             "SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.status, conversion_action.owner_customer, conversion_action.category, conversion_action.counting_type, conversion_action.value_settings.default_value, conversion_action.value_settings.default_currency_code, conversion_action.value_settings.always_use_default_value FROM conversion_action WHERE {filter} AND conversion_action.status IN ('ENABLED', 'HIDDEN', 'REMOVED') LIMIT 2"
         );
         let (rows, more) = self.search(token, login, customer, &query).await?;
-        let category = if kind == "qualified" {
-            "QUALIFIED_LEAD"
-        } else {
-            "PURCHASE"
-        };
-        let count = if kind == "qualified" {
-            "ONE_PER_CLICK"
-        } else {
-            "MANY_PER_CLICK"
-        };
         if more || rows.len() > 1 {
             return Err(Error::ActionConflict);
         }
@@ -430,8 +490,7 @@ impl Client {
                 || v["ownerCustomer"] != format!("customers/{customer}")
                 || v["category"] != category
                 || v["countingType"] != count
-                || value["alwaysUseDefaultValue"].as_bool().unwrap_or(false)
-                    != (kind == "qualified")
+                || value["alwaysUseDefaultValue"].as_bool().unwrap_or(false) != fixed
                 || value["defaultValue"].as_f64().unwrap_or(0.0) != 0.0
                 || value["defaultCurrencyCode"] != currency
             {
@@ -448,7 +507,7 @@ impl Client {
             .json(&json!({"partialFailure":false,"validateOnly":false,"operations":[{"create":{
                 "name":name,"type":"UPLOAD_CLICKS","status":"ENABLED","category":category,
                 "countingType":count,"primaryForGoal":false,"clickThroughLookbackWindowDays":90,
-                "valueSettings":{"defaultValue":0,"defaultCurrencyCode":currency,"alwaysUseDefaultValue":kind=="qualified"}
+                "valueSettings":{"defaultValue":0,"defaultCurrencyCode":currency,"alwaysUseDefaultValue":fixed}
             }}]})), false).await.map_err(|e| match e {
                 Error::Credentials | Error::Access => e,
                 _ => Error::CreationUncertain,
@@ -609,6 +668,9 @@ impl Client {
 }
 /// Whitelist only the fields required by Data Manager; no names, notes, URLs or consent references.
 pub fn event_request(snapshot: &Value, login: &str) -> Result<Value, DeliveryError> {
+    if snapshot["kind"] == "pipeline" {
+        return pipeline_request(snapshot, login);
+    }
     let settings = &snapshot["settings"];
     let customer = settings["customer_id"]
         .as_str()
@@ -661,12 +723,70 @@ pub fn event_request(snapshot: &Value, login: &str) -> Result<Value, DeliveryErr
         json!({"destinations":[{"operatingAccount":{"accountType":"GOOGLE_ADS","accountId":customer},"loginAccount":{"accountType":"GOOGLE_ADS","accountId":login},"productDestinationId":action}],"events":[event]}),
     )
 }
+fn identifiers(snapshot: &Value) -> serde_json::Map<String, Value> {
+    let mut identifiers = serde_json::Map::new();
+    for k in ["gclid", "gbraid", "wbraid"] {
+        if let Some(s) = snapshot["click_identifiers"][k]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() <= 2048 && !s.chars().any(char::is_control))
+        {
+            identifiers.insert(k.into(), json!(s));
+        }
+    }
+    identifiers
+}
+/// Automatic pipeline event: action ID from the snapshot, optional value, and no consent
+/// block when the workspace attested it does not advertise in the EEA, UK or Switzerland.
+fn pipeline_request(snapshot: &Value, login: &str) -> Result<Value, DeliveryError> {
+    let customer = snapshot["customer_id"]
+        .as_str()
+        .ok_or(DeliveryError::Invalid)?;
+    let action = snapshot["google_action_id"]
+        .as_str()
+        .ok_or(DeliveryError::Invalid)?;
+    let identifiers = identifiers(snapshot);
+    if !customer_id(customer) || !customer_id(login) || !action_id(action) || identifiers.is_empty()
+    {
+        return Err(DeliveryError::Invalid);
+    }
+    let mut event = json!({"transactionId":snapshot["transaction_id"],"eventTimestamp":snapshot["event_at"],"adIdentifiers":identifiers,"eventSource":if snapshot["channel"]=="call" {"PHONE"} else {"WEB"}});
+    match snapshot["consent_policy"].as_str() {
+        Some("not_required_outside_eea") => (),
+        Some("per_lead") => {
+            if snapshot["consent"]["ad_user_data"] != "granted" {
+                return Err(DeliveryError::Invalid);
+            }
+            let personalization = match snapshot["consent"]["ad_personalization"].as_str() {
+                Some("granted") => "CONSENT_GRANTED",
+                Some("denied") => "CONSENT_DENIED",
+                _ => return Err(DeliveryError::Invalid),
+            };
+            event["consent"] =
+                json!({"adUserData":"CONSENT_GRANTED","adPersonalization":personalization});
+        }
+        _ => return Err(DeliveryError::Invalid),
+    }
+    if !snapshot["value_minor"].is_null() {
+        let cents = snapshot["value_minor"]
+            .as_i64()
+            .filter(|c| *c >= 0 && *c <= 9_000_000_000_000)
+            .ok_or(DeliveryError::Invalid)?;
+        event["conversionValue"] =
+            serde_json::from_str(&format!("{}.{:02}", cents / 100, cents % 100))
+                .map_err(|_| DeliveryError::Invalid)?;
+        event["currency"] = json!("USD");
+    }
+    Ok(
+        json!({"destinations":[{"operatingAccount":{"accountType":"GOOGLE_ADS","accountId":customer},"loginAccount":{"accountType":"GOOGLE_ADS","accountId":login},"productDestinationId":action}],"events":[event]}),
+    )
+}
 /// Only value changes may be restated; identities and destinations stay pinned.
 pub fn same_delivery_identity(a: &Value, b: &Value) -> bool {
     let strip = |v: &Value| {
         let mut v = v.clone();
         if let Some(e) = v["events"][0].as_object_mut() {
             e.remove("conversionValue");
+            e.remove("currency");
         }
         v
     };
@@ -676,6 +796,29 @@ pub fn same_delivery_identity(a: &Value, b: &Value) -> bool {
 #[cfg(test)]
 mod delivery_tests {
     use super::*;
+    #[test]
+    fn pipeline_request_consent_policy_value_and_identity() {
+        let mut s = json!({"kind":"pipeline","channel":"form","transaction_id":"vc_p","event_at":"2026-10-30T10:00:00Z","value_minor":2000,"customer_id":"1234567890","google_action_id":"321","click_identifiers":{"gclid":"click"},"consent_policy":"not_required_outside_eea","consent":{"ad_user_data":"unknown","reference":"private"},"external_id":"private-order"});
+        let r = event_request(&s, "1234567890").unwrap();
+        let e = &r["events"][0];
+        assert!(e.get("consent").is_none());
+        assert_eq!(e["conversionValue"], json!(20.0));
+        assert_eq!(r["destinations"][0]["productDestinationId"], "321");
+        assert!(!r.to_string().contains("private"));
+        s["value_minor"] = Value::Null;
+        let none = event_request(&s, "1234567890").unwrap();
+        assert!(none["events"][0].get("conversionValue").is_none());
+        assert!(same_delivery_identity(&r, &none));
+        s["consent_policy"] = json!("per_lead");
+        assert_eq!(event_request(&s, "1234567890"), Err(DeliveryError::Invalid));
+        s["consent"] = json!({"ad_user_data":"granted","ad_personalization":"granted"});
+        assert_eq!(
+            event_request(&s, "1234567890").unwrap()["events"][0]["consent"]["adPersonalization"],
+            "CONSENT_GRANTED"
+        );
+        s["consent_policy"] = json!("other");
+        assert_eq!(event_request(&s, "1234567890"), Err(DeliveryError::Invalid));
+    }
     fn snapshot() -> Value {
         json!({"kind":"booking","channel":"call","transaction_id":"vc_test","event_at":"2026-10-30T10:00:00Z","amount_minor":1,"settings":{"customer_id":"1234567890","booking_action_id":"456"},"click_identifiers":{"gclid":"click","msclkid":"not-google"},"consent":{"ad_user_data":"granted","ad_personalization":"denied","reference":"private"},"notes":"private"})
     }

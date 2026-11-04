@@ -136,6 +136,11 @@ impl Guard {
         if current["version"] != self.job["version"] || current["state"] != "awaiting_connection" {
             return Err(ValidationError("Preparation changed; stage and validate it again").into());
         }
+        if current["kind"] == "pipeline" {
+            return self
+                .fresh_pipeline(current, revision, require_enabled)
+                .await;
+        }
         let settings = conversions::settings(&mut self.tx, self.workspace).await?;
         let row = sqlx::query(conversions::CANDIDATES)
             .bind(self.workspace)
@@ -209,7 +214,161 @@ impl Guard {
         Ok(report)
     }
 }
+impl Guard {
+    /// Pipeline events are checked against their current revision, action mapping, policy
+    /// and connection instead of re-running the manual candidate query.
+    async fn fresh_pipeline(
+        &mut self,
+        current: Value,
+        revision: i64,
+        require_enabled: bool,
+    ) -> Result<Value> {
+        let s = &current["snapshot"];
+        let changed = || -> Error {
+            ValidationError("Event, action, policy or consent changed; it will be planned again")
+                .into()
+        };
+        let event = s["event_id"]
+            .as_str()
+            .and_then(|v| v.parse::<Uuid>().ok())
+            .ok_or(Error::Conflict)?;
+        let lead = s["lead_id"]
+            .as_str()
+            .and_then(|v| v.parse::<Uuid>().ok())
+            .ok_or(Error::Conflict)?;
+        let row = sqlx::query("SELECT e.revision,s.consent_policy,COALESCE(s.enabled AND s.auto_send,false) AS sending,(SELECT version FROM conversion_consents c WHERE c.workspace_id=e.workspace_id AND c.lead_id=e.lead_id) AS consent_version FROM pipeline_events e JOIN conversion_actions a ON a.workspace_id=e.workspace_id AND a.key=e.action_key LEFT JOIN conversion_delivery_settings s ON s.workspace_id=e.workspace_id WHERE e.workspace_id=$1 AND e.id=$2 AND e.status='active' AND e.lead_id=$3 AND e.outbox_id=$4 AND a.enabled AND a.google_action_id=$5")
+            .bind(self.workspace).bind(event).bind(lead).bind(current["id"].as_str().and_then(|v| v.parse::<Uuid>().ok())).bind(s["google_action_id"].as_str()).fetch_optional(&mut *self.tx).await?.ok_or_else(changed)?;
+        let policy: String = row
+            .get::<Option<String>, _>("consent_policy")
+            .unwrap_or_else(|| "per_lead".into());
+        if json!(row.get::<i32, _>("revision")) != s["revision"]
+            || policy != s["consent_policy"]
+            || (policy == "per_lead"
+                && json!(row.get::<Option<i32>, _>("consent_version").unwrap_or(0))
+                    != s["consent"]["version"])
+        {
+            return Err(changed());
+        }
+        let settings = conversions::settings(&mut self.tx, self.workspace).await?;
+        if settings.customer_id != s["customer_id"] {
+            return Err(changed());
+        }
+        let g=sqlx::query("SELECT validation,checked_at FROM google_connections WHERE workspace_id=$1 AND revision=$2 AND encrypted_token IS NOT NULL AND validated_settings_version=$3").bind(self.workspace).bind(revision).bind(settings.version).fetch_optional(&mut *self.tx).await?.ok_or(Error::Conflict)?;
+        let report: Value = g
+            .get::<Option<Value>, _>("validation")
+            .ok_or(Error::Conflict)?;
+        let checked: Option<chrono::DateTime<Utc>> = g.get("checked_at");
+        if report["account"]["status"] != "ENABLED"
+            || !checked.is_some_and(|t| t > Utc::now() - Duration::hours(24))
+        {
+            return Err(ValidationError(
+                "The Google destination check failed or is older than 24 hours",
+            )
+            .into());
+        }
+        let window = report["actions"]
+            .as_array()
+            .and_then(|xs| {
+                xs.iter()
+                    .find(|v| v["id"] == s["google_action_id"] && v["eligible"] == true)
+            })
+            .and_then(|v| v["window_days"].as_i64())
+            .ok_or(Error::Conflict)?;
+        let time = |k: &str| {
+            s[k].as_str()
+                .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+                .ok_or(Error::Conflict)
+        };
+        if window < 1 || time("event_at")? - time("visit_at")? > Duration::days(window.min(90)) {
+            return Err(
+                ValidationError("Event falls outside the selected action's click window").into(),
+            );
+        }
+        if require_enabled {
+            let hosted: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM hosted_workspaces WHERE workspace_id=$1 AND NOT enabled)").bind(self.workspace).fetch_one(&mut *self.tx).await?;
+            if !row.get::<bool, _>("sending") || !hosted {
+                return Err(
+                    ValidationError("Automatic Google sending is off for this workspace").into(),
+                );
+            }
+        }
+        if let Some(d) = &self.delivery
+            && (d["review_required"] == true
+                || d["connection_revision"] != revision
+                || d["outbox_version"] != current["version"])
+        {
+            return Err(Error::Conflict);
+        }
+        Ok(report)
+    }
+    /// Keep a claimed, never-attempted pipeline send queued while its destination cannot
+    /// be verified. The webhook and history record the first hold for each reason only.
+    pub async fn hold(mut self, reason: &str) -> Result<()> {
+        let d = self.delivery.as_ref().ok_or(Error::Conflict)?;
+        let id = d["id"]
+            .as_str()
+            .and_then(|v| v.parse::<Uuid>().ok())
+            .ok_or(Error::Conflict)?;
+        let first = d["diagnostic"] != reason;
+        sqlx::query("UPDATE conversion_deliveries SET state='queued',attempts=GREATEST(attempts-1,0),due_at=now()+interval '1 hour',diagnostic=$3,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND state='sending' AND attempted_at IS NULL")
+            .bind(self.workspace).bind(id).bind(reason).execute(&mut *self.tx).await?;
+        if first {
+            sqlx::query("SELECT webhook_emit($1,'conversion.failed','conversion',$2,$3)")
+                .bind(self.workspace)
+                .bind(id.to_string())
+                .bind(d["outbox_version"].as_i64().map(|v| v as i32))
+                .execute(&mut *self.tx)
+                .await?;
+            self.event(
+                "delivery_held",
+                "worker",
+                json!({"delivery_id":id,"diagnostic":reason}),
+            )
+            .await?;
+        }
+        self.tx.commit().await?;
+        Ok(())
+    }
+}
 impl Store {
+    /// The mapped Google action of a pipeline delivery, or None for a reviewed one.
+    pub async fn pipeline_delivery_action(&self, id: Uuid) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar("SELECT d.snapshot->>'google_action_id' FROM conversion_deliveries d JOIN conversion_outbox q ON q.workspace_id=d.workspace_id AND q.id=d.outbox_id WHERE d.workspace_id=$1 AND d.id=$2 AND q.kind='pipeline'")
+            .bind(self.workspace).bind(id).fetch_optional(&self.pool).await?.flatten())
+    }
+    /// Why the saved destination check cannot cover this action now, if it cannot.
+    pub async fn pipeline_destination_problem(&self, action: &str) -> Result<Option<String>> {
+        let settings =
+            conversions::settings(&mut *self.pool.acquire().await?, self.workspace).await?;
+        let g = sqlx::query("SELECT validation,checked_at,validated_settings_version FROM google_connections WHERE workspace_id=$1 AND encrypted_token IS NOT NULL")
+            .bind(self.workspace).fetch_optional(&self.pool).await?;
+        let Some(g) = g else {
+            return Ok(Some("Paused: Google is not connected.".into()));
+        };
+        let report: Value = g.get::<Option<Value>, _>("validation").unwrap_or_default();
+        let checked: Option<chrono::DateTime<Utc>> = g.get("checked_at");
+        if report.is_null()
+            || g.get::<Option<i32>, _>("validated_settings_version") != Some(settings.version)
+        {
+            return Ok(Some("Paused: check the Google destination once in Conversions so automatic checks can continue.".into()));
+        }
+        if !checked.is_some_and(|t| t > Utc::now() - Duration::hours(24)) {
+            return Ok(Some(format!(
+                "Paused: the automatic Google destination check failed. {}",
+                report["message"].as_str().unwrap_or("")
+            )));
+        }
+        let eligible = report["actions"].as_array().is_some_and(|xs| {
+            xs.iter()
+                .any(|v| v["id"] == action && v["eligible"] == true)
+        });
+        if report["account"]["status"] != "ENABLED" || !eligible {
+            return Ok(Some(format!(
+                "Paused: Google action {action} is not an enabled import action owned by the checked account."
+            )));
+        }
+        Ok(None)
+    }
     pub async fn delivery_settings(&self) -> Result<Value> {
         Ok(sqlx::query_scalar("SELECT jsonb_build_object('enabled',enabled,'version',version) FROM conversion_delivery_settings WHERE workspace_id=$1").bind(self.workspace).fetch_optional(&self.pool).await?.unwrap_or(json!({"enabled":false,"version":0})))
     }
@@ -232,7 +391,10 @@ impl Store {
         }
         sqlx::query("INSERT INTO conversion_delivery_settings(workspace_id,enabled) VALUES($1,$2) ON CONFLICT(workspace_id) DO UPDATE SET enabled=$2,version=conversion_delivery_settings.version+1").bind(self.workspace).bind(enabled).execute(&mut *tx).await?;
         if !enabled {
-            sqlx::query("UPDATE conversion_deliveries SET state='needs_review',review_required=true,diagnostic='Delivery paused. Validate and queue again to resume.',due_at=NULL WHERE workspace_id=$1 AND state IN ('queued','retry')").bind(self.workspace).execute(&mut *tx).await?;
+            // Automatic sends stay queued and are held by claim_delivery until resumed.
+            sqlx::query("UPDATE conversion_deliveries d SET state='needs_review',review_required=true,diagnostic='Delivery paused. Validate and queue again to resume.',due_at=NULL WHERE workspace_id=$1 AND state IN ('queued','retry') AND NOT EXISTS(SELECT 1 FROM conversion_outbox q WHERE q.workspace_id=d.workspace_id AND q.id=d.outbox_id AND q.kind='pipeline')").bind(self.workspace).execute(&mut *tx).await?;
+        } else {
+            sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND plan_state='blocked'").bind(self.workspace).execute(&mut *tx).await?;
         }
         sqlx::query("INSERT INTO conversion_events(workspace_id,kind,actor,payload) VALUES($1,'delivery_enabled',$2,$3)").bind(self.workspace).bind(actor).bind(json!({"enabled":enabled})).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -244,7 +406,7 @@ impl Store {
     pub async fn preparation_guard(&self, id: Uuid, version: i32) -> Result<Guard> {
         let mut tx = self.pool.begin().await?;
         self.lock_inquiry_writes(&mut tx).await?;
-        let job:Value=sqlx::query_scalar("SELECT to_jsonb(q) FROM conversion_outbox q WHERE workspace_id=$1 AND id=$2 AND version=$3 AND state='awaiting_connection'").bind(self.workspace).bind(id).bind(version).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+        let job:Value=sqlx::query_scalar("SELECT to_jsonb(q) FROM conversion_outbox q WHERE workspace_id=$1 AND id=$2 AND version=$3 AND state='awaiting_connection' AND kind<>'pipeline'").bind(self.workspace).bind(id).bind(version).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         Ok(Guard {
             job,
             delivery: None,
@@ -306,7 +468,8 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         // Ambiguous sends never silently restart. Polls are safe to resume.
         sqlx::query("UPDATE conversion_deliveries SET state=CASE WHEN state='sending' THEN 'uncertain' ELSE 'submitted' END,diagnostic='Worker interrupted; inspect delivery status.',due_at=CASE WHEN state='polling' THEN now() ELSE NULL END WHERE state IN ('sending','polling') AND due_at<now()").execute(&mut *tx).await?;
-        let row=sqlx::query("SELECT id,workspace_id,state FROM conversion_deliveries WHERE state IN ('queued','retry','submitted') AND due_at<=now() ORDER BY due_at,id FOR UPDATE SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await?;
+        // Automatic sends wait, still queued, while their workspace has sending paused.
+        let row=sqlx::query("SELECT d.id,d.workspace_id,d.state FROM conversion_deliveries d WHERE d.state IN ('queued','retry','submitted') AND d.due_at<=now() AND (d.state='submitted' OR NOT EXISTS(SELECT 1 FROM conversion_outbox q WHERE q.workspace_id=d.workspace_id AND q.id=d.outbox_id AND q.kind='pipeline') OR EXISTS(SELECT 1 FROM conversion_delivery_settings s WHERE s.workspace_id=d.workspace_id AND s.enabled AND s.auto_send)) ORDER BY d.due_at,d.id FOR UPDATE OF d SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await?;
         let Some(r) = row else {
             tx.commit().await?;
             return Ok(None);

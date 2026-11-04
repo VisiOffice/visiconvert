@@ -15,7 +15,9 @@ Sign in with your **VisiConvert** email and password, select a ready workspace,
 and approve permissions. Only verified owners with workspace access can approve.
 Read is required; write checkboxes start unchecked. On the VisiConvert approval
 page, select **Create and update websites and dynamic number pools** for setup,
-and **Register phone numbers you already own** when needed. These choices are
+and **Register phone numbers you already own** when needed. Select **Define Google
+conversion actions and post pipeline events** (`conversions:write`) to let the agent set up
+[pipeline conversions](PIPELINE_CONVERSIONS.md). These choices are
 available even when the client requests only read or omits scopes. No scope
 strings or API key are needed. Leaving the write choices unchecked grants read
 only. Existing connections keep their permissions: revoke the old connection in
@@ -62,7 +64,14 @@ Each connection is restricted to one workspace and expires after 90 days.
   use, and unapproved tools are rejected. Audit actors identify the MCP connection.
 - MCP tokens cannot authenticate ordinary `/api/v1` requests. Browser sessions
   and API keys cannot authenticate `/mcp`. Provider credentials and billing are
-  absent from the tool surface. Google Ads delivery remains disabled.
+  absent from the tool surface. With `conversions:write`, an agent can list Google
+  accounts and conversion actions, create, map and update pipeline actions, create a
+  VisiConvert action in Google for one (mapping an existing action is the documented
+  default), and record events; reads need only `read`. No tool can connect or replace
+  the Google login, choose the advertising account, change the consent policy or
+  attestation, or turn on Google delivery or automatic sending. Those stay owner-only in
+  Conversions, and `get_conversion_setup` names which of them is left. Rails must offer
+  `conversions:write` on the consent page for hosted connections to receive it.
 
 ## Operator configuration
 

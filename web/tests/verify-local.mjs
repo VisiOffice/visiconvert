@@ -264,6 +264,7 @@ try {
   });
   await check("Public API: scopes, pagination, key lifecycle, hosted billing and isolation", () => command("cargo", ["test", "-p", "convert-server", "public_api_tests::", "--", "--ignored", "--test-threads=1"]));
   await check("Google delivery: opt-in, provider receipts, retries and revision isolation", () => command("cargo", ["test", "-p", "convert-server", "delivery_tests::", "--", "--ignored", "--test-threads=1"]));
+  await check("Pipeline conversions: matching, revisions, once per click, consent policy, auto-send, scopes and key/MCP owner-only boundaries", () => command("cargo", ["test", "-p", "convert-server", "pipeline_tests::", "--", "--ignored", "--test-threads=1"]));
   await check("Google connection: OAuth binding, ownership, encryption, discovery and validation", () => command("cargo", ["test", "-p", "convert-server", "google_tests::", "--", "--ignored", "--test-threads=1"]));
   await check("DNI allocation: concurrency, cooldown, reuse, callback evidence, and isolation", () => command("cargo", ["test", "-p", "convert-store", "--test", "dni", "--", "--ignored", "--test-threads=1"]));
   await check("Apply application migrations twice", async () => {
@@ -526,6 +527,7 @@ try {
     await page.getByLabel("Workspace API key").fill(apiKey);
     await page.getByRole("button",{name:"Open workspace"}).click();
     await page.getByRole("button",{name:"Conversions",exact:true}).click();
+    await page.locator("summary").filter({hasText:/^Advanced: manual review · in use/}).click();
     await page.getByRole("article",{name:"Prepared booking ads-browser-booking",exact:true}).getByText("canceled",{exact:true}).waitFor();
   });
   await check("API keys browser and CLI/MCP: create, use, rotate, revoke and mobile layout", () => verifyApiKeys({page,api,origin,artifactDir,root}));

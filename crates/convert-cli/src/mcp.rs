@@ -53,6 +53,28 @@ fn site_input(update: bool) -> Value {
     schema
 }
 
+fn action_input(update: bool) -> Value {
+    let mut schema = json!({"type":"object","additionalProperties":false,
+    "required":["key","name","trigger","counting","enabled"],
+    "properties":{
+        "key":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,39}$","description":"Name your system posts, e.g. lead, quote_sent, order. Fixed after creation."},
+        "name":{"type":"string","maxLength":100},
+        "trigger":{"type":"string","enum":["events","new_lead"],"description":"events: posted by your system with record_conversion_event. new_lead: VisiConvert records one for each new lead with a Google click. Fixed after creation."},
+        "counting":{"type":"string","enum":["once_per_click","every"],"description":"once_per_click for a lead or first quote; every for each order. Fixed after creation."},
+        "default_value_minor":{"type":["integer","null"],"minimum":0,"description":"USD cents used when an event has no value"},
+        "google_action_id":{"type":["string","null"],"pattern":"^[0-9]{1,20}$","description":"An existing eligible Google import action from list_google_conversion_actions (preferred). Null leaves it unmapped."},
+        "enabled":{"type":"boolean"}
+    }});
+    if update {
+        schema["properties"]["version"] = json!({"type":"integer","minimum":1,"description":"Current version from list_conversion_actions. On conflict re-read and review before retrying."});
+        schema["required"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("version"));
+    }
+    schema
+}
+
 const TOOLS: &[Tool] = &[
     Tool {
         name: "get_setup_status",
@@ -224,6 +246,92 @@ const TOOLS: &[Tool] = &[
             }})
         },
     },
+    Tool {
+        name: "get_conversion_setup",
+        description: "Google pipeline conversion checklist: connection, saved advertising account, actions and mappings, destination check, delivery and automatic sending, with next_steps naming who acts. Connecting Google, consent policy, Google delivery and automatic sending are owner-only switches in Conversions; no tool can change them.",
+        changes: false,
+        idempotent: true,
+        schema: none,
+    },
+    Tool {
+        name: "list_google_accounts",
+        description: "Google Ads access accounts (login customer IDs) for the connected Google login and, with login, the advertising accounts it can reach. The owner connects Google in Conversions; this cannot start or replace a connection.",
+        changes: false,
+        idempotent: true,
+        schema: || json!({"type":"object","additionalProperties":false,"properties":{"login":{"type":"string","pattern":"^[0-9]{10}$","description":"Access account from a previous call"}}}),
+    },
+    Tool {
+        name: "list_google_conversion_actions",
+        description: "Conversion actions in a Google Ads account. Only eligible (enabled UPLOAD_CLICKS actions owned by the account) can be mapped. Use the saved customer_id from get_conversion_setup.",
+        changes: false,
+        idempotent: true,
+        schema: || json!({"type":"object","additionalProperties":false,"required":["login","customer"],"properties":{"login":{"type":"string","pattern":"^[0-9]{10}$"},"customer":{"type":"string","pattern":"^[0-9]{10}$"}}}),
+    },
+    Tool {
+        name: "list_conversion_actions",
+        description: "VisiConvert pipeline actions with their Google mapping and current versions.",
+        changes: false,
+        idempotent: true,
+        schema: none,
+    },
+    Tool {
+        name: "create_conversion_action",
+        description: "Define a pipeline action and, preferably, map it to an existing eligible Google import action. Requires conversions:write. Key, trigger and counting cannot change later. Does not turn on sending.",
+        changes: true,
+        idempotent: false,
+        schema: || action_input(false),
+    },
+    Tool {
+        name: "update_conversion_action",
+        description: "Rename, re-map, change the default value of, or disable a pipeline action at its current version. Requires conversions:write. Re-mapping affects future sends only.",
+        changes: true,
+        idempotent: false,
+        schema: || action_input(true),
+    },
+    Tool {
+        name: "create_google_conversion_action",
+        description: "Create a new VisiConvert import action in the saved Google Ads account for an unmapped pipeline action, and map it. Requires conversions:write. Prefer mapping an existing action; use this only when the owner wants a new one. Safe to retry: a retry finds the action an interrupted attempt created. New actions are secondary (reporting only) with a 90-day click window.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["key","version","login"],"properties":{
+                "key":{"type":"string"},
+                "version":{"type":"integer","minimum":1,"description":"Current action version"},
+                "login":{"type":"string","pattern":"^[0-9]{10}$","description":"Google Ads access account"},
+                "category":{"type":"string","enum":["QUALIFIED_LEAD","CONVERTED_LEAD","SUBMIT_LEAD_FORM","REQUEST_QUOTE","BOOK_APPOINTMENT","PURCHASE","DEFAULT"],"description":"Defaults to QUALIFIED_LEAD for once_per_click and PURCHASE for every"}
+            }})
+        },
+    },
+    Tool {
+        name: "record_conversion_event",
+        description: "Post one pipeline event (for example a sent quote or an order) for an exact lead or a phone/email match. Requires conversions:write. Reposting the same external_id with the same fields is a no-op; a changed value creates a revision. The result includes the Google delivery state and any blocked reason.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["action","external_id"],"properties":{
+                "action":{"type":"string","description":"Key of an action with trigger events"},
+                "external_id":{"type":"string","maxLength":150,"description":"Your ID for this event, e.g. an order number"},
+                "lead_id":{"type":"string","format":"uuid"},
+                "match":{"type":"object","additionalProperties":false,"properties":{"phone":{"type":"string"},"email":{"type":"string"}},"description":"Instead of lead_id"},
+                "attribution":{"type":"string","enum":["first_click","latest_click"]},
+                "value_minor":{"type":"integer","minimum":0,"description":"USD cents"},
+                "occurred_at":{"type":"string","format":"date-time"},
+                "status":{"type":"string","enum":["active","canceled"]}
+            }})
+        },
+    },
+    Tool {
+        name: "list_conversion_events",
+        description: "Pipeline events newest first, with revision, matched lead, Google delivery state and blocked reason.",
+        changes: false,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"properties":{
+                "action":{"type":"string"},"external_id":{"type":"string"},
+                "limit":{"type":"integer","minimum":1,"maximum":100,"default":50},"cursor":{"type":"string"}
+            }})
+        },
+    },
 ];
 
 const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
@@ -234,7 +342,7 @@ const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
 6. For DNI, call get_site_pool. Confirm the published website number (fallback_phone), common forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before configure_site_pool. Supply the current version (0 if absent); on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
-7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. Google Ads delivery requires separate owner-only validation and explicit queuing in Conversions; MCP setup never enables it.
+7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google, the consent policy, Google delivery and automatic sending are owner-only switches in Conversions; tell the owner which are left rather than trying to change them.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.";
 
 /// The reference page for the docs site, from the same table `tools/list` serves.
@@ -273,6 +381,10 @@ impl Server {
             "create_site" | "update_site" | "configure_site_pool" => "setup:write",
             "add_tracking_number" => "numbers:write",
             "record_outcome" => "bookings:write",
+            "create_conversion_action"
+            | "update_conversion_action"
+            | "create_google_conversion_action"
+            | "record_conversion_event" => "conversions:write",
             _ if tool.changes => "leads:write",
             _ => "read",
         };
@@ -361,9 +473,9 @@ impl Server {
                     "inputSchema": (tool.schema)(),
                     "annotations": {
                         "readOnlyHint": !tool.changes,
-                        "destructiveHint": matches!(tool.name, "update_site" | "configure_site_pool"),
+                        "destructiveHint": matches!(tool.name, "update_site" | "configure_site_pool" | "update_conversion_action"),
                         "idempotentHint": tool.idempotent,
-                        "openWorldHint": false
+                        "openWorldHint": tool.name == "create_google_conversion_action"
                     }
                 })
             })
@@ -546,6 +658,60 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
             )
             .await?
         }
+        "get_conversion_setup" => client.conversion_setup().await?,
+        "list_google_accounts" => {
+            client
+                .google_accounts(text(args, "login").as_deref())
+                .await?
+        }
+        "list_google_conversion_actions" => {
+            client
+                .google_actions(&required(args, "login")?, &required(args, "customer")?)
+                .await?
+        }
+        "list_conversion_actions" => client.conversion_actions().await?,
+        "create_conversion_action" | "update_conversion_action" => {
+            let mut input = args
+                .as_object()
+                .cloned()
+                .ok_or_else(|| anyhow!("Expected an object"))?;
+            if name == "create_conversion_action" {
+                input.insert("version".into(), json!(0));
+            }
+            for k in ["default_value_minor", "google_action_id"] {
+                input.entry(k).or_insert(Value::Null);
+            }
+            client
+                .save_conversion_action(&required(args, "key")?, &Value::Object(input))
+                .await?
+        }
+        "create_google_conversion_action" => {
+            let mut input = args
+                .as_object()
+                .cloned()
+                .ok_or_else(|| anyhow!("Expected an object"))?;
+            input.remove("key");
+            client
+                .create_google_conversion_action(&required(args, "key")?, &Value::Object(input))
+                .await?
+        }
+        "record_conversion_event" => client.record_conversion_event(args).await?,
+        "list_conversion_events" => {
+            let mut query = vec![(
+                "limit",
+                args["limit"]
+                    .as_u64()
+                    .unwrap_or(50)
+                    .clamp(1, 100)
+                    .to_string(),
+            )];
+            for k in ["action", "external_id", "cursor"] {
+                if let Some(v) = text(args, k) {
+                    query.push((k, v));
+                }
+            }
+            client.conversion_events(&query).await?
+        }
         _ => bail!("Unknown tool {name}"),
     })
 }
@@ -563,6 +729,15 @@ mod scoped_tests {
             ("numbers:write", vec!["add_tracking_number"]),
             ("leads:write", vec!["add_lead", "qualify_lead"]),
             ("bookings:write", vec!["record_outcome"]),
+            (
+                "conversions:write",
+                vec![
+                    "create_conversion_action",
+                    "update_conversion_action",
+                    "create_google_conversion_action",
+                    "record_conversion_event",
+                ],
+            ),
         ] {
             let server =
                 Server::scoped(Err("no network".into()), vec!["read".into(), scope.into()]);
@@ -584,5 +759,43 @@ mod scoped_tests {
                 }
             }
         }
+    }
+    #[test]
+    fn no_tool_can_change_owner_only_conversion_switches() {
+        let all = Server::scoped(
+            Err("no network".into()),
+            [
+                "read",
+                "setup:write",
+                "numbers:write",
+                "leads:write",
+                "bookings:write",
+                "conversions:write",
+            ]
+            .map(String::from)
+            .to_vec(),
+        );
+        for tool in all.tools() {
+            let props = tool["inputSchema"]["properties"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            for owner_only in [
+                "auto_send",
+                "consent_policy",
+                "attest",
+                "enabled_delivery",
+                "authorization_url",
+            ] {
+                assert!(
+                    !props.contains_key(owner_only),
+                    "{} exposes {owner_only}",
+                    tool["name"]
+                );
+            }
+        }
+        assert!(TOOLS.iter().all(|t| !t.name.contains("policy")
+            && !t.name.contains("auto_send")
+            && !t.name.contains("connect_google")));
     }
 }

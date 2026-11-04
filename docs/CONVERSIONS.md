@@ -6,6 +6,10 @@ queued events through Google's Data Manager API. **Delivery is off by default.**
 An upgrade never queues existing preparations. See [Google connection](GOOGLE_CONNECTION.md)
 for OAuth and destination configuration. Microsoft delivery is not implemented.
 
+To send conversions from your CRM or booking system automatically instead of reviewing
+each one, see [pipeline conversions](PIPELINE_CONVERSIONS.md). Pipeline rows are kept
+out of the review flow below and are not invalidated by booking or settings edits.
+
 ## Workflow
 
 1. Open **Conversions**. Save your 10-digit Google Ads customer ID without dashes.

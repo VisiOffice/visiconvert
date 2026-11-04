@@ -9,6 +9,7 @@ const descriptions: Record<string, string> = {
   "numbers:write": "Register phone numbers you already own",
   "leads:write": "Create leads and change qualification and notes",
   "bookings:write": "Record or cancel bookings and their values",
+  "conversions:write": "Define Google conversion actions and post pipeline events (cannot turn on sending)",
 };
 export function McpAuthorization({ request, verified }: { request: Request; verified: boolean }) {
   const [data, setData] = useState<Consent | null>(null);
