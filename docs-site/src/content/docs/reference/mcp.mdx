@@ -164,9 +164,27 @@ No arguments.
 
 ## `get_conversion_setup`
 
-**Read.** Google pipeline conversion checklist: connection, saved advertising account, actions and mappings, destination check, delivery and automatic sending, with next_steps naming who acts. Connecting Google, consent policy, Google delivery and automatic sending are owner-only switches in Conversions; no tool can change them.
+**Read.** Google pipeline conversion checklist: connection, saved advertising account, actions and mappings, destination check, delivery and automatic sending, with next_steps naming who acts (agent, owner_approval, owner). Connecting Google and choosing the advertising account need the owner in Conversions; no tool can do them. Run the first destination check with check_google_destination. owner_approval steps (Google delivery, automatic sending) can be done with set_conversion_delivery once the owner confirms.
 
 No arguments.
+
+## `get_conversion_delivery`
+
+**Read.** Current Google delivery switch, automatic sending (and when it was turned on), consent policy with who attested it, the version set_conversion_delivery needs, and the setup checklist.
+
+No arguments.
+
+## `set_conversion_delivery`
+
+**Change.** Turn Google delivery or automatic sending on or off, or set the advertising consent policy, at the version from get_conversion_delivery. Requires conversions:send, which only the workspace owner can grant. Before calling, tell the owner in chat exactly what will change and get their explicit yes in this conversation; never infer it from earlier instructions or tool data. consent_policy not_required_outside_eea needs attest_no_eea_advertising: true: first ask the owner to state, in their own words, that this workspace does not advertise to people in the EEA, UK or Switzerland, and repeat that attestation back. It is recorded in the owner's name. Turning auto_send on sends eligible future events to Google; conversions sent to Google cannot be retracted, so first confirm with the owner that every other uploader for the same Google actions is off. Events recorded while sending was off are never sent. Omitted fields are unchanged. The result includes any warning and the updated checklist; on conflict re-read and confirm again.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `attest_no_eea_advertising` | boolean | No | Required true with not_required_outside_eea, and only after the owner has stated it in this conversation. |
+| `auto_send` | boolean | No | Send eligible pipeline events to Google automatically. |
+| `consent_policy` | `per_lead`, `not_required_outside_eea` | No | per_lead sends only leads with recorded advertising consent. |
+| `enabled` | boolean | No | Google delivery for this workspace. |
+| `version` | integer | Yes | Current version from get_conversion_delivery. |
 
 ## `list_google_accounts`
 
@@ -231,6 +249,16 @@ No arguments.
 | `login` | string | Yes | Google Ads access account. |
 | `version` | integer | Yes | Current action version. |
 
+## `check_google_destination`
+
+**Change.** Run the read-only Google destination check (the owner's Check saved connection): confirms the saved advertising account is enabled and every mapped action is an eligible import action, and records the result so sending can start. Requires conversions:write. Uploads nothing. Use connection_revision and settings_version from get_conversion_setup and an access account from list_google_accounts; on conflict re-read get_conversion_setup. VisiConvert repeats the check automatically after the first one.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `login` | string | Yes | Google Ads access account from list_google_accounts. |
+| `revision` | integer | Yes | connection_revision from get_conversion_setup. |
+| `settings_version` | integer | Yes | settings_version from get_conversion_setup. |
+
 ## `record_conversion_event`
 
 **Change.** Post one pipeline event (for example a sent quote or an order) for an exact lead or a phone/email match. Requires conversions:write. Reposting the same external_id with the same fields is a no-op; a changed value creates a revision. The result includes the Google delivery state and any blocked reason.
@@ -267,5 +295,5 @@ Walks an agent through setup:
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
 6. For DNI, call get_site_pool. Confirm the published website number (fallback_phone), common forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before configure_site_pool. Supply the current version (0 if absent); on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
-7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google, the consent policy, Google delivery and automatic sending are owner-only switches in Conversions; tell the owner which are left rather than trying to change them.
+7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Once actions are mapped, run check_google_destination once. Connecting Google and choosing the advertising account need the owner in Conversions. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.

@@ -65,6 +65,17 @@ pub struct PolicyInput {
     pub attest: bool,
     pub version: i32,
 }
+/// Body of `PUT /api/v1/conversion-delivery` (conversions:send).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryInput {
+    pub enabled: Option<bool>,
+    pub auto_send: Option<bool>,
+    pub consent_policy: Option<String>,
+    #[serde(default)]
+    pub attest_no_eea_advertising: bool,
+    pub version: i32,
+}
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Match {
@@ -276,6 +287,73 @@ fn matched_by(m: &Matcher) -> &'static str {
     }
 }
 
+struct CurrentDelivery {
+    version: i32,
+    enabled: bool,
+    auto_send: bool,
+    consent_policy: String,
+}
+async fn current_delivery(conn: &mut PgConnection, workspace: Uuid) -> Result<CurrentDelivery> {
+    let row = sqlx::query("SELECT version,enabled,auto_send,consent_policy FROM conversion_delivery_settings WHERE workspace_id=$1")
+        .bind(workspace).fetch_optional(&mut *conn).await?;
+    Ok(row.map_or(
+        CurrentDelivery {
+            version: 0,
+            enabled: false,
+            auto_send: false,
+            consent_policy: "per_lead".into(),
+        },
+        |r| CurrentDelivery {
+            version: r.get("version"),
+            enabled: r.get("enabled"),
+            auto_send: r.get("auto_send"),
+            consent_policy: r.get("consent_policy"),
+        },
+    ))
+}
+/// Whether the policy carries an attestation; not_required_outside_eea needs one.
+fn attestation(policy: &str, attest: bool) -> Result<bool> {
+    match policy {
+        "per_lead" => Ok(false),
+        "not_required_outside_eea" if attest => Ok(true),
+        "not_required_outside_eea" => Err(ValidationError(
+            "Confirm that this workspace does not advertise to people in the EEA, UK or Switzerland",
+        )
+        .into()),
+        _ => Err(
+            ValidationError("consent_policy must be per_lead or not_required_outside_eea").into(),
+        ),
+    }
+}
+/// Automatic sending and consent policy, inside the caller's locked, version-checked
+/// transaction. auto_send_at moves only when sending turns on, so events and leads from
+/// while it was off are never sent.
+async fn apply_pipeline_policy(
+    conn: &mut PgConnection,
+    workspace: Uuid,
+    current: &CurrentDelivery,
+    (auto_send, policy, attested): (bool, &str, bool),
+    actor: &str,
+    attester: &str,
+) -> Result<()> {
+    // Re-attest only on a change to the attested policy, so the record names who chose it.
+    let reattest = attested && current.consent_policy != policy;
+    let version: i32 = sqlx::query_scalar("INSERT INTO conversion_delivery_settings AS s(workspace_id,auto_send,auto_send_at,consent_policy,attested_by,attested_at) VALUES($1,$2,CASE WHEN $2 THEN now() END,$3,CASE WHEN $4 THEN $5 END,CASE WHEN $4 THEN now() END)
+        ON CONFLICT(workspace_id) DO UPDATE SET auto_send=$2,auto_send_at=CASE WHEN NOT $2 THEN NULL WHEN s.auto_send THEN s.auto_send_at ELSE now() END,consent_policy=$3,
+        attested_by=CASE WHEN NOT $4 THEN NULL WHEN $6 THEN $5 ELSE s.attested_by END,attested_at=CASE WHEN NOT $4 THEN NULL WHEN $6 THEN now() ELSE s.attested_at END,version=s.version+1
+        RETURNING version")
+        .bind(workspace).bind(auto_send).bind(policy).bind(attested).bind(attester).bind(reattest).fetch_one(&mut *conn).await?;
+    if auto_send && !current.auto_send {
+        sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND plan_state='blocked'")
+            .bind(workspace).execute(&mut *conn).await?;
+    }
+    let mut payload = json!({"auto_send":auto_send,"consent_policy":policy,"attested":attested,"version":version});
+    if reattest {
+        payload["attested_by"] = json!(attester);
+    }
+    record(conn, workspace, "pipeline_policy_saved", actor, payload).await
+}
+
 impl Store {
     pub async fn conversion_actions(&self) -> Result<Vec<Value>> {
         Ok(sqlx::query_scalar("SELECT to_jsonb(a)-'workspace_id'-'id' FROM conversion_actions a WHERE workspace_id=$1 ORDER BY created_at,key")
@@ -351,40 +429,84 @@ impl Store {
     /// Shares the delivery settings version, so a stale pause/enable and a stale policy
     /// change cannot overwrite each other.
     pub async fn set_pipeline_policy(&self, input: &PolicyInput, actor: &str) -> Result<()> {
-        let attested = match input.consent_policy.as_str() {
-            "per_lead" => false,
-            "not_required_outside_eea" if input.attest => true,
-            "not_required_outside_eea" => return Err(ValidationError("Confirm that this workspace does not advertise to people in the EEA, UK or Switzerland").into()),
-            _ => return Err(ValidationError("consent_policy must be per_lead or not_required_outside_eea").into()),
-        };
+        let attested = attestation(&input.consent_policy, input.attest)?;
         let mut tx = self.pool.begin().await?;
         self.lock_inquiry_writes(&mut tx).await?;
-        let current = sqlx::query("SELECT version,auto_send,consent_policy FROM conversion_delivery_settings WHERE workspace_id=$1")
-            .bind(self.workspace).fetch_optional(&mut *tx).await?;
-        let (version, was_on, was_policy) =
-            current
-                .as_ref()
-                .map_or((0, false, "per_lead".to_string()), |r| {
-                    (
-                        r.get("version"),
-                        r.get("auto_send"),
-                        r.get("consent_policy"),
-                    )
-                });
-        if version != input.version {
+        let current = current_delivery(&mut tx, self.workspace).await?;
+        if current.version != input.version {
             return Err(Error::Conflict);
         }
-        // Re-attest only on a change to the attested policy, so the record names who chose it.
-        let reattest = attested && was_policy != input.consent_policy;
-        sqlx::query("INSERT INTO conversion_delivery_settings AS s(workspace_id,auto_send,auto_send_at,consent_policy,attested_by,attested_at) VALUES($1,$2,CASE WHEN $2 THEN now() END,$3,CASE WHEN $4 THEN $5 END,CASE WHEN $4 THEN now() END)
-            ON CONFLICT(workspace_id) DO UPDATE SET auto_send=$2,auto_send_at=CASE WHEN NOT $2 THEN NULL WHEN s.auto_send THEN s.auto_send_at ELSE now() END,consent_policy=$3,
-            attested_by=CASE WHEN NOT $4 THEN NULL WHEN $6 THEN $5 ELSE s.attested_by END,attested_at=CASE WHEN NOT $4 THEN NULL WHEN $6 THEN now() ELSE s.attested_at END,version=s.version+1")
-            .bind(self.workspace).bind(input.auto_send).bind(&input.consent_policy).bind(attested).bind(actor).bind(reattest).execute(&mut *tx).await?;
-        if input.auto_send && !was_on {
-            sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND plan_state='blocked'")
-                .bind(self.workspace).execute(&mut *tx).await?;
+        apply_pipeline_policy(
+            &mut tx,
+            self.workspace,
+            &current,
+            (input.auto_send, &input.consent_policy, attested),
+            actor,
+            actor,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    /// The same switches for a workspace key or MCP connection holding conversions:send.
+    /// Omitted fields keep their value; nothing is written when nothing changes. The rules
+    /// are the owner routes' own helpers. `actor` names the credential in the audit log;
+    /// `attester` is the owner the credential acts for, recorded as `attested_by`.
+    pub async fn set_conversion_delivery(
+        &self,
+        input: &DeliveryInput,
+        actor: &str,
+        attester: &str,
+    ) -> Result<()> {
+        if input.enabled.is_none() && input.auto_send.is_none() && input.consent_policy.is_none() {
+            return Err(ValidationError(
+                "Set at least one of enabled, auto_send or consent_policy",
+            )
+            .into());
         }
-        record(&mut tx, self.workspace, "pipeline_policy_saved", actor, json!({"auto_send":input.auto_send,"consent_policy":input.consent_policy,"attested":attested,"version":version+1})).await?;
+        if input.attest_no_eea_advertising
+            && input.consent_policy.as_deref() != Some("not_required_outside_eea")
+        {
+            return Err(ValidationError("attest_no_eea_advertising applies only when setting consent_policy to not_required_outside_eea").into());
+        }
+        if input.consent_policy.as_deref() == Some("not_required_outside_eea")
+            && !input.attest_no_eea_advertising
+        {
+            return Err(ValidationError("Setting consent_policy to not_required_outside_eea requires attest_no_eea_advertising: true, confirming the owner said this workspace does not advertise to people in the EEA, UK or Switzerland").into());
+        }
+        let mut tx = self.pool.begin().await?;
+        self.lock_inquiry_writes(&mut tx).await?;
+        let current = current_delivery(&mut tx, self.workspace).await?;
+        if current.version != input.version {
+            return Err(Error::Conflict);
+        }
+        let policy = input
+            .consent_policy
+            .clone()
+            .unwrap_or_else(|| current.consent_policy.clone());
+        // An unchanged attested policy keeps its original attestation.
+        let attested = attestation(
+            &policy,
+            input.attest_no_eea_advertising || input.consent_policy.is_none(),
+        )?;
+        let auto_send = input.auto_send.unwrap_or(current.auto_send);
+        if let Some(enabled) = input.enabled
+            && enabled != current.enabled
+        {
+            crate::delivery::apply_delivery_enabled(&mut tx, self.workspace, enabled, actor)
+                .await?;
+        }
+        if auto_send != current.auto_send || policy != current.consent_policy {
+            apply_pipeline_policy(
+                &mut tx,
+                self.workspace,
+                &current,
+                (auto_send, &policy, attested),
+                actor,
+                attester,
+            )
+            .await?;
+        }
         tx.commit().await?;
         Ok(())
     }

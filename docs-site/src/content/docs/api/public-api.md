@@ -35,9 +35,10 @@ Permissions:
 | `numbers:purchase` | Search, buy, and release SignalWire numbers (`/numbers/search`, `/numbers/purchase`, `/numbers/{id}/release`, `/numbers/{id}/restore`). Billable: each number is charged monthly until released. Owners grant it under **Billable permission** in API Keys; the expiration defaults to 24 hours. |
 | `setup:write` | Create/update website settings and DNI pools (engine migration 0012) |
 | `conversions:write` | Define and map pipeline conversion actions (`PUT /conversion-actions/{key}`, `POST /conversion-actions/{key}/google-action`) and post pipeline conversion events (`POST /conversion-events`) that VisiConvert matches and sends to Google Ads (engine migration 0023) |
+| `conversions:send` | Turn Google delivery and automatic sending on or off and set the consent policy (`PUT /conversion-delivery`), on the owner's behalf. Attestations are recorded for the owner who created the key. Conversions sent to Google cannot be retracted. Owners grant it under **Sending permission** in API Keys; the expiration defaults to 24 hours (engine migration 0024). |
 
 Keys cannot manage keys, billing, provider credentials, inquiry grouping,
-reviewed conversion preparation, the Google connection, the consent policy, or Google delivery and automatic sending. Use the workspace UI for those operations. Read-only
+reviewed conversion preparation, or the Google connection. Google delivery, automatic sending and the consent policy need `conversions:send`. Use the workspace UI for the rest. Read-only
 keys remain read-only even if an MCP client enables change tools.
 
 Rotate creates a replacement and revokes the old key atomically, preserving the
@@ -184,11 +185,15 @@ Keys with `conversions:write` can define actions (`PUT /api/v1/conversion-action
 map them to existing Google actions found with `GET /api/v1/connections/google/actions`,
 create a new VisiConvert action in Google for one (`POST /api/v1/conversion-actions/{key}/google-action`),
 and post business events to `POST /api/v1/conversion-events`. VisiConvert matches the
-lead and its Google click and sends the conversion when the workspace owner has turned on
-Google delivery and automatic sending. Reads (`GET /api/v1/conversion-setup`,
+lead and its Google click and sends the conversion when Google delivery and automatic
+sending are on. Reads (`GET /api/v1/conversion-setup`, `/conversion-delivery`,
 `/conversion-actions`, `/conversion-events`, `/connections/google/accounts`) need `read`.
-`conversion-setup` says which owner-only steps are left; no key can turn on sending,
-change the consent policy or connect Google. See [pipeline conversions](/guides/pipeline-conversions/).
+Keys with `conversions:send` can switch delivery and automatic sending and set the
+consent policy with `PUT /api/v1/conversion-delivery`; setting
+`not_required_outside_eea` needs `attest_no_eea_advertising: true`, recorded for the
+owner who created the key. `conversions:write` can also run the read-only destination check
+(`POST /api/v1/conversion-setup/check`). `conversion-setup` says which steps are left; no
+key can connect Google or choose the advertising account. See [pipeline conversions](/guides/pipeline-conversions/).
 
 ## Webhooks
 

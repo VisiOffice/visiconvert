@@ -534,6 +534,176 @@ async fn hosted_keys_require_billing_membership_and_current_owner_credentials() 
         StatusCode::UNAUTHORIZED
     );
 }
+/// Hosted conversions:send through an owner-created key and a Rails-delegated MCP grant:
+/// the attestation names the owner, the audit row names the credential, and a grant
+/// without conversions:send is refused.
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn hosted_conversions_send_attests_for_the_owner() {
+    use std::sync::Mutex;
+    let asked = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let q = asked.clone();
+    let cloud_router = Router::new().route(
+        "/internal/api-access",
+        post(move |Json(body): Json<Value>| {
+            let q = q.clone();
+            async move {
+                q.lock().unwrap().push(body.clone());
+                Json(json!({"allowed":true,"workspace_id":body["workspace_id"],"user_id":body["user_id"],"credential_version":body["credential_version"]}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, cloud_router).await.unwrap() });
+    let store = Store::connect(
+        &std::env::var("VISICONVERT_TEST_DATABASE_URL").unwrap(),
+        Uuid::new_v4(),
+    )
+    .await
+    .unwrap();
+    store.migrate().await.unwrap();
+    let workspace = Uuid::new_v4();
+    let owner_session = token(&store, workspace).await;
+    let user: Uuid =
+        sqlx::query_scalar("SELECT owner_id FROM hosted_workspaces WHERE workspace_id=$1")
+            .bind(workspace)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    let service_key = "a".repeat(64);
+    let app = app(
+        store.clone(),
+        Some(hosted::Config {
+            service_key: service_key.clone(),
+            cloud_origin: format!("http://{address}"),
+            app_origin: None,
+        }),
+    );
+    let ws = Store {
+        pool: store.pool.clone(),
+        workspace,
+    };
+    // Only an owner grants conversions:send: a delegation for anyone but a current owner
+    // of this workspace is refused even when Rails says yes.
+    let stranger = remote_mcp::test_delegation(
+        &service_key,
+        workspace,
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        &["read", "conversions:send"],
+    );
+    let (status, _) = call(
+        app.clone(),
+        "PUT",
+        "/api/v1/conversion-delivery",
+        &stranger,
+        json!({"version":0,"auto_send":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Owner-created key with conversions:send.
+    let (status, created) = call(
+        app.clone(),
+        "POST",
+        "/api/api-keys",
+        &owner_session,
+        input(json!(["read", "conversions:send"])),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let key = created["secret"].as_str().unwrap().to_string();
+    let key_id = created["id"].as_str().unwrap().to_string();
+    let (status, v) = call(
+        app.clone(),
+        "PUT",
+        "/api/v1/conversion-delivery",
+        &key,
+        json!({"version":0,"consent_policy":"not_required_outside_eea","attest_no_eea_advertising":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["attested_by"], format!("hosted user {user}"));
+    assert_eq!(v["consent_policy"], "not_required_outside_eea");
+    let audit: (String, Value) = sqlx::query_as("SELECT actor,payload FROM conversion_events WHERE workspace_id=$1 AND kind='pipeline_policy_saved' ORDER BY id DESC LIMIT 1")
+        .bind(workspace).fetch_one(&store.pool).await.unwrap();
+    assert_eq!(audit.0, format!("API key {key_id}"));
+    assert_eq!(audit.1["attested_by"], format!("hosted user {user}"));
+    // Back to per-lead so the MCP grant attests afresh.
+    let (status, v) = call(
+        app.clone(),
+        "PUT",
+        "/api/v1/conversion-delivery",
+        &key,
+        json!({"version":1,"consent_policy":"per_lead"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert!(v["attested_by"].is_null());
+    // Rails-delegated MCP grants: conversions:write alone is refused.
+    let grant = Uuid::new_v4();
+    let write_only = remote_mcp::test_delegation(
+        &service_key,
+        workspace,
+        user,
+        grant,
+        &["read", "conversions:write"],
+    );
+    let (status, v) = call(
+        app.clone(),
+        "PUT",
+        "/api/v1/conversion-delivery",
+        &write_only,
+        json!({"version":2,"auto_send":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("conversions:send"));
+    let sender = remote_mcp::test_delegation(
+        &service_key,
+        workspace,
+        user,
+        grant,
+        &["read", "conversions:send"],
+    );
+    let (status, v) = call(
+        app.clone(),
+        "PUT",
+        "/api/v1/conversion-delivery",
+        &sender,
+        json!({"version":2,"enabled":true,"auto_send":true,"consent_policy":"not_required_outside_eea","attest_no_eea_advertising":true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["attested_by"], format!("hosted user {user}"));
+    assert_eq!(v["enabled"], true);
+    assert_eq!(v["auto_send"], true);
+    assert!(v["warning"].as_str().unwrap().contains("twice"), "{v}");
+    assert!(v["setup"]["next_steps"].is_array(), "{v}");
+    let actors: Vec<(String, String)> = sqlx::query_as("SELECT kind,actor FROM conversion_events WHERE workspace_id=$1 AND kind IN ('delivery_enabled','pipeline_policy_saved') ORDER BY id DESC LIMIT 2")
+        .bind(workspace).fetch_all(&store.pool).await.unwrap();
+    assert_eq!(
+        actors,
+        vec![
+            (
+                "pipeline_policy_saved".into(),
+                format!("MCP connection {grant}")
+            ),
+            ("delivery_enabled".into(), format!("MCP connection {grant}")),
+        ]
+    );
+    // Every delegated request carried the grant and its exact scopes to Rails.
+    assert!(
+        asked
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|b| b["mcp_grant_id"] == grant.to_string()
+                && b["mcp_scopes"] == json!(["read", "conversions:send"]))
+    );
+    assert_eq!(ws.pipeline_policy().await.unwrap()["version"], 4);
+    task.abort();
+}
 #[test]
 fn openapi_covers_public_routes() {
     let spec: Value = serde_json::from_str(include_str!("../assets/openapi.json")).unwrap();

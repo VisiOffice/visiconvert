@@ -67,11 +67,17 @@ Each connection is restricted to one workspace and expires after 90 days.
   absent from the tool surface. With `conversions:write`, an agent can list Google
   accounts and conversion actions, create, map and update pipeline actions, create a
   VisiConvert action in Google for one (mapping an existing action is the documented
-  default), and record events; reads need only `read`. No tool can connect or replace
-  the Google login, choose the advertising account, change the consent policy or
-  attestation, or turn on Google delivery or automatic sending. Those stay owner-only in
-  Conversions, and `get_conversion_setup` names which of them is left. Rails must offer
-  `conversions:write` on the consent page for hosted connections to receive it.
+  default), record events, and run the read-only destination check
+  (`check_google_destination`); reads need only `read`. With the separate
+  `conversions:send`, `set_conversion_delivery` turns Google delivery and automatic
+  sending on or off and sets the consent policy; its description tells the agent to get
+  the owner's explicit confirmation in chat and to state the attestation. Attestations
+  are recorded for the owner who approved the connection, and the conversion history
+  names the connection. Only the workspace owner can approve `conversions:send`; the
+  consent page lists it apart under **Sending permission**, unchecked, with a warning
+  that sent conversions cannot be retracted. No tool can connect or replace the Google
+  login or choose the advertising account; `get_conversion_setup` names which steps are
+  left. Rails offers `conversions:write` and `conversions:send` on the consent page.
 
 ## Operator configuration
 

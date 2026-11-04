@@ -768,8 +768,9 @@ async fn pipeline_auto_send_isolation_new_leads_refresh_and_scopes() {
     w.task.abort();
 }
 
-/// Keys and MCP can define, map and create actions and post events, but every owner-only
-/// switch (automatic sending, consent policy, delivery, Google OAuth) stays unreachable.
+/// Keys and MCP with conversions:write can define, map and create actions and post events,
+/// but the owner switches (automatic sending, consent policy, delivery) need
+/// conversions:send, and Google OAuth stays unreachable to every credential.
 #[tokio::test]
 #[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
 async fn pipeline_keys_and_mcp_cannot_flip_owner_switches() {
@@ -830,6 +831,17 @@ async fn pipeline_keys_and_mcp_cannot_flip_owner_switches() {
             let (status, _) = api(a.clone(), method, &private, key, body).await;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{private}");
         }
+        // The credential route needs conversions:send.
+        let (status, v) = api(
+            a.clone(),
+            "PUT",
+            "/api/v1/conversion-delivery",
+            key,
+            json!({"auto_send":true,"version":2}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(v["error"].as_str().unwrap().contains("conversions:send"));
         // Action and event bodies reject owner-only fields outright.
         let (status, _) = api(a.clone(), "PUT", "/api/v1/conversion-actions/lead", key, json!({"key":"lead","name":"Lead","trigger":"events","default_value_minor":null,"counting":"once_per_click","google_action_id":null,"enabled":true,"version":0,"auto_send":true})).await;
         assert!(
@@ -854,7 +866,7 @@ async fn pipeline_keys_and_mcp_cannot_flip_owner_switches() {
     assert_eq!(setup["google_connected"], true);
     assert_eq!(
         setup["next_steps"],
-        json!([{"actor":"owner","step":"Owner must turn on automatic sending in Conversions."}])
+        json!([{"actor":"owner_approval","step":"Turn on automatic sending: the owner in Conversions, or an agent with conversions:send (set_conversion_delivery) after the owner confirms that no other uploader sends the same Google actions."}])
     );
     assert!(
         setup["summary"]
@@ -984,14 +996,14 @@ async fn pipeline_keys_and_mcp_cannot_flip_owner_switches() {
         r["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("Owner must turn on automatic sending in Conversions.")
+            .contains("Turn on automatic sending: the owner in Conversions")
     );
     let r = call("get_status", json!({})).await;
     assert!(
         r["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("Google conversions: Owner must turn on automatic sending in Conversions."),
+            .contains("Google conversions: Turn on automatic sending: the owner in Conversions"),
         "{r}"
     );
     let first = lead(&w, ("email", "mcp@example.com"), Some("click-mcp"), 0).await;
@@ -1026,6 +1038,306 @@ async fn pipeline_keys_and_mcp_cannot_flip_owner_switches() {
         assert_eq!(r["isError"], true);
     }
     assert_eq!(a.store.pipeline_policy().await.unwrap()["auto_send"], false);
+    server.abort();
+    w.task.abort();
+}
+
+/// A conversions:send key flips the same switches as the owner routes, under the same
+/// rules: attestation required, compare-and-swap versions, events recorded while sending
+/// was off never sent, and an audit row naming the key.
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn conversions_send_key_follows_owner_rules() {
+    let w = world("per_lead", false).await;
+    let a = &w.a;
+    let issue = |scopes: &[&str]| {
+        let scopes: Vec<String> = scopes.iter().map(|s| s.to_string()).collect();
+        async move {
+            a.store
+                .issue_api_key(
+                    &convert_store::api_keys::KeyInput {
+                        name: "Sender".into(),
+                        scopes,
+                        expires_at: None,
+                    },
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let created = issue(&["read", "conversions:send"]).await;
+    let send = created["secret"].as_str().unwrap().to_string();
+    let send_id = created["id"].as_str().unwrap().to_string();
+    let path = "/api/v1/conversion-delivery";
+    let put = |key: String, body: Value| {
+        let a = a.clone();
+        async move { api(a, "PUT", path, &key, body).await }
+    };
+    // conversions:write and read can read the switches but not change them.
+    let (status, current) = api(a.clone(), "GET", path, &w.key, Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{current}");
+    assert_eq!(current["version"], 2);
+    assert_eq!(current["enabled"], true);
+    assert!(current["warning"].is_null());
+    let (status, _) = put(w.key.clone(), json!({"auto_send":true,"version":2})).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Attestation is required with not_required_outside_eea, and only there.
+    for body in [
+        json!({"consent_policy":"not_required_outside_eea","version":2}),
+        json!({"consent_policy":"not_required_outside_eea","attest_no_eea_advertising":false,"version":2}),
+        json!({"auto_send":true,"attest_no_eea_advertising":true,"version":2}),
+        json!({"consent_policy":"per_lead","attest_no_eea_advertising":true,"version":2}),
+        json!({"version":2}),
+        json!({"auto_send":true,"attest":true,"version":2}),
+    ] {
+        let (status, v) = put(send.clone(), body.clone()).await;
+        assert!(
+            status.is_client_error() && status != StatusCode::FORBIDDEN,
+            "{body} {v}"
+        );
+    }
+    assert_eq!(a.store.pipeline_policy().await.unwrap()["version"], 2);
+    // An event recorded while sending is off stays blocked after sending turns on.
+    let first = lead(&w, ("phone", "6025550177"), Some("click-send"), 0).await;
+    let (_, off) = post(
+        &w,
+        json!({"action":"order","external_id":"before-send","lead_id":first,"value_minor":100}),
+    )
+    .await;
+    assert_eq!(off["delivery"]["google"], "blocked");
+    let (status, _) = put(send.clone(), json!({"auto_send":true,"consent_policy":"not_required_outside_eea","attest_no_eea_advertising":true,"version":1})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, on) = put(send.clone(), json!({"auto_send":true,"consent_policy":"not_required_outside_eea","attest_no_eea_advertising":true,"version":2})).await;
+    assert_eq!(status, StatusCode::OK, "{on}");
+    assert_eq!(on["auto_send"], true);
+    assert!(on["auto_send_at"].is_string());
+    assert_eq!(on["attested_by"], "workspace operator");
+    assert!(on["attested_at"].is_string());
+    assert!(
+        on["warning"]
+            .as_str()
+            .unwrap()
+            .contains("cannot be retracted")
+    );
+    assert_eq!(on["setup"]["ready"], true, "{on}");
+    let (actor, payload): (String, Value) = sqlx::query_as("SELECT actor,payload FROM conversion_events WHERE workspace_id=$1 AND kind='pipeline_policy_saved' ORDER BY id DESC LIMIT 1")
+        .bind(a.store.workspace).fetch_one(&a.store.pool).await.unwrap();
+    assert_eq!(actor, format!("API key {send_id}"));
+    assert_eq!(payload["attested_by"], "workspace operator");
+    assert_eq!(payload["version"], 3);
+    let (_, still) = post(
+        &w,
+        json!({"action":"order","external_id":"before-send","lead_id":first,"value_minor":200}),
+    )
+    .await;
+    assert_eq!(still["delivery"]["google"], "blocked", "{still}");
+    let (_, sent) = post(
+        &w,
+        json!({"action":"order","external_id":"after-send","lead_id":first,"value_minor":300}),
+    )
+    .await;
+    assert_eq!(sent["delivery"]["google"], "queued", "{sent}");
+    // An unchanged request writes nothing; the attestation keeps its original record.
+    let (status, same) = put(
+        send.clone(),
+        json!({"auto_send":true,"consent_policy":"not_required_outside_eea","attest_no_eea_advertising":true,"version":3}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{same}");
+    assert_eq!(same["version"], 3);
+    assert_eq!(same["attested_at"], on["attested_at"]);
+    // Pausing delivery through the key uses the owner route's pause rules and audit.
+    let (status, paused) = put(send.clone(), json!({"enabled":false,"version":3})).await;
+    assert_eq!(status, StatusCode::OK, "{paused}");
+    assert_eq!(paused["enabled"], false);
+    assert_eq!(paused["auto_send"], true, "omitted fields are unchanged");
+    assert_eq!(paused["consent_policy"], "not_required_outside_eea");
+    let actor: String = sqlx::query_scalar("SELECT actor FROM conversion_events WHERE workspace_id=$1 AND kind='delivery_enabled' ORDER BY id DESC LIMIT 1")
+        .bind(a.store.workspace).fetch_one(&a.store.pool).await.unwrap();
+    assert_eq!(actor, format!("API key {send_id}"));
+    // Turning sending off clears auto_send_at; turning it on later starts a new window.
+    let (status, v) = put(
+        send.clone(),
+        json!({"enabled":true,"auto_send":false,"version":4}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert!(v["auto_send_at"].is_null());
+    assert!(v["warning"].is_null());
+    let (_, between) = post(
+        &w,
+        json!({"action":"order","external_id":"while-off","lead_id":first,"value_minor":400}),
+    )
+    .await;
+    assert_eq!(between["delivery"]["google"], "blocked");
+    // MCP over the same key: the tool needs conversions:send in the connection's scopes.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = router(a.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let call = |scopes: &[&str], name: &str, args: Value| {
+        let mcp = convert_cli::mcp::Server::scoped(
+            Ok(convert_cli::client::Client::new(&origin, &send).unwrap()),
+            scopes.iter().map(|s| s.to_string()).collect(),
+        );
+        let message = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}});
+        async move { mcp.handle(message).await.unwrap()["result"].clone() }
+    };
+    let r = call(
+        &["read", "conversions:write"],
+        "set_conversion_delivery",
+        json!({"auto_send":true,"version":6}),
+    )
+    .await;
+    assert_eq!(r["isError"], true, "{r}");
+    let r = call(&["read"], "get_conversion_delivery", json!({})).await;
+    assert_eq!(r["isError"], false, "{r}");
+    assert!(
+        r["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("\"version\": 6"),
+        "{r}"
+    );
+    let r = call(
+        &["read", "conversions:send"],
+        "set_conversion_delivery",
+        json!({"auto_send":true,"version":6}),
+    )
+    .await;
+    assert_eq!(r["isError"], false, "{r}");
+    assert!(
+        r["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("count these conversions twice")
+    );
+    assert_eq!(a.store.pipeline_policy().await.unwrap()["auto_send"], true);
+    server.abort();
+    w.task.abort();
+}
+
+/// conversions:write runs the owner's "Check saved connection" through the same code:
+/// identical report, the same recorded check, and the checklist step goes to the agent.
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn conversions_write_runs_the_owner_destination_check() {
+    let w = world("per_lead", false).await;
+    let a = &w.a;
+    sqlx::query("UPDATE google_connections SET validation=NULL,validated_settings_version=NULL,checked_at=NULL WHERE workspace_id=$1")
+        .bind(a.store.workspace).execute(&a.store.pool).await.unwrap();
+    let (_, setup) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        &w.key,
+        Value::Null,
+    )
+    .await;
+    let step = setup["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| {
+            s["step"]
+                .as_str()
+                .unwrap()
+                .contains("check_google_destination")
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("{setup}"));
+    assert_eq!(step["actor"], "agent");
+    let body = json!({"revision":setup["connection_revision"],"settings_version":setup["settings_version"],"login":"1234567890"});
+    let read = a
+        .store
+        .issue_api_key(
+            &convert_store::api_keys::KeyInput {
+                name: "Read".into(),
+                scopes: vec!["read".into()],
+                expires_at: None,
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap()["secret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let path = "/api/v1/conversion-setup/check";
+    let (status, v) = api(a.clone(), "POST", path, &read, body.clone()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(v["error"].as_str().unwrap().contains("conversions:write"));
+    let (status, by_key) = api(a.clone(), "POST", path, &w.key, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{by_key}");
+    assert_eq!(by_key["valid"], true, "{by_key}");
+    assert_eq!(by_key["pipeline_actions_valid"], true);
+    let actor: String = sqlx::query_scalar("SELECT actor FROM conversion_events WHERE workspace_id=$1 AND kind='google_destination_checked' ORDER BY id DESC LIMIT 1")
+        .bind(a.store.workspace).fetch_one(&a.store.pool).await.unwrap();
+    assert!(actor.starts_with("API key "), "{actor}");
+    let (_, after) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        &w.key,
+        Value::Null,
+    )
+    .await;
+    assert!(after["checked_at"].is_string());
+    assert!(
+        !after["next_steps"]
+            .to_string()
+            .contains("check_google_destination"),
+        "{after}"
+    );
+    // The owner route returns the same report for the same inputs.
+    let (status, by_owner) = api(
+        a.clone(),
+        "POST",
+        "/api/connections/google/validate",
+        &a.api_key,
+        body.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{by_owner}");
+    assert_eq!(by_key, by_owner);
+    // Stale inputs conflict exactly as on the owner route.
+    let mut stale = body.clone();
+    stale["settings_version"] = json!(99);
+    assert_eq!(
+        api(a.clone(), "POST", path, &w.key, stale.clone()).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        api(
+            a.clone(),
+            "POST",
+            "/api/connections/google/validate",
+            &a.api_key,
+            stale
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    // MCP tool over the same key.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = router(a.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for (scopes, error) in [
+        (vec!["read"], true),
+        (vec!["read", "conversions:write"], false),
+    ] {
+        let mcp = convert_cli::mcp::Server::scoped(
+            Ok(convert_cli::client::Client::new(&origin, &w.key).unwrap()),
+            scopes.into_iter().map(String::from).collect(),
+        );
+        let r = mcp.handle(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_google_destination","arguments":body}})).await.unwrap()["result"].clone();
+        assert_eq!(r["isError"], error, "{r}");
+    }
     server.abort();
     w.task.abort();
 }

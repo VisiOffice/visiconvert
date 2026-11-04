@@ -152,7 +152,9 @@ All endpoints use existing private workspace authentication:
   failed or review-required receipt; never replay an upload.
 
 These controls are owner-only private APIs. Public API keys and MCP connections
-cannot enable or queue advertising delivery. MCP setup status reports workspace
+cannot validate or queue reviewed deliveries. Only a key or connection with
+`conversions:send` can switch Google delivery on or off, through
+`PUT /api/v1/conversion-delivery` (see [pipeline conversions](PIPELINE_CONVERSIONS.md)). MCP setup status reports workspace
 opt-in, not proof of delivery. All tables are included in normal database backups.
 
 ## Remaining work

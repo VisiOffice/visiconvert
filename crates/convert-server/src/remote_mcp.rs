@@ -14,6 +14,7 @@ const SCOPES: &[&str] = &[
     "leads:write",
     "bookings:write",
     "conversions:write",
+    "conversions:send",
 ];
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -77,6 +78,25 @@ fn verify(token: &str, key: &str) -> Result<Delegation, ApiError> {
         return Err(denied());
     }
     Ok(value)
+}
+/// A delegation as `handle` would mint it, for tests of the hosted MCP path.
+#[cfg(test)]
+pub(crate) fn test_delegation(
+    service_key: &str,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    grant_id: Uuid,
+    scopes: &[&str],
+) -> String {
+    let d = Delegation {
+        workspace_id,
+        user_id,
+        credential_version: 0,
+        grant_id,
+        scopes: scopes.iter().map(|s| s.to_string()).collect(),
+        expires: chrono::Utc::now().timestamp() + 30,
+    };
+    sign(&d, service_key).ok().unwrap()
 }
 pub async fn authenticate(app: &App, token: &str) -> Result<KeyAccess, ApiError> {
     let config = app.cloud.as_ref().ok_or_else(denied)?;

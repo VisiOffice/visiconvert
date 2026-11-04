@@ -413,7 +413,7 @@ pub(crate) async fn actions(
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Validation {
+pub(crate) struct Validation {
     revision: i64,
     settings_version: i32,
     login: String,
@@ -424,8 +424,23 @@ async fn validate(
     Json(input): Json<Validation>,
 ) -> Api<Value> {
     owner(&access).await?;
+    let actor = access
+        .store
+        .inquiry_actor(access.session_hash.as_deref())
+        .await?;
+    Ok(Json(check_destination(&a, &access, &input, &actor).await?))
+}
+/// "Check saved connection": the owner route and conversions:write credentials share it.
+/// Read-only at Google; records the report against the connection revision and settings
+/// version it checked, so a replaced connection or changed destination conflicts.
+pub(crate) async fn check_destination(
+    a: &App,
+    access: &hosted::Access,
+    input: &Validation,
+    actor: &str,
+) -> Result<Value, ApiError> {
     access.store.clear_google_validation(input.revision).await?;
-    let (connection, token) = token(&a, &access).await?;
+    let (connection, token) = token(a, access).await?;
     let settings = access.store.google_conversion_settings().await?;
     if connection.revision != input.revision
         || settings.version != input.settings_version
@@ -433,17 +448,13 @@ async fn validate(
     {
         return Err(convert_store::Error::Conflict.into());
     }
-    let report = destination_report(&a, &access.store, &token, &input.login).await?;
-    let actor = access
-        .store
-        .inquiry_actor(access.session_hash.as_deref())
-        .await?;
-    owner(&access).await?;
+    let report = destination_report(a, &access.store, &token, &input.login).await?;
+    owner(access).await?;
     access
         .store
-        .save_google_validation(connection.revision, settings.version, &report, &actor)
+        .save_google_validation(connection.revision, settings.version, &report, actor)
         .await?;
-    Ok(Json(report))
+    Ok(report)
 }
 /// Read-only destination check covering the reviewed actions and every enabled pipeline
 /// action. `valid` follows the reviewed actions when any are mapped, so a misconfigured
