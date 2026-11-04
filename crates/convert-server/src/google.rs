@@ -456,6 +456,92 @@ pub(crate) async fn check_destination(
         .await?;
     Ok(report)
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Destination {
+    version: i32,
+    customer_id: String,
+    allow_inferred_calls: bool,
+    qualified_action_id: Option<String>,
+    booking_action_id: Option<String>,
+}
+/// conversions:send. The owner's "Use this advertising account" and inferred-call opt-in,
+/// saved through the owner route's store path (validation, version, invalidation, audit).
+/// The account must be reachable from the connected login and own its conversion
+/// tracking, the same rule the Conversions page applies. Omitted reviewed-flow mappings
+/// are kept for the same account; switching accounts requires stating them ("" clears),
+/// since they belong to the old account.
+pub(crate) async fn save_destination(
+    a: &App,
+    access: &hosted::Access,
+    input: &Destination,
+    actor: &str,
+) -> Result<Value, ApiError> {
+    if !google_api::customer_id(&input.customer_id) {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "customer_id must be a 10-digit Google Ads customer ID".into(),
+        ));
+    }
+    let current = access.store.google_conversion_settings().await?;
+    if current.version != input.version {
+        return Err(convert_store::Error::Conflict.into());
+    }
+    let switching = !current.customer_id.is_empty() && current.customer_id != input.customer_id;
+    let keep = |given: &Option<String>, saved: &str| -> Result<String, ApiError> {
+        match given {
+            Some(v) => Ok(v.clone()),
+            None if switching && !saved.is_empty() => Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "Changing the advertising account: pass qualified_action_id and booking_action_id explicitly (\"\" clears them), since the saved reviewed-flow mappings belong to the old account".into(),
+            )),
+            None => Ok(saved.to_string()),
+        }
+    };
+    let settings = convert_store::conversions::Settings {
+        customer_id: input.customer_id.clone(),
+        qualified_action_id: keep(&input.qualified_action_id, &current.qualified_action_id)?,
+        booking_action_id: keep(&input.booking_action_id, &current.booking_action_id)?,
+        allow_inferred_calls: input.allow_inferred_calls,
+        version: input.version,
+    };
+    let (_, token) = token(a, access).await?;
+    let mut found = None;
+    for login in a.google_client.logins(&token).await? {
+        let (accounts, _) = a.google_client.accounts(&token, &login).await?;
+        if let Some(account) = accounts.into_iter().find(|x| x.id == input.customer_id) {
+            found = Some((login, account));
+            break;
+        }
+    }
+    let (login, account) = found.ok_or(ApiError(
+        StatusCode::BAD_REQUEST,
+        "This advertising account is not reachable from the connected Google login. Use an account from list_google_accounts.".into(),
+    ))?;
+    let (details, _, _) = a
+        .google_client
+        .actions(&token, &login, &input.customer_id)
+        .await?;
+    let owner_id = details["conversion_owner"].as_str().unwrap_or("");
+    if owner_id != input.customer_id {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Conversion tracking for this account is owned by {owner_id}. Use that account instead."
+            ),
+        ));
+    }
+    access
+        .store
+        .save_conversion_settings(&settings, actor)
+        .await?;
+    let saved = access.store.google_conversion_settings().await?;
+    Ok(
+        json!({"customer_id":saved.customer_id,"account_name":account.name,"login":login,
+        "qualified_action_id":saved.qualified_action_id,"booking_action_id":saved.booking_action_id,
+        "allow_inferred_calls":saved.allow_inferred_calls,"version":saved.version}),
+    )
+}
 /// Read-only destination check covering the reviewed actions and every enabled pipeline
 /// action. `valid` follows the reviewed actions when any are mapped, so a misconfigured
 /// pipeline action never stops reviewed delivery; pipeline sends check their own action.

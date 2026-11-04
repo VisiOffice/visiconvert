@@ -36,6 +36,10 @@ fn shared_routes() -> Router<Shared> {
         .route("/conversion-setup", get(setup))
         .route("/conversion-setup/check", post(check_destination))
         .route(
+            "/conversion-setup/destination",
+            axum::routing::put(save_destination),
+        )
+        .route(
             "/conversion-delivery",
             get(delivery_state).put(set_delivery),
         )
@@ -126,6 +130,20 @@ async fn check_destination(
         google::check_destination(&a, &access, &input, &actor).await?,
     ))
 }
+/// conversions:send: which advertising account receives conversions, and whether
+/// inferred DNI calls are sent. Returns the saved destination and the checklist.
+async fn save_destination(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+    key: Option<Extension<KeyAccess>>,
+    Json(input): Json<google::Destination>,
+) -> Api<Value> {
+    conversions::owner(&access).await?;
+    let actor = actor(&access, &key).await?;
+    let mut value = google::save_destination(&a, &access, &input, &actor).await?;
+    value["setup"] = setup_status(&a, &access.store).await?;
+    Ok(Json(value))
+}
 async fn overview(
     State(a): State<Shared>,
     Extension(access): Extension<hosted::Access>,
@@ -215,7 +233,7 @@ async fn setup(
 /// Checklist for the pipeline flow. `next_steps` names who acts: `agent` steps any key or
 /// connection with conversions:write can take; `owner_approval` switches need the owner,
 /// either in Conversions or through a conversions:send credential after the owner confirms;
-/// `owner` steps (Google OAuth, account choice) need the owner in Conversions.
+/// `owner` steps (Google OAuth) need the owner in Conversions.
 pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiError> {
     let mut f = store.pipeline_setup().await?;
     let connection = store.google_connection().await?;
@@ -233,8 +251,14 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
         steps.push(("owner", "Owner must connect Google in Conversions. Keys and agents cannot start a Google connection.".into()));
     } else if !f["customer_id"].is_string() {
         steps.push((
-            "owner",
-            "Owner must choose and save the advertising account in Conversions.".into(),
+            "owner_approval",
+            "Choose the advertising account: the owner in Conversions, or an agent with conversions:send (set_google_destination) after the owner confirms the account name and ID.".into(),
+        ));
+    }
+    if connected && f["customer_id"].is_string() && !on("allow_inferred_calls") && on("dni_calls") {
+        steps.push((
+            "owner_approval",
+            "Decide whether to send calls matched to a website visit by timing on a DNI number (inferred calls). They are blocked until allowed: the owner in Conversions, or an agent with conversions:send (set_google_destination) after the owner agrees.".into(),
         ));
     }
     if n("enabled_actions") == 0 {

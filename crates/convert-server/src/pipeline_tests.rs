@@ -1341,3 +1341,151 @@ async fn conversions_write_runs_the_owner_destination_check() {
     server.abort();
     w.task.abort();
 }
+
+/// conversions:send saves the advertising account and inferred-call choice through the
+/// owner route's store path; conversions:write cannot, and reviewed mappings are kept.
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn conversions_send_saves_the_google_destination() {
+    let w = world("per_lead", false).await;
+    let a = &w.a;
+    let ws = a.store.workspace;
+    // The owner maps the reviewed flow (settings version 1 -> 2).
+    let (status, v) = api(a.clone(), "PUT", "/api/conversions/settings", &a.api_key, json!({"customer_id":"1234567890","qualified_action_id":"123","booking_action_id":"456","allow_inferred_calls":false,"version":1})).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    // A DNI pool with inferred calls off puts the opt-in on the checklist.
+    sqlx::query("INSERT INTO dni_pools(site_id,workspace_id,fallback_phone,destination_phone) VALUES($1,$2,'+12025550100','+12025550100')")
+        .bind(w.site).bind(ws).execute(&a.store.pool).await.unwrap();
+    let setup = |key: String| {
+        let a = a.clone();
+        async move {
+            api(a, "GET", "/api/v1/conversion-setup", &key, Value::Null)
+                .await
+                .1
+        }
+    };
+    let before = setup(w.key.clone()).await;
+    assert_eq!(before["allow_inferred_calls"], false);
+    let inferred = before["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["step"].as_str().unwrap().contains("inferred calls"))
+        .cloned()
+        .unwrap_or_else(|| panic!("{before}"));
+    assert_eq!(inferred["actor"], "owner_approval");
+    let created = a
+        .store
+        .issue_api_key(
+            &convert_store::api_keys::KeyInput {
+                name: "Sender".into(),
+                scopes: vec!["read".into(), "conversions:send".into()],
+                expires_at: None,
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let send = created["secret"].as_str().unwrap().to_string();
+    let send_id = created["id"].as_str().unwrap().to_string();
+    let path = "/api/v1/conversion-setup/destination";
+    let put = |key: &str, body: Value| {
+        let (a, key) = (a.clone(), key.to_string());
+        async move { api(a, "PUT", path, &key, body).await }
+    };
+    let body = json!({"customer_id":"1234567890","allow_inferred_calls":true,"version":2});
+    let (status, v) = put(&w.key, body.clone()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(v["error"].as_str().unwrap().contains("conversions:send"));
+    let mut stale = body.clone();
+    stale["version"] = json!(1);
+    assert_eq!(put(&send, stale).await.0, StatusCode::CONFLICT);
+    // Switching accounts needs the reviewed mappings stated; unreachable accounts fail.
+    let (status, v) = put(
+        &send,
+        json!({"customer_id":"1111111111","allow_inferred_calls":true,"version":2}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        v["error"].as_str().unwrap().contains("qualified_action_id"),
+        "{v}"
+    );
+    let (status, v) = put(&send, json!({"customer_id":"1111111111","allow_inferred_calls":true,"qualified_action_id":"","booking_action_id":"","version":2})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        v["error"].as_str().unwrap().contains("not reachable"),
+        "{v}"
+    );
+    w.p.setup_other_owner
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (status, v) = put(&send, body.clone()).await;
+    w.p.setup_other_owner
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(v["error"].as_str().unwrap().contains("9999999999"), "{v}");
+    assert_eq!(
+        a.store.google_conversion_settings().await.unwrap().version,
+        2
+    );
+    let (status, saved) = put(&send, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["account_name"], "Google test account");
+    assert_eq!(saved["allow_inferred_calls"], true);
+    assert_eq!(
+        saved["qualified_action_id"], "123",
+        "reviewed mappings kept"
+    );
+    assert_eq!(saved["booking_action_id"], "456");
+    assert_eq!(saved["version"], 3);
+    assert!(
+        !saved["setup"]["next_steps"]
+            .to_string()
+            .contains("inferred calls"),
+        "{saved}"
+    );
+    let actor: String = sqlx::query_scalar("SELECT actor FROM conversion_events WHERE workspace_id=$1 AND kind='settings_saved' ORDER BY id DESC LIMIT 1")
+        .bind(ws).fetch_one(&a.store.pool).await.unwrap();
+    assert_eq!(actor, format!("API key {send_id}"));
+    // Owner-route parity: the owner saving the same values stores the same configuration.
+    let config = || async {
+        sqlx::query_scalar::<_, Value>(
+            "SELECT configuration-'version' FROM conversion_settings WHERE workspace_id=$1",
+        )
+        .bind(ws)
+        .fetch_one(&a.store.pool)
+        .await
+        .unwrap()
+    };
+    let by_key = config().await;
+    let (status, _) = api(a.clone(), "PUT", "/api/conversions/settings", &a.api_key, json!({"customer_id":"1234567890","qualified_action_id":"123","booking_action_id":"456","allow_inferred_calls":true,"version":3})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(config().await, by_key);
+    // MCP: refused with conversions:write, runs with conversions:send.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = router(a.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let args = json!({"customer_id":"1234567890","allow_inferred_calls":false,"version":4});
+    for (scopes, error) in [
+        (vec!["read", "conversions:write"], true),
+        (vec!["read", "conversions:send"], false),
+    ] {
+        let mcp = convert_cli::mcp::Server::scoped(
+            Ok(convert_cli::client::Client::new(&origin, &send).unwrap()),
+            scopes.into_iter().map(String::from).collect(),
+        );
+        let r = mcp.handle(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"set_google_destination","arguments":args}})).await.unwrap()["result"].clone();
+        assert_eq!(r["isError"], error, "{r}");
+    }
+    assert!(
+        !a.store
+            .google_conversion_settings()
+            .await
+            .unwrap()
+            .allow_inferred_calls
+    );
+    server.abort();
+    w.task.abort();
+}

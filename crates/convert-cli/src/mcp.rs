@@ -248,10 +248,25 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "get_conversion_setup",
-        description: "Google pipeline conversion checklist: connection, saved advertising account, actions and mappings, destination check, delivery and automatic sending, with next_steps naming who acts (agent, owner_approval, owner). Connecting Google and choosing the advertising account need the owner in Conversions; no tool can do them. Run the first destination check with check_google_destination. owner_approval steps (Google delivery, automatic sending) can be done with set_conversion_delivery once the owner confirms.",
+        description: "Google pipeline conversion checklist: connection, saved advertising account, actions and mappings, destination check, delivery and automatic sending, with next_steps naming who acts (agent, owner_approval, owner). Connecting Google needs the owner in Conversions; no tool can do it. owner_approval steps (advertising account, inferred calls, Google delivery, automatic sending) can be done with set_google_destination or set_conversion_delivery once the owner confirms. Run the first destination check with check_google_destination.",
         changes: false,
         idempotent: true,
         schema: none,
+    },
+    Tool {
+        name: "set_google_destination",
+        description: "Choose which Google Ads advertising account receives conversions, and whether inferred calls are sent. Requires conversions:send, which only the workspace owner can grant. Before calling, tell the owner the account name and 10-digit ID (from list_google_accounts) and whether inferred calls will be sent, and get their explicit yes in this conversation. Inferred calls are phone calls VisiConvert matched to a website visit by timing on a dynamic (DNI) tracking number, not by a click ID the caller carried; with allow_inferred_calls false they are never sent. The account must be reachable from the connected Google login and own its conversion tracking. Use settings_version from get_conversion_setup as version; on conflict re-read and confirm again. Omitted reviewed-flow action IDs are kept for the same account; when changing accounts, pass them explicitly (\"\" clears). Uploads nothing; run check_google_destination after mapping actions.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["version","customer_id","allow_inferred_calls"],"properties":{
+                "version":{"type":"integer","minimum":0,"description":"settings_version from get_conversion_setup (0 if none saved)"},
+                "customer_id":{"type":"string","pattern":"^[0-9]{10}$","description":"Advertising account ID the owner confirmed"},
+                "allow_inferred_calls":{"type":"boolean","description":"Send calls matched to a website visit by timing on a DNI number. Only after the owner agrees."},
+                "qualified_action_id":{"type":"string","pattern":"^([0-9]{1,20})?$","description":"Reviewed-flow qualified-lead action; omit to keep"},
+                "booking_action_id":{"type":"string","pattern":"^([0-9]{1,20})?$","description":"Reviewed-flow booking action; omit to keep"}
+            }})
+        },
     },
     Tool {
         name: "get_conversion_delivery",
@@ -377,7 +392,7 @@ const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
 6. For DNI, call get_site_pool. Confirm the published website number (fallback_phone), common forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before configure_site_pool. Supply the current version (0 if absent); on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
-7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Once actions are mapped, run check_google_destination once. Connecting Google and choosing the advertising account need the owner in Conversions. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left.
+7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google needs the owner in Conversions. With conversions:send, set_google_destination saves the advertising account and the inferred-call choice once the owner confirms the account name and ID and whether calls matched to visits by timing on DNI numbers are sent. Once actions are mapped, run check_google_destination once. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.";
 
 /// The reference page for the docs site, from the same table `tools/list` serves.
@@ -421,7 +436,7 @@ impl Server {
             | "create_google_conversion_action"
             | "record_conversion_event"
             | "check_google_destination" => "conversions:write",
-            "set_conversion_delivery" => "conversions:send",
+            "set_conversion_delivery" | "set_google_destination" => "conversions:send",
             _ if tool.changes => "leads:write",
             _ => "read",
         };
@@ -510,9 +525,9 @@ impl Server {
                     "inputSchema": (tool.schema)(),
                     "annotations": {
                         "readOnlyHint": !tool.changes,
-                        "destructiveHint": matches!(tool.name, "update_site" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery"),
+                        "destructiveHint": matches!(tool.name, "update_site" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination"),
                         "idempotentHint": tool.idempotent,
-                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination")
+                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination")
                     }
                 })
             })
@@ -697,6 +712,7 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
         }
         "get_conversion_setup" => client.conversion_setup().await?,
         "get_conversion_delivery" => client.conversion_delivery().await?,
+        "set_google_destination" => client.set_google_destination(args).await?,
         "set_conversion_delivery" => client.set_conversion_delivery(args).await?,
         "list_google_accounts" => {
             client
@@ -779,7 +795,10 @@ mod scoped_tests {
                     "check_google_destination",
                 ],
             ),
-            ("conversions:send", vec!["set_conversion_delivery"]),
+            (
+                "conversions:send",
+                vec!["set_conversion_delivery", "set_google_destination"],
+            ),
         ] {
             let server =
                 Server::scoped(Err("no network".into()), vec!["read".into(), scope.into()]);
@@ -802,11 +821,14 @@ mod scoped_tests {
             }
         }
     }
-    /// Delivery, automatic sending and the consent attestation are reachable only through
+    /// The advertising account, inferred calls, delivery, automatic sending and the consent
+    /// attestation are reachable only through set_google_destination and
     /// set_conversion_delivery, and only with conversions:send. Google OAuth never is.
     #[tokio::test]
     async fn owner_switches_require_conversions_send() {
-        const SWITCHES: [&str; 5] = [
+        const SWITCHES: [&str; 7] = [
+            "customer_id",
+            "allow_inferred_calls",
             "auto_send",
             "consent_policy",
             "attest_no_eea_advertising",
@@ -861,11 +883,28 @@ mod scoped_tests {
         let tools = send.tools();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"set_conversion_delivery"));
+        assert!(names.contains(&"set_google_destination"));
+        let destination = tools
+            .iter()
+            .find(|t| t["name"] == "set_google_destination")
+            .unwrap();
+        let text = destination["description"].as_str().unwrap();
+        for phrase in [
+            "account name and 10-digit ID",
+            "explicit yes",
+            "by timing on a dynamic (DNI)",
+        ] {
+            assert!(text.contains(phrase), "{phrase}");
+        }
         for tool in &tools {
             let exposes = tool["inputSchema"]["properties"]
                 .as_object()
                 .is_some_and(|p| SWITCHES.iter().any(|s| p.contains_key(*s)));
-            assert_eq!(exposes, tool["name"] == "set_conversion_delivery");
+            assert_eq!(
+                exposes,
+                tool["name"] == "set_conversion_delivery"
+                    || tool["name"] == "set_google_destination"
+            );
         }
         let set = tools
             .iter()

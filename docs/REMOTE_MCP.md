@@ -75,9 +75,10 @@ Each connection is restricted to one workspace and expires after 90 days.
   are recorded for the owner who approved the connection, and the conversion history
   names the connection. Only the workspace owner can approve `conversions:send`; the
   consent page lists it apart under **Sending permission**, unchecked, with a warning
-  that sent conversions cannot be retracted. No tool can connect or replace the Google
-  login or choose the advertising account; `get_conversion_setup` names which steps are
-  left. Rails offers `conversions:write` and `conversions:send` on the consent page.
+  that sent conversions cannot be retracted. `set_google_destination` (also
+  `conversions:send`) saves the advertising account and inferred-call opt-in after the
+  owner confirms. No tool can connect or replace the Google login; `get_conversion_setup`
+  names which steps are left. Rails offers `conversions:write` and `conversions:send` on the consent page.
 
 ## Operator configuration
 

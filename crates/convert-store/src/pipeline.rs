@@ -672,6 +672,8 @@ impl Store {
             'checked_at',c.checked_at,'check_valid',COALESCE((c.validation->>'valid')::boolean,false),
             'check_current',COALESCE(c.validated_settings_version=g.version AND c.checked_at>now()-interval '24 hours',false),
             'check_message',c.validation->>'message','pipeline_actions_valid',COALESCE((c.validation->>'pipeline_actions_valid')::boolean,false),
+            'allow_inferred_calls',COALESCE((g.configuration->>'allow_inferred_calls')::boolean,false),
+            'dni_calls',EXISTS(SELECT 1 FROM dni_pools WHERE workspace_id=$1) OR EXISTS(SELECT 1 FROM dni_call_evidence WHERE workspace_id=$1 AND status='inferred_window'),
             'delivery_enabled',COALESCE(s.enabled,false),'auto_send',COALESCE(s.auto_send,false),'consent_policy',COALESCE(s.consent_policy,'per_lead'),
             'actions',(SELECT count(*) FROM conversion_actions WHERE workspace_id=$1),
             'enabled_actions',(SELECT count(*) FROM conversion_actions WHERE workspace_id=$1 AND enabled),
