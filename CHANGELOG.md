@@ -1,3 +1,10 @@
+## Unreleased — Google click window fix
+
+- Google's API returns int64 fields such as `clickThroughLookbackWindowDays` as strings.
+  They were read as 0, which blocked every pipeline conversion as "not an enabled import
+  action" and showed a 0-day click window in the destination check and review. Both forms
+  are now read.
+
 ## Unreleased — Google Ads conversion review
 
 - New `GET /api/v1/conversion-setup/google-review` (`read`) and MCP tool
