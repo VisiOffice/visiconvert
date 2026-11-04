@@ -74,7 +74,10 @@ Each connection is restricted to one workspace and expires after 90 days.
   the owner's explicit confirmation in chat and to state the attestation.
   `review_google_conversion_setup` (`read`) flags other conversion actions in the Google
   Ads account that would double count, and `set_google_action_goal`
-  (`conversions:send`) makes one primary or secondary after the owner confirms. Attestations
+  (`conversions:send`) makes one primary or secondary after the owner confirms.
+  Google-hosted actions such as clicks to call follow their account-level goal instead:
+  `set_google_goal_biddable` (`conversions:send`) turns that goal on or off for bidding
+  across the account, after the owner hears every action in it and confirms. Attestations
   are recorded for the owner who approved the connection, and the conversion history
   names the connection. Only the workspace owner can approve `conversions:send`; the
   consent page lists it apart under **Sending permission**, unchecked, with a warning

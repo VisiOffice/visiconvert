@@ -21,6 +21,9 @@ pub(super) struct Provider {
     /// Goal updates received, and primary overrides they applied to the review fixture.
     pub(super) goal_updates: Mutex<Vec<Value>>,
     review_primary: Mutex<std::collections::HashMap<String, bool>>,
+    /// Customer conversion goal updates received, and the biddable overrides they applied.
+    pub(super) biddable_updates: Mutex<Vec<Value>>,
+    goal_biddable: Mutex<std::collections::HashMap<String, bool>>,
     challenge: Mutex<String>,
     exchanges: AtomicUsize,
     deny: AtomicBool,
@@ -85,6 +88,36 @@ async fn provider(
     if uri.path() == "/v26/customers:listAccessibleCustomers" {
         return Json(json!({"resourceNames":["customers/1234567890"]})).into_response();
     }
+    if uri.path().ends_with("/customerConversionGoals:mutate") {
+        assert_eq!(
+            uri.path(),
+            "/v26/customers/1234567890/customerConversionGoals:mutate"
+        );
+        assert_eq!(headers["login-customer-id"], "1234567890");
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        let mut top: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+        top.sort();
+        assert_eq!(top, ["operations", "validateOnly"]);
+        assert_eq!(v["validateOnly"], false);
+        assert_eq!(v["operations"].as_array().unwrap().len(), 1);
+        // Goal changes may touch only biddable.
+        assert_eq!(v["operations"][0]["updateMask"], "biddable");
+        let update = &v["operations"][0]["update"];
+        let mut keys: Vec<_> = update.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, ["biddable", "resourceName"]);
+        let resource = update["resourceName"].as_str().unwrap().to_string();
+        let key = resource
+            .strip_prefix("customers/1234567890/customerConversionGoals/")
+            .unwrap()
+            .to_string();
+        p.biddable_updates.lock().unwrap().push(update.clone());
+        p.goal_biddable
+            .lock()
+            .unwrap()
+            .insert(key, update["biddable"].as_bool().unwrap());
+        return Json(json!({"results":[{"resourceName":resource}]})).into_response();
+    }
     if uri.path().ends_with("/conversionActions:mutate") {
         assert_eq!(headers["login-customer-id"], "1234567890");
         let v: Value = serde_json::from_slice(&body).unwrap();
@@ -100,7 +133,7 @@ async fn provider(
             let resource = update["resourceName"].as_str().unwrap().to_string();
             let id = resource.rsplit('/').next().unwrap().to_string();
             p.goal_updates.lock().unwrap().push(update.clone());
-            if id == "506" {
+            if id == "506" || id == "503" {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({"error":{"details":[{"errors":[{"errorCode":{"mutateError":"MUTATE_NOT_ALLOWED"}}]}]}})),
@@ -179,6 +212,18 @@ async fn provider(
     if query.contains("metrics.all_conversions") {
         return Json(review_metrics(query)).into_response();
     }
+    if query.contains("FROM customer_conversion_goal") {
+        let overrides = p.goal_biddable.lock().unwrap();
+        let rows: Vec<Value> = review_goals()
+            .into_iter()
+            .map(|(category, origin)| {
+                let key = format!("{category}~{origin}");
+                let biddable = overrides.get(&key).copied().unwrap_or(true);
+                json!({"customerConversionGoal":{"resourceName":format!("customers/1234567890/customerConversionGoals/{key}"),"category":category,"origin":origin,"biddable":biddable}})
+            })
+            .collect();
+        return Json(json!({"results":rows})).into_response();
+    }
     assert!(query.contains("FROM conversion_action"));
     if query.contains("conversion_action.status != 'REMOVED'") {
         let overrides = p.review_primary.lock().unwrap();
@@ -242,7 +287,13 @@ async fn provider(
 /// action Google will not change, and one owned by another account.
 fn review_fixture() -> Vec<Value> {
     let a = |id: &str, name: &str, kind: &str, category: &str, primary: bool, owner: &str| {
-        json!({"id":id,"name":name,"status":"ENABLED","type":kind,"category":category,"ownerCustomer":format!("customers/{owner}"),
+        let origin = match kind {
+            "GOOGLE_HOSTED" => "GOOGLE_HOSTED",
+            "AD_CALL" => "CALL_FROM_ADS",
+            "STORE_VISITS" => "STORE",
+            _ => "WEBSITE",
+        };
+        json!({"id":id,"name":name,"status":"ENABLED","type":kind,"category":category,"origin":origin,"ownerCustomer":format!("customers/{owner}"),
             "primaryForGoal":primary,"countingType":"ONE_PER_CLICK","clickThroughLookbackWindowDays":"30",
             "valueSettings":{"defaultValue":1.0,"defaultCurrencyCode":"USD","alwaysUseDefaultValue":false}})
     };
@@ -273,11 +324,12 @@ fn review_fixture() -> Vec<Value> {
             true,
             c,
         ),
+        a("503", "Clicks to call", "GOOGLE_HOSTED", "CONTACT", true, c),
         a(
-            "503",
-            "Clicks to call",
+            "507",
+            "Business Profile messages",
             "GOOGLE_HOSTED",
-            "PHONE_CALL_LEAD",
+            "CONTACT",
             true,
             c,
         ),
@@ -313,6 +365,19 @@ fn review_fixture() -> Vec<Value> {
             true,
             "9999999999",
         ),
+    ]
+}
+/// The account's customer conversion goals (category, origin); biddable unless changed.
+fn review_goals() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("QUALIFIED_LEAD", "WEBSITE"),
+        ("PURCHASE", "WEBSITE"),
+        ("PHONE_CALL_LEAD", "WEBSITE"),
+        ("SUBMIT_LEAD_FORM", "WEBSITE"),
+        ("CONTACT", "GOOGLE_HOSTED"),
+        ("PHONE_CALL_LEAD", "CALL_FROM_ADS"),
+        ("STORE_VISIT", "STORE"),
+        ("DEFAULT", "WEBSITE"),
     ]
 }
 /// Daily all_conversions per action, answered for the requested date range.

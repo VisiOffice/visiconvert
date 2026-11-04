@@ -328,7 +328,7 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
             None => advisory.push(("agent", "Run review_google_conversion_setup (GET /api/v1/conversion-setup/google-review) to find other conversion actions in Google Ads that would double count with VisiConvert.".into())),
             Some(r) if r["warnings"].as_array().is_some_and(|w| !w.is_empty()) => advisory.push((
                 "owner_approval",
-                format!("{} Review with review_google_conversion_setup and, after the owner confirms each one, make them secondary with set_google_action_goal (conversions:send).", r["summary"].as_str().unwrap_or("")),
+                format!("{} Review with review_google_conversion_setup and, after the owner confirms each one, make them secondary with set_google_action_goal (conversions:send); for Google-hosted actions such as clicks to call, switch their account-level goal off for bidding with set_google_goal_biddable instead.", r["summary"].as_str().unwrap_or("")),
             )),
             Some(_) => {}
         }
