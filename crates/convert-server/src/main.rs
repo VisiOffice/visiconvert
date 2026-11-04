@@ -4,6 +4,7 @@ mod connections;
 mod conversions;
 mod delivery;
 mod google;
+mod google_review;
 mod hosted;
 mod inquiries;
 mod managed;

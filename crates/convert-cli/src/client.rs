@@ -184,6 +184,24 @@ impl Client {
         )
         .await
     }
+    pub async fn google_review(&self, login: Option<&str>) -> Result<Value, Error> {
+        let mut request = self
+            .http
+            .get(self.url("/api/conversion-setup/google-review"));
+        if let Some(login) = login {
+            request = request.query(&[("login", login)]);
+        }
+        self.send(request).await
+    }
+    pub async fn set_google_action_goal(&self, id: &str, input: &Value) -> Result<Value, Error> {
+        let id = urlencoding(id);
+        self.send(
+            self.http
+                .put(self.url(&format!("/api/conversion-setup/google-actions/{id}/goal")))
+                .json(input),
+        )
+        .await
+    }
     pub async fn conversion_delivery(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/api/conversion-delivery")))
             .await

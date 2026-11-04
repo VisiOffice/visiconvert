@@ -1499,7 +1499,7 @@
       },
       "ConversionSetup": {
         "type": "object",
-        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (advertising account, inferred calls, Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google) cannot be done with a key. The checklist includes connection_revision and settings_version for POST /conversion-setup/check.",
+        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (advertising account, inferred calls, Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google) cannot be done with a key. The checklist includes connection_revision and settings_version for POST /conversion-setup/check. Items with advisory true come from the last Google Ads review (google_review) and never block ready.",
         "additionalProperties": true
       },
       "GoogleDestinationInput": {
@@ -1565,6 +1565,29 @@
           "revision",
           "settings_version",
           "login"
+        ],
+        "additionalProperties": false
+      },
+      "GoogleReview": {
+        "type": "object",
+        "description": "Every non-removed conversion action in the saved Google Ads account: id, name, type, category, status, primary_for_goal, counting, click_window_days, default_value, currency, always_use_default_value, owner, conversions_30d, conversions_90d (all_conversions) and last_conversion_date, plus mapped (VisiConvert sends to it), note, and flags. Each flag has code (mapped, active_other_uploader, dead_upload, call_overlap), severity (info or warning), a plain-language explanation and a suggestion. warnings lists the actions with warning flags; summary says it in one sentence; has_more is true past 200 actions. The goal route adds changed and action.",
+        "additionalProperties": true
+      },
+      "GoogleActionGoalInput": {
+        "type": "object",
+        "properties": {
+          "primary": {
+            "type": "boolean",
+            "description": "true makes the action primary (counts toward goals and bidding); false makes it secondary (reported only)."
+          },
+          "login": {
+            "type": "string",
+            "pattern": "^[0-9]{10}$",
+            "description": "Google Ads access account; defaults to the last checked one"
+          }
+        },
+        "required": [
+          "primary"
         ],
         "additionalProperties": false
       },
@@ -8858,6 +8881,292 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/GoogleDestinationInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversion-setup/google-review": {
+      "get": {
+        "summary": "Review every conversion action in the saved Google Ads account for overlap with VisiConvert: settings, 30- and 90-day conversions, and plain-language flags with suggested fixes. Read-only in Google; the latest result feeds the checklist. Optional login query selects the access account",
+        "operationId": "get_conversion_setup_google_review",
+        "description": "Requires `read` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleReview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversion-setup/google-actions/{id}/goal": {
+      "put": {
+        "summary": "Make one conversion action of the saved account primary or secondary. Changes only primary_for_goal, which changes what Google bids toward; confirm the action name and the effect with the owner first. Google refusing the change returns 422; an action owned by another account returns 400",
+        "operationId": "put_conversion_setup_google_actions_id_goal",
+        "description": "Requires `conversions:send` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleReview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "description": "Google conversion action ID from GET /conversion-setup/google-review"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleActionGoalInput"
               }
             }
           }

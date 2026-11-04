@@ -50,6 +50,7 @@ fn shared_routes() -> Router<Shared> {
             post(create_google_action),
         )
         .route("/conversion-events", get(list).post(record))
+        .merge(super::google_review::routes())
 }
 async fn actor(
     access: &hosted::Access,
@@ -95,7 +96,30 @@ async fn delivery_value(a: &App, store: &Store) -> Result<Value, ApiError> {
     let mut value = store.pipeline_policy().await?;
     value["setup"] = setup_status(a, store).await?;
     if value["auto_send"] == true {
-        value["warning"] = json!(DOUBLE_COUNT_WARNING);
+        let mut warning = DOUBLE_COUNT_WARNING.to_string();
+        if let Some(r) = store.google_review().await? {
+            let uploading: Vec<String> = r["warnings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|w| {
+                    w["flags"]
+                        .as_array()
+                        .is_some_and(|f| f.iter().any(|c| c == "active_other_uploader"))
+                })
+                .map(|w| {
+                    format!(
+                        "{} ({})",
+                        w["name"].as_str().unwrap_or(""),
+                        w["id"].as_str().unwrap_or("")
+                    )
+                })
+                .collect();
+            if !uploading.is_empty() {
+                warning.push_str(&format!(" The last Google Ads review found another tool still uploading to: {}. Turn those uploaders off or make the actions secondary.", uploading.join(", ")));
+            }
+        }
+        value["warning"] = json!(warning);
     }
     Ok(value)
 }
@@ -295,6 +319,21 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
         ));
     }
     let ready = steps.is_empty();
+    // Advisory: overlap in the Google Ads account itself. Does not block `ready`, since the
+    // owner may keep an action primary on purpose.
+    let mut advisory: Vec<(&str, String)> = Vec::new();
+    let review = store.google_review().await?;
+    if connected && f["customer_id"].is_string() {
+        match &review {
+            None => advisory.push(("agent", "Run review_google_conversion_setup (GET /api/v1/conversion-setup/google-review) to find other conversion actions in Google Ads that would double count with VisiConvert.".into())),
+            Some(r) if r["warnings"].as_array().is_some_and(|w| !w.is_empty()) => advisory.push((
+                "owner_approval",
+                format!("{} Review with review_google_conversion_setup and, after the owner confirms each one, make them secondary with set_google_action_goal (conversions:send).", r["summary"].as_str().unwrap_or("")),
+            )),
+            Some(_) => {}
+        }
+    }
+    f["google_review"] = review.unwrap_or(Value::Null);
     f["google_connected"] = json!(connected);
     f["connection_revision"] = json!(connection.revision);
     f["ready"] = json!(ready);
@@ -302,6 +341,11 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
         steps
             .iter()
             .map(|(who, text)| json!({"actor":who,"step":text}))
+            .chain(
+                advisory
+                    .iter()
+                    .map(|(who, text)| json!({"actor":who,"step":text,"advisory":true}))
+            )
             .collect::<Vec<_>>()
     );
     f["summary"] = json!(if ready {

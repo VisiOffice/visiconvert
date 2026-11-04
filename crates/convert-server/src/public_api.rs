@@ -210,6 +210,7 @@ async fn auth(State(app): State<Shared>, mut request: Request, next: Next) -> Re
         "setup:write"
     } else if path == "/api/v1/conversion-delivery"
         || path == "/api/v1/conversion-setup/destination"
+        || path == "/api/v1/conversion-setup/google-actions/{id}/goal"
     {
         "conversions:send"
     } else if path.starts_with("/api/v1/conversion-") {

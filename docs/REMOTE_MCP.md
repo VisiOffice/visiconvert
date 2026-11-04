@@ -71,7 +71,10 @@ Each connection is restricted to one workspace and expires after 90 days.
   (`check_google_destination`); reads need only `read`. With the separate
   `conversions:send`, `set_conversion_delivery` turns Google delivery and automatic
   sending on or off and sets the consent policy; its description tells the agent to get
-  the owner's explicit confirmation in chat and to state the attestation. Attestations
+  the owner's explicit confirmation in chat and to state the attestation.
+  `review_google_conversion_setup` (`read`) flags other conversion actions in the Google
+  Ads account that would double count, and `set_google_action_goal`
+  (`conversions:send`) makes one primary or secondary after the owner confirms. Attestations
   are recorded for the owner who approved the connection, and the conversion history
   names the connection. Only the workspace owner can approve `conversions:send`; the
   consent page lists it apart under **Sending permission**, unchecked, with a warning

@@ -101,6 +101,7 @@ impl From<google_api::Error> for ApiError {
         Self(
             match e {
                 google_api::Error::ActionConflict => StatusCode::CONFLICT,
+                google_api::Error::NotMutable => StatusCode::UNPROCESSABLE_ENTITY,
                 google_api::Error::Credentials
                 | google_api::Error::Scope
                 | google_api::Error::Access => StatusCode::BAD_REQUEST,
@@ -329,7 +330,10 @@ async fn complete(a: &App, headers: &HeaderMap, q: Callback) -> Result<(), ApiEr
     store.finish_google_oauth(&attempt, &encrypted).await?;
     Ok(())
 }
-async fn token(a: &App, access: &hosted::Access) -> Result<(Connection, String), ApiError> {
+pub(crate) async fn token(
+    a: &App,
+    access: &hosted::Access,
+) -> Result<(Connection, String), ApiError> {
     owner(access).await?;
     worker_token(a, &access.store).await
 }

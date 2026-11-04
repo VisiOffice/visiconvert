@@ -269,6 +269,25 @@ const TOOLS: &[Tool] = &[
         },
     },
     Tool {
+        name: "review_google_conversion_setup",
+        description: "Audit the saved Google Ads account's conversion actions for overlap with VisiConvert: each action's type, category, primary/secondary goal, counting, click window, values, owner and conversions over the last 30 and 90 days, with plain-language flags and a suggested fix. Flags: mapped (VisiConvert sends to it); active_other_uploader (another tool still uploads, so leads may count twice); dead_upload (primary import action with nothing in 90 days); call_overlap (primary call action counting the same calls VisiConvert records; website call tracking also fights VisiConvert's number swap). Calls from ads are not flagged. Read-only at Google; the findings feed get_conversion_setup and the automatic-sending warning.",
+        changes: false,
+        idempotent: true,
+        schema: || json!({"type":"object","additionalProperties":false,"properties":{"login":{"type":"string","pattern":"^[0-9]{10}$","description":"Google Ads access account; defaults to the last checked one"}}}),
+    },
+    Tool {
+        name: "set_google_action_goal",
+        description: "Make one conversion action in the saved Google Ads account primary or secondary. Requires conversions:send, which only the workspace owner can grant. Primary actions count toward the account's goals and Smart Bidding; secondary actions are only reported. Before calling, tell the owner the action's name and ID, what it counts, and that this changes what Google optimizes bids for, and get their explicit yes in this conversation. Changes only the primary/secondary setting: never removes, renames or revalues an action. Only actions owned by the saved account; Google refuses some system action types.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["action_id","primary"],"properties":{
+            "action_id":{"type":"string","pattern":"^[0-9]{1,20}$","description":"id from review_google_conversion_setup"},
+            "primary":{"type":"boolean","description":"false makes it secondary (reporting only)"},
+            "login":{"type":"string","pattern":"^[0-9]{10}$"}}})
+        },
+    },
+    Tool {
         name: "get_conversion_delivery",
         description: "Current Google delivery switch, automatic sending (and when it was turned on), consent policy with who attested it, the version set_conversion_delivery needs, and the setup checklist.",
         changes: false,
@@ -392,7 +411,7 @@ const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
 6. For DNI, call get_site_pool. Confirm the published website number (fallback_phone), common forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before configure_site_pool. Supply the current version (0 if absent); on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
-7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google needs the owner in Conversions. With conversions:send, set_google_destination saves the advertising account and the inferred-call choice once the owner confirms the account name and ID and whether calls matched to visits by timing on DNI numbers are sent. Once actions are mapped, run check_google_destination once. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left.
+7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google needs the owner in Conversions. With conversions:send, set_google_destination saves the advertising account and the inferred-call choice once the owner confirms the account name and ID and whether calls matched to visits by timing on DNI numbers are sent. Once actions are mapped, run check_google_destination once. Run review_google_conversion_setup and walk the owner through each flagged action; with conversions:send and the owner's explicit yes, set_google_action_goal can make it secondary. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.";
 
 /// The reference page for the docs site, from the same table `tools/list` serves.
@@ -436,7 +455,9 @@ impl Server {
             | "create_google_conversion_action"
             | "record_conversion_event"
             | "check_google_destination" => "conversions:write",
-            "set_conversion_delivery" | "set_google_destination" => "conversions:send",
+            "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal" => {
+                "conversions:send"
+            }
             _ if tool.changes => "leads:write",
             _ => "read",
         };
@@ -525,9 +546,9 @@ impl Server {
                     "inputSchema": (tool.schema)(),
                     "annotations": {
                         "readOnlyHint": !tool.changes,
-                        "destructiveHint": matches!(tool.name, "update_site" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination"),
+                        "destructiveHint": matches!(tool.name, "update_site" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal"),
                         "idempotentHint": tool.idempotent,
-                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination")
+                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination" | "set_google_action_goal")
                     }
                 })
             })
@@ -713,6 +734,26 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
         "get_conversion_setup" => client.conversion_setup().await?,
         "get_conversion_delivery" => client.conversion_delivery().await?,
         "set_google_destination" => client.set_google_destination(args).await?,
+        "review_google_conversion_setup" => {
+            client.google_review(text(args, "login").as_deref()).await?
+        }
+        "set_google_action_goal" => {
+            let mut input = serde_json::Map::new();
+            input.insert(
+                "primary".into(),
+                json!(
+                    args["primary"]
+                        .as_bool()
+                        .ok_or_else(|| anyhow!("primary is required"))?
+                ),
+            );
+            if let Some(login) = text(args, "login") {
+                input.insert("login".into(), json!(login));
+            }
+            client
+                .set_google_action_goal(&required(args, "action_id")?, &Value::Object(input))
+                .await?
+        }
         "set_conversion_delivery" => client.set_conversion_delivery(args).await?,
         "list_google_accounts" => {
             client
@@ -797,7 +838,11 @@ mod scoped_tests {
             ),
             (
                 "conversions:send",
-                vec!["set_conversion_delivery", "set_google_destination"],
+                vec![
+                    "set_conversion_delivery",
+                    "set_google_destination",
+                    "set_google_action_goal",
+                ],
             ),
         ] {
             let server =
@@ -904,6 +949,25 @@ mod scoped_tests {
                 exposes,
                 tool["name"] == "set_conversion_delivery"
                     || tool["name"] == "set_google_destination"
+            );
+        }
+        // Google goal changes need conversions:send too.
+        for scopes in [&everything_but_send[..], &["read"]] {
+            let server = Server::scoped(
+                Err("no network".into()),
+                scopes.iter().map(|s| s.to_string()).collect(),
+            );
+            assert!(
+                !server
+                    .tools()
+                    .iter()
+                    .any(|t| t["name"] == "set_google_action_goal")
+            );
+            assert!(
+                server
+                    .tools()
+                    .iter()
+                    .any(|t| t["name"] == "review_google_conversion_setup")
             );
         }
         let set = tools

@@ -216,3 +216,22 @@ impl Store {
         Ok(())
     }
 }
+
+/// Google Ads conversion setup review: the latest findings, and goal changes.
+impl Store {
+    pub async fn save_google_review(&self, customer_id: &str, report: &Value) -> Result<()> {
+        sqlx::query("INSERT INTO google_conversion_reviews(workspace_id,customer_id,report) VALUES($1,$2,$3) ON CONFLICT(workspace_id) DO UPDATE SET customer_id=$2,report=$3,reviewed_at=now()")
+            .bind(self.workspace).bind(customer_id).bind(report).execute(&self.pool).await?;
+        Ok(())
+    }
+    /// The latest review, only while it is for the saved advertising account.
+    pub async fn google_review(&self) -> Result<Option<Value>> {
+        Ok(sqlx::query_scalar("SELECT r.report||jsonb_build_object('reviewed_at',r.reviewed_at) FROM google_conversion_reviews r JOIN conversion_settings g ON g.workspace_id=r.workspace_id WHERE r.workspace_id=$1 AND r.customer_id=g.configuration->>'customer_id'")
+            .bind(self.workspace).fetch_optional(&self.pool).await?)
+    }
+    pub async fn log_google_goal_change(&self, actor: &str, payload: &Value) -> Result<()> {
+        sqlx::query("INSERT INTO conversion_events(workspace_id,kind,actor,payload) VALUES($1,'google_action_goal_changed',$2,$3)")
+            .bind(self.workspace).bind(actor).bind(payload).execute(&self.pool).await?;
+        Ok(())
+    }
+}

@@ -266,6 +266,35 @@ events, `conversions:send` to change the switches):
   Omitted reviewed-flow action IDs are kept for the same account. When you change
   accounts, pass them explicitly (`""` clears them). The checklist reports
   `customer_id` and `allow_inferred_calls`.
+- `GET /api/v1/conversion-setup/google-review[?login=]` (`read`): reviews every
+  non-removed conversion action in the saved Google Ads account. Each action reports `id`,
+  `name`, `type`, `category`, `status`, `primary_for_goal`, `counting`,
+  `click_window_days`, value settings, `owner`, `conversions_30d`, `conversions_90d`
+  (Google's all_conversions) and `last_conversion_date`, plus `mapped`, an optional `note`
+  and `flags`. Each flag has a `code`, a `severity`, a plain-language `explanation` and a
+  `suggestion`:
+  - `mapped` (info): VisiConvert sends to this action.
+  - `active_other_uploader`: an import action VisiConvert does not send to still received
+    conversions in the last 90 days. It is a warning while the action is primary, and
+    info once it is secondary.
+  - `dead_upload` (warning): a primary import action with no conversions in 90 days,
+    probably left over from an earlier tracking tool.
+  - `call_overlap` (warning): a primary Google call action (website call, click to call,
+    or a Google-hosted call action) that counts calls VisiConvert also records. A website
+    call action also means Google's forwarding number can fight VisiConvert's own
+    number swap.
+  - Calls from ads (`AD_CALL`) are not flagged; they never reach the website.
+  The result is saved. `get_conversion_setup` shows an advisory step to run the review,
+  then one for the owner while warnings remain; advisory steps never block `ready`. While
+  automatic sending is on, its warning names actions still flagged
+  `active_other_uploader`.
+- `PUT /api/v1/conversion-setup/google-actions/{id}/goal` (`conversions:send`)
+  `{primary, login?}`: makes one action of the saved account primary or secondary. Only
+  `primary_for_goal` is changed. Actions owned by another account return 400, and Google
+  refusing the change (system actions, for example) returns 422. An unchanged request does
+  not call Google. Each change is recorded in conversion history
+  (`google_action_goal_changed`) under the key or MCP connection. The response is the
+  updated review plus `changed` and `action`.
 - `GET /api/v1/conversion-delivery` (`read`): `enabled`, `auto_send`, `auto_send_at`,
   `consent_policy`, `attested_by`, `attested_at`, `version` and the `setup` checklist.
 - `PUT /api/v1/conversion-delivery` (`conversions:send`)
@@ -298,6 +327,10 @@ The four that change actions and events, and `check_google_destination`, require
 `conversions:send`, and its description tells the agent to get the owner's explicit
 confirmation in chat first and to state the attestation. `get_status` includes the
 conversion checklist in its next steps.
+
+`review_google_conversion_setup` (`read`) and `set_google_action_goal` (`conversions:send`)
+expose the review and the goal switch. The goal tool's description tells the agent to
+confirm the action name and the effect on bidding with the owner first.
 
 The UI uses the private, owner-checked API: `GET /api/conversions/pipeline` (actions,
 policy, setup checklist and the latest 100 events), `PUT /api/conversions/actions/{key}`,

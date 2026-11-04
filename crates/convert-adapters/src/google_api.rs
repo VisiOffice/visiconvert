@@ -98,6 +98,10 @@ pub enum Error {
     #[error("Google is unavailable or rate limited. Try again shortly.")]
     Unavailable,
     #[error(
+        "Google refused to change this conversion action's goal setting through the API. Some action types (for example store visits or other system actions) can only be changed in Google Ads, or not at all."
+    )]
+    NotMutable,
+    #[error(
         "Google returned an unexpected response. Try again or ask the administrator to check the API configuration."
     )]
     Response,
@@ -126,6 +130,29 @@ pub struct Action {
     pub primary: bool,
     pub window_days: i64,
     pub eligible: bool,
+}
+/// One conversion action of the saved account with its settings and recent activity,
+/// for reviewing overlap with VisiConvert. All values come from Google as reported.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ReviewedAction {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub category: String,
+    pub owner: String,
+    #[serde(rename = "primary_for_goal")]
+    pub primary: bool,
+    pub counting: String,
+    #[serde(rename = "click_window_days")]
+    pub window_days: i64,
+    pub default_value: f64,
+    pub currency: String,
+    pub always_use_default_value: bool,
+    pub conversions_30d: f64,
+    pub conversions_90d: f64,
+    pub last_conversion_date: Option<String>,
 }
 #[derive(Clone)]
 pub struct Client {
@@ -177,6 +204,10 @@ impl Client {
         request: reqwest::RequestBuilder,
         oauth: bool,
     ) -> Result<Value, Error> {
+        let (status, value) = self.read(request).await?;
+        Self::classify(status, value, oauth)
+    }
+    async fn read(&self, request: reqwest::RequestBuilder) -> Result<(u16, Value), Error> {
         let mut response = request.send().await.map_err(|_| Error::Unavailable)?;
         let status = response.status().as_u16();
         let mut bytes = Vec::new();
@@ -193,6 +224,9 @@ impl Client {
                 Error::Response
             }
         })?;
+        Ok((status, value))
+    }
+    fn classify(status: u16, value: Value, oauth: bool) -> Result<Value, Error> {
         match status {
             200 => Ok(value),
             401 => Err(Error::Credentials),
@@ -312,6 +346,16 @@ impl Client {
         customer: &str,
         query: &str,
     ) -> Result<(Vec<Value>, bool), Error> {
+        self.search_capped(token, login, customer, query, 200).await
+    }
+    async fn search_capped(
+        &self,
+        token: &str,
+        login: &str,
+        customer: &str,
+        query: &str,
+        cap: usize,
+    ) -> Result<(Vec<Value>, bool), Error> {
         if !customer_id(login) || !customer_id(customer) {
             return Err(Error::Access);
         }
@@ -332,11 +376,11 @@ impl Client {
             None => vec![],
             Some(v) => v.as_array().ok_or(Error::Response)?.clone(),
         };
-        let more = rows.len() > 200
+        let more = rows.len() > cap
             || value["nextPageToken"]
                 .as_str()
                 .is_some_and(|s| !s.is_empty());
-        Ok((rows.into_iter().take(200).collect(), more))
+        Ok((rows.into_iter().take(cap).collect(), more))
     }
     pub async fn accounts(&self, token: &str, login: &str) -> Result<(Vec<Account>, bool), Error> {
         let (rows,more)=self.search(token,login,login,"SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.status FROM customer_client ORDER BY customer_client.id LIMIT 201").await?;
@@ -526,6 +570,133 @@ impl Client {
             .filter(|id| action_id(id))
             .ok_or(Error::CreationUncertain)?;
         Ok(id.into())
+    }
+}
+
+impl Client {
+    /// Every non-removed conversion action in `customer` with settings and all-conversion
+    /// activity. Dates are `YYYY-MM-DD`: the last 30 and 90 days up to `today`. The last
+    /// conversion date comes from the newest 1000 daily rows, so it can be missing for a
+    /// rarely used action in a very busy account; totals are exact.
+    pub async fn review_actions(
+        &self,
+        token: &str,
+        login: &str,
+        customer: &str,
+        (today, from30, from90): (&str, &str, &str),
+    ) -> Result<(Vec<ReviewedAction>, bool), Error> {
+        let date = |d: &str| d.len() == 10 && d.bytes().all(|b| b.is_ascii_digit() || b == b'-');
+        if ![today, from30, from90].into_iter().all(date) {
+            return Err(Error::Response);
+        }
+        let (rows, more) = self.search(token, login, customer, "SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category, conversion_action.owner_customer, conversion_action.primary_for_goal, conversion_action.counting_type, conversion_action.click_through_lookback_window_days, conversion_action.value_settings.default_value, conversion_action.value_settings.default_currency_code, conversion_action.value_settings.always_use_default_value FROM conversion_action WHERE conversion_action.status != 'REMOVED' ORDER BY conversion_action.id LIMIT 201").await?;
+        let mut actions = rows
+            .iter()
+            .map(|r| {
+                let v = &r["conversionAction"];
+                let id = v["id"]
+                    .as_str()
+                    .filter(|id| action_id(id))
+                    .ok_or(Error::Response)?;
+                let value = &v["valueSettings"];
+                Ok(ReviewedAction {
+                    id: id.into(),
+                    name: v["name"].as_str().unwrap_or(id).into(),
+                    status: v["status"].as_str().unwrap_or("UNKNOWN").into(),
+                    kind: v["type"].as_str().unwrap_or("UNKNOWN").into(),
+                    category: v["category"].as_str().unwrap_or("UNKNOWN").into(),
+                    owner: v["ownerCustomer"]
+                        .as_str()
+                        .unwrap_or("")
+                        .strip_prefix("customers/")
+                        .unwrap_or("")
+                        .into(),
+                    primary: v["primaryForGoal"].as_bool().unwrap_or(false),
+                    counting: v["countingType"].as_str().unwrap_or("UNKNOWN").into(),
+                    window_days: v["clickThroughLookbackWindowDays"].as_i64().unwrap_or(0),
+                    default_value: value["defaultValue"].as_f64().unwrap_or(0.0),
+                    currency: value["defaultCurrencyCode"].as_str().unwrap_or("").into(),
+                    always_use_default_value: value["alwaysUseDefaultValue"]
+                        .as_bool()
+                        .unwrap_or(false),
+                    ..Default::default()
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let prefix = format!("customers/{customer}/conversionActions/");
+        let action_of = |r: &Value| -> Option<String> {
+            r["segments"]["conversionAction"]
+                .as_str()?
+                .strip_prefix(&prefix)
+                .map(String::from)
+        };
+        let conversions = |r: &Value| r["metrics"]["allConversions"].as_f64().unwrap_or(0.0);
+        for (from, ninety) in [(from30, false), (from90, true)] {
+            let (rows, _) = self.search_capped(token, login, customer, &format!("SELECT segments.conversion_action, metrics.all_conversions FROM customer WHERE segments.date BETWEEN '{from}' AND '{today}'"), 1000).await?;
+            for r in &rows {
+                if let Some(id) = action_of(r)
+                    && let Some(a) = actions.iter_mut().find(|a| a.id == id)
+                {
+                    if ninety {
+                        a.conversions_90d += conversions(r)
+                    } else {
+                        a.conversions_30d += conversions(r)
+                    }
+                }
+            }
+        }
+        let (rows, _) = self.search_capped(token, login, customer, &format!("SELECT segments.conversion_action, segments.date, metrics.all_conversions FROM customer WHERE segments.date BETWEEN '{from90}' AND '{today}' AND metrics.all_conversions > 0 ORDER BY segments.date DESC LIMIT 1000"), 1000).await?;
+        for r in &rows {
+            if let (Some(id), Some(day)) = (action_of(r), r["segments"]["date"].as_str())
+                && let Some(a) = actions.iter_mut().find(|a| a.id == id)
+                && a.last_conversion_date.as_deref().is_none_or(|d| d < day)
+            {
+                a.last_conversion_date = Some(day.into());
+            }
+        }
+        Ok((actions, more))
+    }
+    /// Change only `primary_for_goal` of one action. Nothing else is sent, so names,
+    /// values, counting and status cannot change. A 400 means Google refused the change.
+    pub async fn set_action_primary(
+        &self,
+        token: &str,
+        login: &str,
+        customer: &str,
+        id: &str,
+        primary: bool,
+    ) -> Result<(), Error> {
+        if !customer_id(customer) || !customer_id(login) || !action_id(id) {
+            return Err(Error::Response);
+        }
+        let resource = format!("customers/{customer}/conversionActions/{id}");
+        let (status, value) = self
+            .read(
+                self.http
+                    .post(format!(
+                        "{}/customers/{customer}/conversionActions:mutate",
+                        self.ads
+                    ))
+                    .bearer_auth(token)
+                    .header("login-customer-id", login)
+                    .json(
+                        &json!({"partialFailure":false,"validateOnly":false,"operations":[{
+                        "update":{"resourceName":resource,"primaryForGoal":primary},
+                        "updateMask":"primary_for_goal"}]}),
+                    ),
+            )
+            .await?;
+        if status == 400 {
+            return Err(Error::NotMutable);
+        }
+        let value = Self::classify(status, value, false)?;
+        let ok = value["results"]
+            .as_array()
+            .is_some_and(|r| r.len() == 1 && r[0]["resourceName"] == resource.as_str());
+        if !ok {
+            return Err(Error::Response);
+        }
+        Ok(())
     }
 }
 
