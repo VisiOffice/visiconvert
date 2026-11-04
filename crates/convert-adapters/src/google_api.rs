@@ -475,7 +475,7 @@ impl Client {
                     kind: kind.into(),
                     owner: owner.into(),
                     primary: v["primaryForGoal"].as_bool().unwrap_or(false),
-                    window_days: v["clickThroughLookbackWindowDays"].as_i64().unwrap_or(0),
+                    window_days: int64(&v["clickThroughLookbackWindowDays"]).unwrap_or(0),
                     eligible: owner == customer && status == "ENABLED" && kind == "UPLOAD_CLICKS",
                 })
             })
@@ -613,7 +613,7 @@ impl Client {
                         .into(),
                     primary: v["primaryForGoal"].as_bool().unwrap_or(false),
                     counting: v["countingType"].as_str().unwrap_or("UNKNOWN").into(),
-                    window_days: v["clickThroughLookbackWindowDays"].as_i64().unwrap_or(0),
+                    window_days: int64(&v["clickThroughLookbackWindowDays"]).unwrap_or(0),
                     default_value: value["defaultValue"].as_f64().unwrap_or(0.0),
                     currency: value["defaultCurrencyCode"].as_str().unwrap_or("").into(),
                     always_use_default_value: value["alwaysUseDefaultValue"]
@@ -1020,5 +1020,23 @@ mod delivery_tests {
         let mut s = snapshot();
         s["amount_minor"] = json!(-1);
         assert_eq!(event_request(&s, "1234567890"), Err(DeliveryError::Invalid));
+    }
+}
+
+/// Google's REST API encodes int64 fields as JSON strings (proto3 JSON mapping), so read
+/// either form. Reading only numbers silently turned every click window into 0.
+fn int64(v: &Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+}
+#[cfg(test)]
+mod int64_tests {
+    use super::*;
+    #[test]
+    fn int64_reads_google_string_encoding() {
+        assert_eq!(int64(&json!("90")), Some(90));
+        assert_eq!(int64(&json!(30)), Some(30));
+        assert_eq!(int64(&json!("x")), None);
+        assert_eq!(int64(&Value::Null), None);
     }
 }
