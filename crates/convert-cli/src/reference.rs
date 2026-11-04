@@ -99,7 +99,15 @@ fn sentence(text: &str) -> String {
 }
 
 fn cell(text: &str) -> String {
-    text.replace('|', "\\|").replace('\n', " ")
+    mdx(text).replace('|', "\\|").replace('\n', " ")
+}
+
+/// The reference pages are MDX: `{` starts a JavaScript expression and `<` a component,
+/// so literal braces or angle brackets in a description break the docs build.
+fn mdx(text: &str) -> String {
+    text.replace('{', "\\{")
+        .replace('}', "\\}")
+        .replace('<', "&lt;")
 }
 
 pub struct ToolDoc {
@@ -120,7 +128,8 @@ pub fn mcp(tools: Vec<ToolDoc>, prompt: &str) -> String {
         let tier = if tool.changes { "Change" } else { "Read" };
         out.push_str(&format!(
             "\n## `{}`\n\n**{tier}.** {}\n",
-            tool.name, tool.description
+            tool.name,
+            mdx(tool.description)
         ));
         let required: Vec<&str> = tool.schema["required"]
             .as_array()
@@ -163,8 +172,17 @@ pub fn mcp(tools: Vec<ToolDoc>, prompt: &str) -> String {
     }
     out.push_str("\n## Prompt: `set_up_call_tracking`\n\nWalks an agent through setup:\n\n");
     for line in prompt.lines().skip_while(|l| !l.starts_with("1.")) {
-        out.push_str(line);
+        out.push_str(&mdx(line));
         out.push('\n');
     }
     out
+}
+
+#[cfg(test)]
+mod mdx_tests {
+    #[test]
+    fn mdx_escapes_expressions_and_tags() {
+        assert_eq!(super::mdx("goal {a, b} <x>"), "goal \\{a, b\\} &lt;x>");
+        assert_eq!(super::cell("a|b {c}"), "a\\|b \\{c\\}");
+    }
 }
