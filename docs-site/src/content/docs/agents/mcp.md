@@ -15,6 +15,8 @@ In Claude, choose **Register automatically** for the OAuth client if prompted. S
 
 Read access includes customer contact information. Write permissions start unchecked on the approval page. For website setup, select **Create and update websites and dynamic number pools** on VisiConvert’s approval page. Select **Register phone numbers you already own** if needed, and leave other write permissions unchecked unless you need them. These choices are available even if your client requests only read access; no manual OAuth scopes or API key are needed. To change an existing read-only connection, revoke it under **Account → Connected agents**, then reconnect from your agent and approve the setup permissions. The server only offers tools allowed by your approval. A workspace must be ready and have billing or complimentary access.
 
+After VisiConvert adds or changes tools, clients reload them automatically on their next request; there is no need to reconnect. (The session ID VisiConvert returns names the tool list it was issued for. When that list changes, VisiConvert ends the session and the client starts a new one.)
+
 Revoke access anytime under **Account → Connected agents**. Connections expire after 90 days; password resets and loss of workspace access also block them. This is VisiConvert account authorization, independent of connecting Google Ads.
 
 ## Local: CLI and API key

@@ -36,8 +36,18 @@ Each connection is restricted to one workspace and expires after 90 days.
 ## Protocol and boundaries
 
 - Rust serves stateless Streamable HTTP POST `/mcp`, JSON responses, and 202 for
-  notifications. Authenticated GET/DELETE return 405; no persistent SSE stream,
-  session IDs, batch requests, or legacy HTTP+SSE transport.
+  notifications. There is no persistent SSE stream, batch request support or legacy
+  HTTP+SSE transport. Authenticated GET returns 405 (`Allow: POST, DELETE`).
+- `initialize` returns an `Mcp-Session-Id` of the form `v1.<fingerprint>.<random>` and
+  advertises `tools.listChanged` and `prompts.listChanged`. The fingerprint is a short
+  SHA-256 of the full tool table (names, descriptions, schemas, annotations), the prompts
+  and the capabilities; nothing is stored. A later request whose session ID is malformed
+  or carries another fingerprint gets 404, which the spec says makes the client
+  initialize again and reload tools/list. So after VisiConvert adds or changes tools,
+  clients reload them automatically on their next request; `initialize` itself is never
+  refused. Requests without a session ID work as before. DELETE with a session ID returns
+  204 (nothing to clean up); without one, 400. The unified gateway passes the header
+  through unchanged in both directions; `/mcp` is server-to-server and has no CORS.
 - Supported HTTP protocol versions: 2025-11-25, 2025-06-18, 2025-03-26.
 - Rails serves `/.well-known/oauth-authorization-server`,
   `/.well-known/oauth-protected-resource/mcp` (also its root alias),

@@ -497,10 +497,7 @@ impl Server {
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({"tools": self.tools()})),
             "tools/call" => Ok(self.call(params).await),
-            "prompts/list" => Ok(json!({"prompts": [{
-                "name": "set_up_call_tracking",
-                "description": "Walk through connecting numbers to campaigns and confirming a test call."
-            }]})),
+            "prompts/list" => Ok(json!({"prompts": prompts()})),
             "prompts/get" if params["name"] == "set_up_call_tracking" => Ok(json!({
                 "description": "Set up call tracking",
                 "messages": [{"role": "user", "content": {"type": "text", "text": SETUP_PROMPT}}]
@@ -529,7 +526,7 @@ impl Server {
         };
         json!({
             "protocolVersion": version,
-            "capabilities": {"tools": {}, "prompts": {}},
+            "capabilities": capabilities(),
             "serverInfo": {"name": "visiconvert", "version": env!("CARGO_PKG_VERSION")},
             "instructions": format!("VisiConvert call tracking and lead attribution. {mode} Call get_status first.")
         })
@@ -548,7 +545,7 @@ impl Server {
                         "readOnlyHint": !tool.changes,
                         "destructiveHint": matches!(tool.name, "update_site" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal"),
                         "idempotentHint": tool.idempotent,
-                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination" | "set_google_action_goal")
+                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination" | "set_google_action_goal" | "review_google_conversion_setup")
                     }
                 })
             })
@@ -579,6 +576,28 @@ impl Server {
             }
         }
     }
+}
+
+/// Clients cache tools/list and prompts/list per session. listChanged tells them the lists
+/// can change; the remote server ends a session when they do (see `toolset`).
+fn capabilities() -> Value {
+    json!({"tools": {"listChanged": true}, "prompts": {"listChanged": true}})
+}
+
+fn prompts() -> Value {
+    json!([{
+        "name": "set_up_call_tracking",
+        "description": "Walk through connecting numbers to campaigns and confirming a test call."
+    }])
+}
+
+/// Everything a client caches from this server: every tool with its description, schema
+/// and annotations (regardless of scopes), the prompts and their text, and the
+/// capabilities. The remote MCP session ID carries a hash of it, so a release that changes
+/// any of it sends connected clients back to initialize.
+pub fn toolset() -> Value {
+    let all = Server::new(Err(String::new()), true);
+    json!({"tools": all.tools(), "prompts": prompts(), "setup_prompt": SETUP_PROMPT, "capabilities": capabilities()})
 }
 
 fn error_reply(id: Value, code: i64, message: &str) -> Value {

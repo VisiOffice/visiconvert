@@ -161,6 +161,33 @@ async fn handle(app: Shared, input: Input, message: Value) -> Api<Value> {
     Ok(Json(json!({"reply": server.handle(message).await})))
 }
 
+/// Short hash of everything clients cache from tools/list and prompts/list.
+fn fingerprint_of(toolset: &Value) -> String {
+    use sha2::Digest;
+    let digest = Sha256::digest(serde_json::to_vec(toolset).unwrap_or_default());
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+fn fingerprint() -> &'static str {
+    static FINGERPRINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    FINGERPRINT.get_or_init(|| fingerprint_of(&convert_cli::mcp::toolset()))
+}
+/// Stateless session ID: `v1.<toolset fingerprint>.<random>`. Nothing is stored; the
+/// fingerprint says which tool table the client loaded at initialize.
+fn new_session() -> String {
+    format!("v1.{}.{}", fingerprint(), Uuid::new_v4().simple())
+}
+/// Whether a session was started against this tool table. A stale or malformed session
+/// gets 404, which tells the client to initialize again and reload the tools.
+fn session_is_current(id: &str, fingerprint: &str) -> bool {
+    let parts: Vec<&str> = id.split('.').collect();
+    parts.len() == 3
+        && parts[0] == "v1"
+        && parts[1] == fingerprint
+        && parts[2].len() == 32
+        && parts[2]
+            .bytes()
+            .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
 fn challenge(app: &App) -> Response {
     let mut response = (
         StatusCode::UNAUTHORIZED,
@@ -254,8 +281,19 @@ async fn remote_inner(
     if input.resource != format!("{}/mcp", config.cloud_origin) || !valid_scopes(&input.scopes) {
         return challenge(&app);
     }
+    let session = headers
+        .get("mcp-session-id")
+        .map(|v| v.to_str().unwrap_or(""));
+    if method == axum::http::Method::DELETE {
+        // Sessions are stateless: nothing to clean up.
+        return match session {
+            Some(_) => StatusCode::NO_CONTENT.into_response(),
+            None => StatusCode::BAD_REQUEST.into_response(),
+        };
+    }
     if method != axum::http::Method::POST {
-        return (StatusCode::METHOD_NOT_ALLOWED, [("allow", "POST")]).into_response();
+        // No server-initiated stream (GET), so only POST and DELETE are allowed.
+        return (StatusCode::METHOD_NOT_ALLOWED, [("allow", "POST, DELETE")]).into_response();
     }
     if headers
         .get("content-type")
@@ -304,11 +342,26 @@ async fn remote_inner(
     {
         return (StatusCode::BAD_REQUEST, Json(json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request"}}))).into_response();
     }
+    let initialize = message["method"] == "initialize";
+    if !initialize && session.is_some_and(|id| !session_is_current(id, fingerprint())) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"jsonrpc":"2.0","id":message.get("id").cloned().unwrap_or(Value::Null),"error":{"code":-32001,"message":"Session expired: VisiConvert's tools changed. Initialize again to reload them."}})),
+        )
+            .into_response();
+    }
     if message.get("id").is_none() {
         return StatusCode::ACCEPTED.into_response();
     }
     match handle(app, input, message).await {
-        Ok(Json(reply)) => Json(reply["reply"].clone()).into_response(),
+        Ok(Json(reply)) => {
+            let started = initialize && reply["reply"].get("result").is_some();
+            let mut response = Json(reply["reply"].clone()).into_response();
+            if started && let Ok(value) = new_session().parse() {
+                response.headers_mut().insert("mcp-session-id", value);
+            }
+            response
+        }
         Err(e) => e.into_response(),
     }
 }
@@ -316,6 +369,52 @@ async fn remote_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_fingerprint_tracks_the_tool_table() {
+        let toolset = convert_cli::mcp::toolset();
+        let current = fingerprint_of(&toolset);
+        assert_eq!(current, fingerprint());
+        assert_eq!(current.len(), 16);
+        assert_eq!(
+            fingerprint_of(&convert_cli::mcp::toolset()),
+            current,
+            "stable"
+        );
+        let mut described = toolset.clone();
+        described["tools"][0]["description"] = json!("changed");
+        assert_ne!(fingerprint_of(&described), current);
+        let mut schema = toolset.clone();
+        schema["tools"][0]["inputSchema"]["properties"] = json!({"x":{"type":"string"}});
+        assert_ne!(fingerprint_of(&schema), current);
+        let mut annotated = toolset.clone();
+        annotated["tools"][0]["annotations"]["readOnlyHint"] = json!(false);
+        assert_ne!(fingerprint_of(&annotated), current);
+        let mut added = toolset.clone();
+        added["tools"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"new_tool"}));
+        assert_ne!(fingerprint_of(&added), current);
+        let mut prompt = toolset;
+        prompt["setup_prompt"] = json!("changed");
+        assert_ne!(fingerprint_of(&prompt), current);
+        let id = new_session();
+        assert!(session_is_current(&id, fingerprint()), "{id}");
+        assert_ne!(new_session(), id, "random part");
+        assert!(id.bytes().all(|c| (0x21..=0x7e).contains(&c)));
+        let stale = id.replace(fingerprint(), "0000000000000000");
+        for bad in [
+            stale.as_str(),
+            "",
+            "v1",
+            "v2.x.y",
+            "garbage",
+            &format!("{id}.extra"),
+            &id.to_uppercase(),
+        ] {
+            assert!(!session_is_current(bad, fingerprint()), "{bad}");
+        }
+    }
     #[tokio::test]
     #[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
     async fn delegation_preserves_engine_membership_and_version_fences() {
