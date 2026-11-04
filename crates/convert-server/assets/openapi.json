@@ -1499,7 +1499,47 @@
       },
       "ConversionSetup": {
         "type": "object",
-        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google, choose the account) cannot be done with a key. The checklist includes connection_revision and settings_version for POST /conversion-setup/check.",
+        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (advertising account, inferred calls, Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google) cannot be done with a key. The checklist includes connection_revision and settings_version for POST /conversion-setup/check.",
+        "additionalProperties": true
+      },
+      "GoogleDestinationInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "settings_version from GET /conversion-setup (0 if none saved)"
+          },
+          "customer_id": {
+            "type": "string",
+            "pattern": "^[0-9]{10}$",
+            "description": "Advertising account reachable from the connected login that owns its conversion tracking"
+          },
+          "allow_inferred_calls": {
+            "type": "boolean",
+            "description": "Send calls matched to a website visit by timing on a DNI number"
+          },
+          "qualified_action_id": {
+            "type": "string",
+            "pattern": "^([0-9]{1,20})?$",
+            "description": "Reviewed flow; omitted keeps the saved value for the same account, required when changing accounts (\"\" clears)"
+          },
+          "booking_action_id": {
+            "type": "string",
+            "pattern": "^([0-9]{1,20})?$",
+            "description": "Reviewed flow; same rules as qualified_action_id"
+          }
+        },
+        "required": [
+          "version",
+          "customer_id",
+          "allow_inferred_calls"
+        ],
+        "additionalProperties": false
+      },
+      "GoogleDestination": {
+        "type": "object",
+        "description": "Saved destination (customer_id, account_name, login, qualified_action_id, booking_action_id, allow_inferred_calls, version) and the setup checklist.",
         "additionalProperties": true
       },
       "DestinationCheckInput": {
@@ -8676,6 +8716,148 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/DestinationCheckInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversion-setup/destination": {
+      "put": {
+        "summary": "Choose the advertising account and whether inferred DNI calls are sent, at the current settings version, on the owner's behalf. Uploads nothing",
+        "operationId": "put_conversion_setup_destination",
+        "description": "Requires `conversions:send` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDestination"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleDestinationInput"
               }
             }
           }

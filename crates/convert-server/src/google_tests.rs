@@ -17,7 +17,7 @@ pub(super) struct Provider {
     pub(super) setup_actions: Mutex<Vec<Value>>,
     pub(super) setup_lost_response: AtomicBool,
     setup_deny_booking: AtomicBool,
-    setup_other_owner: AtomicBool,
+    pub(super) setup_other_owner: AtomicBool,
     challenge: Mutex<String>,
     exchanges: AtomicUsize,
     deny: AtomicBool,

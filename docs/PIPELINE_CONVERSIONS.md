@@ -76,10 +76,12 @@ Google action in both flows.
 ### Owner switches
 
 Only the workspace owner, in the Conversions page, can connect or replace the Google
-login and choose the advertising account: both need the owner's Google sign-in, and no
-key or agent can do them.
+login: it needs the owner's Google sign-in, and no key or agent can do it.
 
-Google delivery, automatic sending and the consent policy are the owner's decisions too.
+The advertising account, whether inferred calls are sent, Google delivery, automatic
+sending and the consent policy are the owner's decisions too. Inferred calls are phone
+calls matched to a website visit by timing on a DNI number, not by a click ID; they are
+never sent until allowed.
 The owner makes them in Conversions, or grants the separate **Sending permission**
 (`conversions:send`) to an API key or MCP connection so an agent can make them after the
 owner confirms in chat. `conversions:write` alone can't change them. Only the workspace
@@ -253,6 +255,14 @@ events, `conversions:send` to change the switches):
   `revision` from the checklist's `connection_revision`, `settings_version` from the
   checklist, and `login` from `/connections/google/accounts`. A replaced connection or
   changed destination returns 409.
+- `PUT /api/v1/conversion-setup/destination` (`conversions:send`)
+  `{version, customer_id, allow_inferred_calls, qualified_action_id?, booking_action_id?}`:
+  the owner's **Use this advertising account** and inferred-call opt-in, saved through the
+  same path. `version` is the checklist's `settings_version` (0 if none saved). The account
+  must be reachable from the connected Google login and own its conversion tracking.
+  Omitted reviewed-flow action IDs are kept for the same account. When you change
+  accounts, pass them explicitly (`""` clears them). The checklist reports
+  `customer_id` and `allow_inferred_calls`.
 - `GET /api/v1/conversion-delivery` (`read`): `enabled`, `auto_send`, `auto_send_at`,
   `consent_policy`, `attested_by`, `attested_at`, `version` and the `setup` checklist.
 - `PUT /api/v1/conversion-delivery` (`conversions:send`)
@@ -278,9 +288,10 @@ The MCP server (local `visiconvert mcp` and hosted remote MCP) exposes the same 
 `get_conversion_setup`, `list_google_accounts`, `list_google_conversion_actions`,
 `list_conversion_actions`, `create_conversion_action`, `update_conversion_action`,
 `create_google_conversion_action`, `record_conversion_event` and `list_conversion_events`,
-plus `check_google_destination`, `get_conversion_delivery` and `set_conversion_delivery`.
+plus `check_google_destination`, `set_google_destination`, `get_conversion_delivery` and
+`set_conversion_delivery`.
 The four that change actions and events, and `check_google_destination`, require
-`conversions:write`; `set_conversion_delivery` requires
+`conversions:write`; `set_google_destination` and `set_conversion_delivery` require
 `conversions:send`, and its description tells the agent to get the owner's explicit
 confirmation in chat first and to state the attestation. `get_status` includes the
 conversion checklist in its next steps.

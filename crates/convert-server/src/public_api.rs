@@ -208,7 +208,9 @@ async fn auth(State(app): State<Shared>, mut request: Request, next: Next) -> Re
         "read"
     } else if path == "/api/v1/sites" || path.starts_with("/api/v1/sites/") {
         "setup:write"
-    } else if path == "/api/v1/conversion-delivery" {
+    } else if path == "/api/v1/conversion-delivery"
+        || path == "/api/v1/conversion-setup/destination"
+    {
         "conversions:send"
     } else if path.starts_with("/api/v1/conversion-") {
         "conversions:write"

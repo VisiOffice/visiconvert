@@ -176,6 +176,14 @@ impl Client {
         )
         .await
     }
+    pub async fn set_google_destination(&self, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .put(self.url("/api/conversion-setup/destination"))
+                .json(input),
+        )
+        .await
+    }
     pub async fn conversion_delivery(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/api/conversion-delivery")))
             .await

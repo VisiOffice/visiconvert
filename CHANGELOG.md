@@ -1,3 +1,18 @@
+## Unreleased — agent-chosen Google destination
+
+- `PUT /api/v1/conversion-setup/destination`
+  `{version, customer_id, allow_inferred_calls, qualified_action_id?, booking_action_id?}`
+  and the MCP tool `set_google_destination` (both `conversions:send`) save the advertising
+  account and inferred-call opt-in through the owner route's store path: the same
+  validation, settings version, invalidation, and a `settings_saved` history row naming
+  the key or MCP connection.
+- The account must be reachable from the connected Google login and own its conversion
+  tracking. Omitted reviewed-flow action IDs are kept for the same account; switching
+  accounts requires stating them.
+- `get_conversion_setup` reports `allow_inferred_calls`. Its account step is now
+  `owner_approval`, and it adds an `owner_approval` inferred-call step when the
+  workspace has DNI pools or inferred calls and the opt-in is off.
+
 ## Unreleased — agent-controlled conversion sending (`conversions:send`)
 
 - New owner-granted `conversions:send` permission for API keys and MCP connections
