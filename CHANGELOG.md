@@ -1,3 +1,9 @@
+## Unreleased — billable number-purchase keys
+
+- Owners can grant `numbers:purchase` (search, buy, and release SignalWire numbers) in
+  API Keys, under a separate billable permission with a cost notice. Its expiration
+  defaults to 24 hours.
+
 ## Unreleased — DNI number formatting
 
 - Swapped website numbers keep the page's formatting (for example `(602) 555-0105`)
