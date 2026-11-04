@@ -13,6 +13,7 @@ const SCOPES: &[&str] = &[
     "numbers:write",
     "leads:write",
     "bookings:write",
+    "conversions:write",
 ];
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

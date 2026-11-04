@@ -34,6 +34,7 @@ provider charges. You can explore form leads and bookings without a carrier.
 
 - Start from a workspace setup checklist or connect an agent through local MCP. Hosted installations with the paired [remote MCP release](docs/REMOTE_MCP.md) also support a connector URL with VisiConvert sign-in and workspace approval. Configure sites/DNI with scoped keys and inspect real tracker, form and call evidence.
 
+- [Send pipeline conversions to Google Ads automatically](docs/PIPELINE_CONVERSIONS.md): your CRM posts events such as quotes and orders; VisiConvert matches the lead and ad click and sends them once the owner turns on automatic sending.
 - [Prepare Google Ads conversions](docs/CONVERSIONS.md) from qualified inquiries and bookings, with consent evidence and reviewed local staging. Explicitly validate and queue Google delivery, with durable receipts and bounded retries.
 
 - Connect Twilio or SignalWire per workspace with encrypted credentials and verified number ownership

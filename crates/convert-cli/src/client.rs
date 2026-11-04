@@ -161,6 +161,71 @@ impl Client {
         .await
     }
 
+    /// Pipeline conversions. Keys and MCP can define and map actions and post events;
+    /// sending, consent policy and the Google connection stay owner-only in the UI.
+    pub async fn conversion_setup(&self) -> Result<Value, Error> {
+        self.send(self.http.get(self.url("/api/conversion-setup")))
+            .await
+    }
+    pub async fn conversion_actions(&self) -> Result<Value, Error> {
+        self.send(self.http.get(self.url("/api/conversion-actions")))
+            .await
+    }
+    /// Keys are validated server-side; percent-encoding keeps a bad one in its path segment.
+    pub async fn save_conversion_action(&self, key: &str, input: &Value) -> Result<Value, Error> {
+        let key = urlencoding(key);
+        self.send(
+            self.http
+                .put(self.url(&format!("/api/conversion-actions/{key}")))
+                .json(input),
+        )
+        .await
+    }
+    pub async fn create_google_conversion_action(
+        &self,
+        key: &str,
+        input: &Value,
+    ) -> Result<Value, Error> {
+        let key = urlencoding(key);
+        self.send(
+            self.http
+                .post(self.url(&format!("/api/conversion-actions/{key}/google-action")))
+                .json(input),
+        )
+        .await
+    }
+    pub async fn record_conversion_event(&self, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .post(self.url("/api/conversion-events"))
+                .json(input),
+        )
+        .await
+    }
+    pub async fn conversion_events(&self, query: &[(&str, String)]) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .get(self.url("/api/conversion-events"))
+                .query(query),
+        )
+        .await
+    }
+    pub async fn google_accounts(&self, login: Option<&str>) -> Result<Value, Error> {
+        let mut request = self.http.get(self.url("/api/connections/google/accounts"));
+        if let Some(login) = login {
+            request = request.query(&[("login", login)]);
+        }
+        self.send(request).await
+    }
+    pub async fn google_actions(&self, login: &str, customer: &str) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .get(self.url("/api/connections/google/actions"))
+                .query(&[("login", login), ("customer", customer)]),
+        )
+        .await
+    }
+
     pub async fn health(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/health"))).await
     }
@@ -292,4 +357,16 @@ impl Client {
     pub async fn summary(&self) -> Result<Vec<SourceSummary>, Error> {
         self.send(self.http.get(self.url("/api/summary"))).await
     }
+}
+
+fn urlencoding(s: &str) -> String {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }

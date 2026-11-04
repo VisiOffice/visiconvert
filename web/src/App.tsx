@@ -314,7 +314,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                       ? "Give each campaign a number. Keep your existing phone system."
                       : page === "Sites"
                         ? "Connect website visits and successful forms to their source."
-                        : page === "Conversions" ? "Review qualified inquiries and bookings for Google Ads."
+                        : page === "Conversions" ? "Send pipeline conversions and review inquiries and bookings for Google Ads."
                         : page === "Webhooks" ? "Send signed events to your CRM and automations."
                         : "Start with your numbers and the tools you already use."}
               </p>

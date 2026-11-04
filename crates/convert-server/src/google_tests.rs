@@ -14,8 +14,8 @@ pub(super) struct Provider {
     pub(super) deliveries: Mutex<Vec<Value>>,
     pub(super) delivery_http: AtomicUsize,
     pub(super) processing: AtomicBool,
-    setup_actions: Mutex<Vec<Value>>,
-    setup_lost_response: AtomicBool,
+    pub(super) setup_actions: Mutex<Vec<Value>>,
+    pub(super) setup_lost_response: AtomicBool,
     setup_deny_booking: AtomicBool,
     setup_other_owner: AtomicBool,
     challenge: Mutex<String>,
@@ -94,6 +94,9 @@ async fn provider(
         assert_eq!(action["clickThroughLookbackWindowDays"], 90);
         assert_eq!(action["valueSettings"]["defaultCurrencyCode"], "USD");
         let qualified = action["category"] == "QUALIFIED_LEAD";
+        // Pipeline actions are named after their key and always take event values.
+        let name = action["name"].as_str().unwrap();
+        let reviewed = name.contains("Qualified lead (") || name.contains("Booking (");
         assert_eq!(
             action["countingType"],
             if qualified {
@@ -102,7 +105,10 @@ async fn provider(
                 "MANY_PER_CLICK"
             }
         );
-        assert_eq!(action["valueSettings"]["alwaysUseDefaultValue"], qualified);
+        assert_eq!(
+            action["valueSettings"]["alwaysUseDefaultValue"],
+            qualified && reviewed
+        );
         assert_eq!(action["valueSettings"]["defaultValue"], 0);
         if !qualified && p.setup_deny_booking.load(Ordering::SeqCst) {
             return (

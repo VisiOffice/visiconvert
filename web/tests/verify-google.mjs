@@ -42,6 +42,13 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
   };
   const authorization=route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Test Google</title><h1>Test Google authorization</h1>'});
   await page.route('**/api/connections/google**',handler);
+  let created;
+  const createInGoogle=async route=>{created=route.request().postDataJSON();await route.fulfill({contentType:'application/json',body:'{}'});};
+  await page.route('**/api/conversion-actions/*/google-action',createInGoogle);
+  // Start from a different saved account so choosing one is an explicit step.
+  const initial=(await api('/conversions')).body.settings;
+  assert.equal((await api('/conversions/settings',{...initial,customer_id:'9999999999',qualified_action_id:'',booking_action_id:''},'PUT')).status,200);
+  const advanced=async()=>{const s=page.locator('summary').filter({hasText:/^Advanced: manual review/});if(!(await page.getByRole('region',{name:'Manual review actions',exact:true}).isVisible()))await s.click();};
   await page.context().route('https://accounts.google.com/o/oauth2/v2/auth?test=visiconvert',authorization);
   try {
     await page.getByRole('button',{name:'Overview',exact:true}).click();
@@ -56,6 +63,31 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     assert.equal((await api('/bootstrap')).status,200);
     await page.getByLabel('Advertising account',{exact:true}).selectOption('1234567890');
     assert.equal(creationRequests,0);
+    // Pipeline-first: no qualified/booking creation is offered outside manual review.
+    assert(!(await page.getByLabel('Qualified leads',{exact:true}).isVisible()));
+    await page.getByRole('button',{name:'Use this advertising account',exact:true}).click();
+    await page.getByText('Advertising account saved.',{exact:false}).waitFor();
+    assert.equal((await api('/conversions')).body.settings.customer_id,'1234567890');
+    const mapping=page.getByRole('region',{name:'Conversion actions',exact:true});
+    await mapping.getByRole('button',{name:'Add action',exact:true}).click();
+    const form=mapping.getByRole('form',{name:'New action',exact:true});
+    assert(await form.getByLabel('Google conversion action',{exact:true}).locator('option[value="999"]').isDisabled());
+    await form.getByLabel('Action key',{exact:true}).fill('quote_sent');
+    await form.getByLabel('Action name',{exact:true}).fill('Quote sent');
+    await form.getByLabel('Counting',{exact:true}).selectOption('once_per_click');
+    await form.getByLabel('Google conversion action',{exact:true}).selectOption('123');
+    await form.getByRole('button',{name:'Create action',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Action created.'}).waitFor();
+    await mapping.getByRole('article',{name:'Action quote_sent',exact:true}).getByText(/Google action Qualified inquiries · 123/).waitFor();
+    await mapping.getByRole('button',{name:'Add action',exact:true}).click();
+    await mapping.getByRole('form',{name:'New action',exact:true}).getByLabel('Action key',{exact:true}).fill('lead');
+    await mapping.getByRole('form',{name:'New action',exact:true}).getByLabel('Action name',{exact:true}).fill('Lead');
+    await mapping.getByRole('button',{name:'Create action',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Action created.'}).waitFor();
+    await mapping.getByRole('article',{name:'Action lead',exact:true}).getByRole('button',{name:'Create in Google Ads',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Google conversion action created or recovered and mapped.'}).waitFor();
+    assert.deepEqual(created,{version:1,login:'1234567890'});
+    await advanced();
     await page.getByLabel('Qualified leads',{exact:true}).uncheck();
     await page.getByLabel('Bookings',{exact:true}).uncheck();
     assert(await page.getByRole('button',{name:'Create conversion actions',exact:true}).isDisabled());
@@ -65,7 +97,7 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     await page.getByRole('alert').filter({hasText:'Creation could not be confirmed'}).waitFor();
     creationFails=false;
     await page.getByRole('button',{name:'Create conversion actions',exact:true}).click();
-    await page.getByText('Conversion actions created or reused and saved. Check the saved connection below. Delivery remains unchanged.',{exact:true}).waitFor();
+    await page.getByText('Conversion actions created or reused and saved. Check the saved connection in step 1. Delivery remains unchanged.',{exact:true}).waitFor();
     assert.equal(creationRequests,2);
     await page.setViewportSize({width:390,height:844});
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
@@ -76,7 +108,7 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     await page.getByLabel('Booking conversion action',{exact:true}).selectOption('456');
     assert(await page.getByLabel('Booking conversion action',{exact:true}).locator('option[value="999"]').isDisabled());
     await page.getByRole('button',{name:'Save conversion actions',exact:true}).click();
-    await page.getByText('Conversion actions saved. Check the saved connection below to finish setup. Delivery remains unchanged.',{exact:true}).waitFor();
+    await page.getByText('Conversion actions saved. Check the saved connection in step 1 to finish setup. Delivery remains unchanged.',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Check saved connection',exact:true}).click();
     await page.getByText('Destination checks passed',{exact:true}).waitFor();
     await page.screenshot({path:artifactDir+'/google-desktop.png',fullPage:true});
@@ -87,7 +119,7 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     // Reopening setup discovers accounts and restores mappings without writing settings.
     const savedSettings=(await api('/conversions')).body.settings;
     const reopen=async()=>{await page.getByRole('button',{name:'Overview',exact:true}).click();await page.getByRole('button',{name:'Conversions',exact:true}).click();};
-    const existing=async()=>{await page.getByText('Use existing actions (advanced)',{exact:true}).click();};
+    const existing=async()=>{await advanced();await page.getByText('Use existing actions (advanced)',{exact:true}).click();};
     await reopen();
     await existing();
     await page.getByLabel('Booking conversion action',{exact:true}).waitFor();
@@ -128,6 +160,7 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     await page.getByText('Google not connected',{exact:true}).waitFor();
   }finally {
     await page.unroute('**/api/connections/google**',handler);
+    await page.unroute('**/api/conversion-actions/*/google-action',createInGoogle);
     await page.context().unroute('https://accounts.google.com/o/oauth2/v2/auth?test=visiconvert',authorization);
   }
 }

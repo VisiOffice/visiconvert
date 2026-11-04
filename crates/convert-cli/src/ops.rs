@@ -17,6 +17,8 @@ pub struct Status {
     pub twilio: Value,
     pub signalwire: Value,
     pub tracking_numbers: usize,
+    /// Google pipeline conversion setup, including which owner-only switches are left.
+    pub conversions: Value,
     pub next_steps: Vec<String>,
 }
 
@@ -54,6 +56,24 @@ pub async fn status(client: &Client) -> Result<Status> {
                 .into(),
         );
     }
+    // Older engines lack the endpoint; a missing permission is reported, not fatal.
+    let conversions = match client.conversion_setup().await {
+        Ok(value) => value,
+        Err(crate::client::Error::Forbidden(message) | crate::client::Error::NotFound(message)) => {
+            json!({"visible": false, "message": message})
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if conversions["google_connected"] == true || conversions["actions"].as_i64().unwrap_or(0) > 0 {
+        next_steps.extend(
+            conversions["next_steps"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| s["step"].as_str())
+                .map(|s| format!("Google conversions: {s}")),
+        );
+    }
     Ok(Status {
         server: client.base().to_owned(),
         healthy,
@@ -61,6 +81,7 @@ pub async fn status(client: &Client) -> Result<Status> {
         twilio,
         signalwire,
         tracking_numbers: tracking,
+        conversions,
         next_steps,
     })
 }

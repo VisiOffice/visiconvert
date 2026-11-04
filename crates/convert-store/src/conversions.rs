@@ -25,12 +25,14 @@ impl Settings {
         if !digits(&self.customer_id, 10, 10)
             || (!self.qualified_action_id.is_empty() && !digits(&self.qualified_action_id, 1, 20))
             || (!self.booking_action_id.is_empty() && !digits(&self.booking_action_id, 1, 20))
-            || (self.qualified_action_id.is_empty() && self.booking_action_id.is_empty())
             || (!self.qualified_action_id.is_empty()
                 && self.qualified_action_id == self.booking_action_id)
             || self.version < 0
         {
-            return Err(ValidationError("Use a 10-digit Google customer ID and distinct numeric conversion action IDs (at least one)").into());
+            return Err(ValidationError(
+                "Use a 10-digit Google customer ID and distinct numeric conversion action IDs",
+            )
+            .into());
         }
         Ok(())
     }
@@ -80,10 +82,10 @@ pub struct Revision {
     pub version: i32,
 }
 
-fn digest(value: &Value) -> String {
+pub(crate) fn digest(value: &Value) -> String {
     format!("{:x}", Sha256::digest(value.to_string().as_bytes()))
 }
-fn transaction_id(workspace: Uuid, kind: &str, key: &str) -> String {
+pub(crate) fn transaction_id(workspace: Uuid, kind: &str, key: &str) -> String {
     format!("vc_{}", &digest(&json!([workspace, kind, key]))[..48])
 }
 pub(crate) async fn settings(conn: &mut PgConnection, workspace: Uuid) -> Result<Settings> {
@@ -287,7 +289,7 @@ impl Store {
             .iter()
             .map(|r| candidate(r, &config, self.workspace, now))
             .collect::<Result<Vec<_>>>()?;
-        let jobs: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(q) - 'workspace_id' FROM conversion_outbox q WHERE workspace_id=$1 ORDER BY updated_at DESC,id LIMIT 200")
+        let jobs: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(q) - 'workspace_id' FROM conversion_outbox q WHERE workspace_id=$1 AND kind<>'pipeline' ORDER BY updated_at DESC,id LIMIT 200")
             .bind(self.workspace).fetch_all(&mut *tx).await?;
         let history: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(e) - 'workspace_id' FROM conversion_events e WHERE workspace_id=$1 ORDER BY id DESC LIMIT 100")
             .bind(self.workspace).fetch_all(&mut *tx).await?;

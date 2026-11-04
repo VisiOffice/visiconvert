@@ -33,7 +33,7 @@ impl KeyInput {
             || self.name.chars().count() > 80
             || self.name.chars().any(char::is_control)
             || !self.scopes.iter().any(|s| s == "read")
-            || self.scopes.len() > 7
+            || self.scopes.len() > 8
             || self.scopes.iter().any(|s| {
                 ![
                     "read",
@@ -43,6 +43,7 @@ impl KeyInput {
                     "numbers:purchase",
                     "setup:write",
                     "webhooks:write",
+                    "conversions:write",
                 ]
                 .contains(&s.as_str())
             })

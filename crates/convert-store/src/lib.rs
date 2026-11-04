@@ -8,6 +8,7 @@ pub mod google;
 pub mod hosted;
 pub mod inquiries;
 pub mod managed;
+pub mod pipeline;
 pub mod public_api;
 pub mod service_policy;
 pub mod setup;

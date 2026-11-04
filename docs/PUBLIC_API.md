@@ -31,9 +31,10 @@ Permissions:
 | `numbers:write` | Register an existing voice number in the connected Twilio or SignalWire account |
 | `numbers:purchase` | Search, buy, and release SignalWire numbers (`/numbers/search`, `/numbers/purchase`, `/numbers/{id}/release`, `/numbers/{id}/restore`). Billable: each number is charged monthly until released. Owners grant it under **Billable permission** in API Keys; the expiration defaults to 24 hours. |
 | `setup:write` | Create/update website settings and DNI pools (engine migration 0012) |
+| `conversions:write` | Define and map pipeline conversion actions (`PUT /conversion-actions/{key}`, `POST /conversion-actions/{key}/google-action`) and post pipeline conversion events (`POST /conversion-events`) that VisiConvert matches and sends to Google Ads (engine migration 0023) |
 
 Keys cannot manage keys, billing, provider credentials, inquiry grouping,
-or conversion preparation. Use the workspace UI for those operations. Read-only
+reviewed conversion preparation, the Google connection, the consent policy, or Google delivery and automatic sending. Use the workspace UI for those operations. Read-only
 keys remain read-only even if an MCP client enables change tools.
 
 Rotate creates a replacement and revokes the old key atomically, preserving the
@@ -150,6 +151,18 @@ key audit history, but not plaintext integration secrets. Protect backups: resto
 an older database can restore keys revoked after that backup; revoke affected keys
 before exposing a restored installation. Keep integration secrets in a separate
 secret manager. Existing operator/bootstrap access is unchanged.
+
+## Pipeline conversions
+
+Keys with `conversions:write` can define actions (`PUT /api/v1/conversion-actions/{key}`),
+map them to existing Google actions found with `GET /api/v1/connections/google/actions`,
+create a new VisiConvert action in Google for one (`POST /api/v1/conversion-actions/{key}/google-action`),
+and post business events to `POST /api/v1/conversion-events`. VisiConvert matches the
+lead and its Google click and sends the conversion when the workspace owner has turned on
+Google delivery and automatic sending. Reads (`GET /api/v1/conversion-setup`,
+`/conversion-actions`, `/conversion-events`, `/connections/google/accounts`) need `read`.
+`conversion-setup` says which owner-only steps are left; no key can turn on sending,
+change the consent policy or connect Google. See [pipeline conversions](PIPELINE_CONVERSIONS.md).
 
 ## Webhooks
 

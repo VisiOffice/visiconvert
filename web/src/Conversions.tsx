@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { type Client, money, label } from "./api";
-import { GoogleConnection } from "./GoogleConnection";
+import { GoogleConnection, type Discovery } from "./GoogleConnection";
+import { ReviewedGoogleActions } from "./ReviewedGoogleActions";
+import { PipelineConversions } from "./PipelineConversions";
 
 export type Settings = { customer_id: string; qualified_action_id: string; booking_action_id: string; allow_inferred_calls: boolean; version: number };
 type Decision = "unknown" | "granted" | "denied";
@@ -18,6 +20,7 @@ export function Conversions({ api }: { api: Client }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [discovery, setDiscovery] = useState<Discovery | null>(null);
   async function refresh() { setData(await api<Preview>("/conversions")); }
   useEffect(() => { let active = true; api<Preview>("/conversions").then(d => { if (active) setData(d); }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [api]);
   async function mutate(path: string, body: unknown, message: string, method?: string) {
@@ -28,11 +31,27 @@ export function Conversions({ api }: { api: Client }) {
   }
   const candidate = data?.candidates.find(c => identity(c) === selected) ?? data?.candidates[0];
   return <div className="conversion-layout">
-    <p className="notice"><strong>Reviewed Google delivery.</strong> Staging stays local. Validating checks the event with Google without recording a conversion; queuing sends it. Microsoft delivery is not available yet.</p>
+    <p className="notice"><strong>Google conversions.</strong> Connect Google Ads, define the steps of your pipeline (like lead, quote sent and order) and map each to a Google conversion action. Your CRM or booking system posts events; VisiConvert finds the ad click and sends them automatically once you turn sending on. Microsoft delivery is not available yet.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {!data ? <p>Loading conversion preparation…</p> : <>
-      <GoogleConnection api={api} settings={data.settings} onChange={refresh} />
+      <GoogleConnection api={api} settings={data.settings} onChange={refresh} onDiscovery={setDiscovery} />
+      <PipelineConversions api={api} revision={data.delivery_settings.version} settingsVersion={data.settings.version} discovery={discovery?.customer === data.settings.customer_id ? discovery : null} onChange={refresh} />
+      <section className="card site-panel" aria-label="Google delivery history"><h2>Google delivery history</h2>
+        <p className="muted">Processed means Google processed this request; it does not prove ad attribution or inclusion in bidding reports. Warnings and uncertain outcomes need review using the saved request ID. An uncertain send is never automatically submitted again.</p>
+        {!data.deliveries.length ? <p>No events validated or sent yet.</p> : <div className="conversion-jobs">{data.deliveries.map(d => <article className="conversion-job" key={d.id}>
+          <strong>{label(d.state)}{d.review_required ? " · Review required" : ""}</strong>
+          <small>Preparation {d.outbox_id} · revision {d.outbox_version} · {d.attempts} delivery attempts</small>
+          {d.request_id && <small>Google request ID: <code>{d.request_id}</code></small>}
+          {d.diagnostic && <p>{d.diagnostic}</p>}
+          {d.warnings && <p className="notice">Google reported warnings. Inspect the request in Google diagnostics.</p>}
+          {d.state === "validated" && !d.review_required && <button className="primary" disabled={busy || !data.delivery_settings.enabled} onClick={() => void mutate(`/conversions/deliveries/${d.id}/queue`, {}, "Delivery queued. Refresh to check Google processing status.")}>Queue conversion for Google</button>}
+          {d.request_id && ["uncertain", "needs_review", "failed"].includes(d.state) && <button className="secondary" disabled={busy} onClick={() => void mutate(`/conversions/deliveries/${d.id}/recheck`, {}, "Receipt check queued. The event will not be uploaded again.")}>Recheck Google receipt</button>}
+        </article>)}</div>}
+      </section>
+      <details className="card site-panel conversion-advanced" aria-label="Advanced: manual review"><summary>Advanced: manual review{!!(data.settings.qualified_action_id || data.settings.booking_action_id || data.jobs.length) ? " · in use" : ""}</summary>
+        <p className="muted">The original reviewed flow: fixed qualified-lead and booking actions that you stage, validate with Google and queue one conversion at a time. You don’t need it for automatic conversions. Don’t map the same Google action in both flows, or conversions count twice.</p>
+        <ReviewedGoogleActions api={api} discovery={discovery?.customer === data.settings.customer_id ? discovery : null} settings={data.settings} onChange={refresh} />
       <section className="card site-panel" aria-label="Google delivery controls">
         <div className="section-heading"><div><span className="eyebrow">GOOGLE DELIVERY</span><h2>{data.delivery_settings.enabled ? "Delivery enabled" : "Delivery paused"}</h2></div><button className="secondary" disabled={busy} onClick={() => void mutate("/conversions/delivery/settings", { enabled: !data.delivery_settings.enabled, version: data.delivery_settings.version }, data.delivery_settings.enabled ? "Pending sends paused. Existing receipts can still be checked." : "Delivery enabled. Only explicitly queued events will be sent.", "PUT")}>{data.delivery_settings.enabled ? "Pause Google delivery" : "Enable reviewed delivery"}</button></div>
         <p className="muted">Use one uploader per conversion action. Turn off any overlapping CRM uploads before queuing here. Changes to consent or bookings stop pending sends for review. Google Data Manager cannot retract an already sent conversion; canceled bookings and withdrawn consent require manual correction in Google.</p>
@@ -62,25 +81,14 @@ export function Conversions({ api }: { api: Client }) {
           {j.state !== "canceled" && <button className="secondary" disabled={busy} onClick={() => void mutate(`/conversions/${j.id}/cancel`, { version: j.version }, "Local preparation canceled.")}>Cancel preparation</button>}
         </article>)}</div>}
       </section>
-      <section className="card site-panel" aria-label="Google delivery history"><h2>Google delivery history</h2>
-        <p className="muted">Processed means Google processed this request; it does not prove ad attribution or inclusion in bidding reports. Warnings and uncertain outcomes need review using the saved request ID. An uncertain send is never automatically submitted again.</p>
-        {!data.deliveries.length ? <p>No events validated or sent yet.</p> : <div className="conversion-jobs">{data.deliveries.map(d => <article className="conversion-job" key={d.id}>
-          <strong>{label(d.state)}{d.review_required ? " · Review required" : ""}</strong>
-          <small>Preparation {d.outbox_id} · revision {d.outbox_version} · {d.attempts} delivery attempts</small>
-          {d.request_id && <small>Google request ID: <code>{d.request_id}</code></small>}
-          {d.diagnostic && <p>{d.diagnostic}</p>}
-          {d.warnings && <p className="notice">Google reported warnings. Inspect the request in Google diagnostics.</p>}
-          {d.state === "validated" && !d.review_required && <button className="primary" disabled={busy || !data.delivery_settings.enabled} onClick={() => void mutate(`/conversions/deliveries/${d.id}/queue`, {}, "Delivery queued. Refresh to check Google processing status.")}>Queue conversion for Google</button>}
-          {d.request_id && ["uncertain", "needs_review", "failed"].includes(d.state) && <button className="secondary" disabled={busy} onClick={() => void mutate(`/conversions/deliveries/${d.id}/recheck`, {}, "Receipt check queued. The event will not be uploaded again.")}>Recheck Google receipt</button>}
-        </article>)}</div>}
-      </section>
       <details className="card site-panel"><summary>Preparation history (latest 100)</summary><ul className="inquiry-history">{data.history.map(h => <li key={h.id}>{label(h.kind)} · {h.actor} · {date(h.created_at)}</li>)}</ul></details>
+      </details>
     </>}
   </div>;
 }
 function Mapping({ value, busy, save }: { value: Settings; busy: boolean; save: (s: Settings) => Promise<void> }) {
   const [draft, setDraft] = useState(value);
-  return <details className="card site-panel"><summary>Advanced destination settings</summary><h2>Enter account and action IDs</h2><p className="muted">Use your Google Ads customer ID without dashes and existing import conversion action IDs. Map only the event types you want. Saving IDs does not verify them; use the Google connection’s validation control to check the saved destination.</p><form className="site-form" onSubmit={e => { e.preventDefault(); void save(draft); }}>
+  return <details className="card site-panel"><summary>Advanced destination settings</summary><h2>Enter account and action IDs</h2><p className="muted">Use your Google Ads customer ID without dashes and existing import conversion action IDs. Map only the event types you want; leave both action IDs blank if you only use automatic conversion actions. Saving IDs does not verify them; use the Google connection’s validation control to check the saved destination.</p><form className="site-form" onSubmit={e => { e.preventDefault(); void save(draft); }}>
     <div className="form-field"><label htmlFor="ads-customer">Google Ads customer ID</label><input id="ads-customer" required inputMode="numeric" pattern="[0-9]{10}" maxLength={10} value={draft.customer_id} onChange={e => setDraft({ ...draft, customer_id: e.target.value })} /></div>
     <div className="form-field"><label htmlFor="ads-qualified">Qualified inquiry action ID</label><input id="ads-qualified" inputMode="numeric" pattern="[0-9]{1,20}" maxLength={20} value={draft.qualified_action_id} onChange={e => setDraft({ ...draft, qualified_action_id: e.target.value })} /></div>
     <div className="form-field"><label htmlFor="ads-booking">Booking action ID</label><input id="ads-booking" inputMode="numeric" pattern="[0-9]{1,20}" maxLength={20} value={draft.booking_action_id} onChange={e => setDraft({ ...draft, booking_action_id: e.target.value })} /></div>
