@@ -268,18 +268,23 @@ events, `conversions:send` to change the switches):
   `customer_id` and `allow_inferred_calls`.
 - `GET /api/v1/conversion-setup/google-review[?login=]` (`read`): reviews every
   non-removed conversion action in the saved Google Ads account. Each action reports `id`,
-  `name`, `type`, `category`, `status`, `primary_for_goal`, `counting`,
+  `name`, `type`, `category`, `origin`, `status`, `primary_for_goal`, `counting`,
   `click_window_days`, value settings, `owner`, `conversions_30d`, `conversions_90d`
   (Google's all_conversions) and `last_conversion_date`, plus `mapped`, an optional `note`
-  and `flags`. Each flag has a `code`, a `severity`, a plain-language `explanation` and a
+  and `flags`. It also reports `goal` `{category, origin, biddable}`, the account-level
+  customer conversion goal the action belongs to (`null` if Google reports none),
+  `goal_shared_with`, the names of the other actions in that goal, and `bidding`. Google
+  bids toward an action only when it is primary and its goal is biddable, so `bidding` is
+  both, and the bidding flags below use it rather than `primary_for_goal` alone. Campaigns
+  with their own campaign-level goals can differ; those are not read. Each flag has a `code`, a `severity`, a plain-language `explanation` and a
   `suggestion`:
   - `mapped` (info): VisiConvert sends to this action.
   - `active_other_uploader`: an import action VisiConvert does not send to still received
     conversions in the last 90 days. It is a warning while the action is primary, and
-    info once it is secondary.
-  - `dead_upload` (warning): a primary import action with no conversions in 90 days,
+    info once it no longer counts for bidding.
+  - `dead_upload` (warning): an import action counting for bidding with no conversions in 90 days,
     probably left over from an earlier tracking tool.
-  - `call_overlap` (warning): a primary Google call action (website call, click to call,
+  - `call_overlap` (warning): a Google call action counting for bidding (website call, click to call,
     or a Google-hosted call action) that counts calls VisiConvert also records. A website
     call action also means Google's forwarding number can fight VisiConvert's own
     number swap.
@@ -291,10 +296,25 @@ events, `conversions:send` to change the switches):
 - `PUT /api/v1/conversion-setup/google-actions/{id}/goal` (`conversions:send`)
   `{primary, login?}`: makes one action of the saved account primary or secondary. Only
   `primary_for_goal` is changed. Actions owned by another account return 400, and Google
-  refusing the change (system actions, for example) returns 422. An unchanged request does
-  not call Google. Each change is recorded in conversion history
-  (`google_action_goal_changed`) under the key or MCP connection. The response is the
-  updated review plus `changed` and `action`.
+  refusing the change (system actions, for example) returns 422. Google-hosted actions,
+  such as clicks to call, are not sent to Google: their bidding is controlled by their
+  account-level goal, so the 422 names that goal's category and origin, whether it is
+  biddable, and every other action in it, for `PUT /conversion-setup/google-goal`. An
+  unchanged request does not call Google. Each change is recorded in conversion history
+  (`google_action_goal_changed`) under the key or MCP connection. The response is
+  `changed`, the changed `action`, and the review's `summary`, `warnings`, `has_more`,
+  `customer_id`, `login` and `reviewed_at`.
+- `PUT /api/v1/conversion-setup/google-goal` (`conversions:send`)
+  `{category, origin, biddable, login?}`: turns one customer conversion goal of the saved
+  account (`customers/{id}/customerConversionGoals/{category}~{origin}`) on or off for
+  bidding. Only `biddable` is sent. This changes what Smart Bidding optimizes for across
+  the account, for every action in the goal; campaign-level goal overrides are never
+  changed. Use `goal.category` and `goal.origin` from the review; an unknown goal returns
+  404 and Google refusing returns 422. An unchanged request does not call Google. Each
+  change is recorded as `google_goal_biddable_changed` with the goal, before and after,
+  and the actions in it, under the key or MCP connection. The response is `changed`,
+  `goal` `{category, origin, biddable, resource_name}`, `actions` (every action in the
+  goal, re-classified) and the review summary and warnings.
 - `GET /api/v1/conversion-delivery` (`read`): `enabled`, `auto_send`, `auto_send_at`,
   `consent_policy`, `attested_by`, `attested_at`, `version` and the `setup` checklist.
 - `PUT /api/v1/conversion-delivery` (`conversions:send`)
@@ -328,9 +348,12 @@ The four that change actions and events, and `check_google_destination`, require
 confirmation in chat first and to state the attestation. `get_status` includes the
 conversion checklist in its next steps.
 
-`review_google_conversion_setup` (`read`) and `set_google_action_goal` (`conversions:send`)
-expose the review and the goal switch. The goal tool's description tells the agent to
-confirm the action name and the effect on bidding with the owner first.
+`review_google_conversion_setup` (`read`), `set_google_action_goal` and
+`set_google_goal_biddable` (both `conversions:send`) expose the review, the
+primary/secondary switch and the account-level goal switch. The tool descriptions tell
+the agent to confirm the action name and the effect on bidding with the owner first, and,
+for a goal, to name every action in it and say that it changes what Smart Bidding
+optimizes for across the account.
 
 The UI uses the private, owner-checked API: `GET /api/conversions/pipeline` (actions,
 policy, setup checklist and the latest 100 events), `PUT /api/conversions/actions/{key}`,

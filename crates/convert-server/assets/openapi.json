@@ -1570,7 +1570,7 @@
       },
       "GoogleReview": {
         "type": "object",
-        "description": "Every non-removed conversion action in the saved Google Ads account: id, name, type, category, status, primary_for_goal, counting, click_window_days, default_value, currency, always_use_default_value, owner, conversions_30d, conversions_90d (all_conversions) and last_conversion_date, plus mapped (VisiConvert sends to it), note, and flags. Each flag has code (mapped, active_other_uploader, dead_upload, call_overlap), severity (info or warning), a plain-language explanation and a suggestion. warnings lists the actions with warning flags; summary says it in one sentence; has_more is true past 200 actions. The goal route adds changed and action.",
+        "description": "Every non-removed conversion action in the saved Google Ads account: id, name, type, category, origin, status, primary_for_goal, counting, click_window_days, default_value, currency, always_use_default_value, owner, conversions_30d, conversions_90d (all_conversions) and last_conversion_date, plus goal {category, origin, biddable} (the account-level customer conversion goal it belongs to, or null), goal_shared_with (names of the other actions in that goal), bidding (primary_for_goal and a biddable goal: whether Smart Bidding optimizes toward it), mapped (VisiConvert sends to it), note, and flags. The bidding flags (dead_upload, call_overlap, and active_other_uploader as a warning) use bidding, not primary_for_goal alone. Each flag has code (mapped, active_other_uploader, dead_upload, call_overlap), severity (info or warning), a plain-language explanation and a suggestion. warnings lists the actions with warning flags; summary says it in one sentence; has_more is true past 200 actions.",
         "additionalProperties": true
       },
       "GoogleActionGoalInput": {
@@ -1588,6 +1588,41 @@
         },
         "required": [
           "primary"
+        ],
+        "additionalProperties": false
+      },
+      "GoogleGoalChange": {
+        "type": "object",
+        "description": "customer_id, login, summary, warnings, has_more and reviewed_at from the refreshed review, plus changed and either action (the changed action, from the action goal route) or goal {category, origin, biddable, resource_name} and actions (every action in that goal, from the goal route).",
+        "additionalProperties": true
+      },
+      "GoogleGoalBiddableInput": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "pattern": "^[A-Z_]{1,40}$",
+            "description": "goal.category from GET /conversion-setup/google-review, e.g. CONTACT"
+          },
+          "origin": {
+            "type": "string",
+            "pattern": "^[A-Z_]{1,40}$",
+            "description": "goal.origin from GET /conversion-setup/google-review, e.g. GOOGLE_HOSTED"
+          },
+          "biddable": {
+            "type": "boolean",
+            "description": "false stops Smart Bidding optimizing toward this goal across the account"
+          },
+          "login": {
+            "type": "string",
+            "pattern": "^[0-9]{10}$",
+            "description": "Google Ads access account; defaults to the last checked one"
+          }
+        },
+        "required": [
+          "category",
+          "origin",
+          "biddable"
         ],
         "additionalProperties": false
       },
@@ -9021,7 +9056,7 @@
     },
     "/conversion-setup/google-actions/{id}/goal": {
       "put": {
-        "summary": "Make one conversion action of the saved account primary or secondary. Changes only primary_for_goal, which changes what Google bids toward; confirm the action name and the effect with the owner first. Google refusing the change returns 422; an action owned by another account returns 400",
+        "summary": "Make one conversion action of the saved account primary or secondary. Changes only primary_for_goal, which changes what Google bids toward; confirm the action name and the effect with the owner first. Google-hosted actions, and actions Google refuses to change, return 422 naming the account-level goal (category and origin) that controls them and the other actions in it; an action owned by another account returns 400. Returns only the changed action with the account summary and warnings",
         "operationId": "put_conversion_setup_google_actions_id_goal",
         "description": "Requires `conversions:send` permission.",
         "security": [
@@ -9035,7 +9070,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GoogleReview"
+                  "$ref": "#/components/schemas/GoogleGoalChange"
                 }
               }
             }
@@ -9167,6 +9202,148 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/GoogleActionGoalInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversion-setup/google-goal": {
+      "put": {
+        "summary": "Turn one account-level conversion goal (CustomerConversionGoal, by category and origin) of the saved account on or off for bidding. Changes only biddable, which changes what Smart Bidding optimizes for across the account for every action in the goal; name every action in it to the owner and confirm first. Campaign-level goal overrides are never changed. An unknown goal returns 404; Google refusing returns 422",
+        "operationId": "put_conversion_setup_google_goal",
+        "description": "Requires `conversions:send` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleGoalChange"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleGoalBiddableInput"
               }
             }
           }

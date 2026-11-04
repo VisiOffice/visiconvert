@@ -1595,7 +1595,24 @@ async fn google_review_flags_overlap_and_goal_switch_needs_send() {
             .contains("count")
     );
     assert!(live["flags"][0]["suggestion"].is_string());
-    assert_eq!(codes(&by_id(&r, "503")), ["call_overlap"]);
+    let hosted = by_id(&r, "503");
+    assert_eq!(codes(&hosted), ["call_overlap"]);
+    // Each action carries its account-level goal and the other actions sharing it.
+    assert_eq!(hosted["origin"], "GOOGLE_HOSTED");
+    assert_eq!(
+        hosted["goal"],
+        json!({"category":"CONTACT","origin":"GOOGLE_HOSTED","biddable":true})
+    );
+    assert_eq!(
+        hosted["goal_shared_with"],
+        json!(["Business Profile messages"])
+    );
+    assert_eq!(hosted["bidding"], true);
+    assert_eq!(
+        by_id(&r, "501")["goal_shared_with"],
+        json!(["LAD Onsite Calls"])
+    );
+    assert_eq!(by_id(&r, "123")["bidding"], false);
     let website = by_id(&r, "504");
     assert_eq!(codes(&website), ["call_overlap"]);
     assert!(
@@ -1660,6 +1677,10 @@ async fn google_review_flags_overlap_and_goal_switch_needs_send() {
     assert_eq!(status, StatusCode::OK, "{v}");
     assert_eq!(v["changed"], true);
     assert_eq!(v["action"]["primary_for_goal"], false);
+    assert_eq!(v["action"]["bidding"], false);
+    // Only the changed action comes back, with the account summary and warnings.
+    assert!(v["actions"].is_null(), "{v}");
+    assert!(v["summary"].is_string() && v["warnings"].is_array(), "{v}");
     // Still reported, but secondary uploads no longer count, so it leaves the warnings.
     assert_eq!(v["action"]["flags"][0]["severity"], "info", "{v}");
     assert!(!v["warnings"].to_string().contains("\"502\""), "{v}");
@@ -1692,10 +1713,31 @@ async fn google_review_flags_overlap_and_goal_switch_needs_send() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
-    assert!(
-        v["error"].as_str().unwrap().contains("Google refused"),
-        "{v}"
-    );
+    let error = v["error"].as_str().unwrap();
+    assert!(error.contains("set_google_goal_biddable"), "{v}");
+    assert!(error.contains("STORE_VISIT / STORE"), "{v}");
+    // A Google-hosted action is not sent to Google: the 422 names its goal and the other
+    // actions in it.
+    let (status, v) = api(
+        a.clone(),
+        "PUT",
+        &path("503"),
+        &send,
+        json!({"primary":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    let error = v["error"].as_str().unwrap();
+    for phrase in [
+        "Clicks to call",
+        "goal-level change is available",
+        "set_google_goal_biddable",
+        "category CONTACT, origin GOOGLE_HOSTED and biddable false",
+        "also includes: Business Profile messages",
+        "across the account",
+    ] {
+        assert!(error.contains(phrase), "{phrase}: {error}");
+    }
     let (status, _) = api(
         a.clone(),
         "PUT",
@@ -1733,6 +1775,91 @@ async fn google_review_flags_overlap_and_goal_switch_needs_send() {
     .await;
     assert!(status.is_client_error());
     assert_eq!(w.p.goal_updates.lock().unwrap().len(), 2);
+    // Switching the goal off for bidding needs conversions:send and changes only biddable.
+    let goal_route = "/api/v1/conversion-setup/google-goal";
+    let off = json!({"category":"CONTACT","origin":"GOOGLE_HOSTED","biddable":false});
+    for key in [&read, &w.key] {
+        let (status, v) = api(a.clone(), "PUT", goal_route, key, off.clone()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
+        assert!(v["error"].as_str().unwrap().contains("conversions:send"));
+    }
+    assert!(w.p.biddable_updates.lock().unwrap().is_empty());
+    let (status, v) = api(a.clone(), "PUT", goal_route, &send, off.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["changed"], true);
+    assert_eq!(
+        v["goal"]["resource_name"],
+        "customers/1234567890/customerConversionGoals/CONTACT~GOOGLE_HOSTED"
+    );
+    let names: Vec<&str> = v["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Clicks to call", "Business Profile messages"]);
+    // Still primary, but no longer counted for bidding, so the call overlap is gone.
+    assert_eq!(v["actions"][0]["primary_for_goal"], true);
+    assert_eq!(v["actions"][0]["bidding"], false);
+    assert_eq!(v["actions"][0]["goal"]["biddable"], false);
+    assert!(codes(&v["actions"][0]).is_empty(), "{v}");
+    assert!(!v["warnings"].to_string().contains("\"503\""), "{v}");
+    assert_eq!(
+        *w.p.biddable_updates.lock().unwrap(),
+        [
+            json!({"resourceName":"customers/1234567890/customerConversionGoals/CONTACT~GOOGLE_HOSTED","biddable":false})
+        ]
+    );
+    let (actor, payload): (String, Value) = sqlx::query_as("SELECT actor,payload FROM conversion_events WHERE workspace_id=$1 AND kind='google_goal_biddable_changed' ORDER BY id DESC LIMIT 1")
+        .bind(a.store.workspace).fetch_one(&a.store.pool).await.unwrap();
+    assert_eq!(actor, format!("API key {send_id}"));
+    assert_eq!(payload["category"], "CONTACT");
+    assert_eq!(payload["origin"], "GOOGLE_HOSTED");
+    assert_eq!(payload["biddable_before"], true);
+    assert_eq!(payload["biddable"], false);
+    assert_eq!(payload["actions"].as_array().unwrap().len(), 2);
+    // A fresh review reads the new state from Google.
+    let (_, r) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup/google-review",
+        &read,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(by_id(&r, "503")["bidding"], false);
+    assert_eq!(by_id(&r, "507")["goal"]["biddable"], false);
+    // Repeating is a no-op; unknown or malformed goals and extra fields are refused.
+    let (status, v) = api(a.clone(), "PUT", goal_route, &send, off.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["changed"], false);
+    for (body, want) in [
+        (
+            json!({"category":"PURCHASE","origin":"APP","biddable":false}),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            json!({"category":"contact","origin":"GOOGLE_HOSTED","biddable":false}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"category":"CONTACT~X","origin":"GOOGLE_HOSTED","biddable":false}),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let (status, v) = api(a.clone(), "PUT", goal_route, &send, body).await;
+        assert_eq!(status, want, "{v}");
+    }
+    let (status, _) = api(
+        a.clone(),
+        "PUT",
+        goal_route,
+        &send,
+        json!({"category":"CONTACT","origin":"GOOGLE_HOSTED","biddable":true,"campaign":"1"}),
+    )
+    .await;
+    assert!(status.is_client_error());
+    assert_eq!(w.p.biddable_updates.lock().unwrap().len(), 1);
     // With a live uploader still flagged, the automatic-sending warning names it.
     sqlx::query("UPDATE google_conversion_reviews SET report=jsonb_set(report,'{warnings}',$2) WHERE workspace_id=$1")
         .bind(a.store.workspace)
@@ -1784,8 +1911,20 @@ async fn google_review_flags_overlap_and_goal_switch_needs_send() {
         )
         .await;
         assert_eq!(r["isError"], !allowed, "{r}");
+        let r = call(
+            "set_google_goal_biddable",
+            json!({"category":"CONTACT","origin":"GOOGLE_HOSTED","biddable":true}),
+        )
+        .await;
+        assert_eq!(r["isError"], !allowed, "{r}");
     }
     assert_eq!(w.p.goal_updates.lock().unwrap().len(), 3);
+    let updates = w.p.biddable_updates.lock().unwrap().clone();
+    assert_eq!(updates.len(), 2);
+    assert_eq!(updates[1]["biddable"], true);
+    let mcp_actor: String = sqlx::query_scalar("SELECT actor FROM conversion_events WHERE workspace_id=$1 AND kind='google_goal_biddable_changed' ORDER BY id DESC LIMIT 1")
+        .bind(a.store.workspace).fetch_one(&a.store.pool).await.unwrap();
+    assert_eq!(mcp_actor, format!("API key {send_id}"));
     server.abort();
     w.task.abort();
 }

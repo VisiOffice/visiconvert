@@ -102,6 +102,10 @@ pub enum Error {
     )]
     NotMutable,
     #[error(
+        "Google refused to change whether this conversion goal is used for bidding. Check it in Google Ads under Goals."
+    )]
+    GoalNotMutable,
+    #[error(
         "Google returned an unexpected response. Try again or ask the administrator to check the API configuration."
     )]
     Response,
@@ -141,9 +145,16 @@ pub struct ReviewedAction {
     #[serde(rename = "type")]
     pub kind: String,
     pub category: String,
+    /// Where the conversion happens (WEBSITE, GOOGLE_HOSTED, CALL_FROM_ADS, APP, ...).
+    pub origin: String,
     pub owner: String,
     #[serde(rename = "primary_for_goal")]
     pub primary: bool,
+    /// The account-level goal for this action's category and origin. Google bids only on
+    /// primary actions whose goal is biddable. None when Google reported no such goal.
+    pub goal: Option<ConversionGoal>,
+    /// Names of the other actions in the same goal (same category and origin).
+    pub goal_shared_with: Vec<String>,
     pub counting: String,
     #[serde(rename = "click_window_days")]
     pub window_days: i64,
@@ -153,6 +164,31 @@ pub struct ReviewedAction {
     pub conversions_30d: f64,
     pub conversions_90d: f64,
     pub last_conversion_date: Option<String>,
+}
+/// A customer conversion goal: one per category and origin, whose `biddable` decides
+/// whether Smart Bidding optimizes toward its primary actions across the account.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ConversionGoal {
+    pub category: String,
+    pub origin: String,
+    pub biddable: bool,
+}
+impl ConversionGoal {
+    pub fn resource(&self, customer: &str) -> String {
+        format!(
+            "customers/{customer}/customerConversionGoals/{}~{}",
+            self.category, self.origin
+        )
+    }
+}
+/// Google enum names: upper-case letters and underscores.
+pub fn enum_name(s: &str) -> bool {
+    (1..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
+}
+pub struct Review {
+    pub actions: Vec<ReviewedAction>,
+    pub goals: Vec<ConversionGoal>,
+    pub more: bool,
 }
 #[derive(Clone)]
 pub struct Client {
@@ -584,12 +620,12 @@ impl Client {
         login: &str,
         customer: &str,
         (today, from30, from90): (&str, &str, &str),
-    ) -> Result<(Vec<ReviewedAction>, bool), Error> {
+    ) -> Result<Review, Error> {
         let date = |d: &str| d.len() == 10 && d.bytes().all(|b| b.is_ascii_digit() || b == b'-');
         if ![today, from30, from90].into_iter().all(date) {
             return Err(Error::Response);
         }
-        let (rows, more) = self.search(token, login, customer, "SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category, conversion_action.owner_customer, conversion_action.primary_for_goal, conversion_action.counting_type, conversion_action.click_through_lookback_window_days, conversion_action.value_settings.default_value, conversion_action.value_settings.default_currency_code, conversion_action.value_settings.always_use_default_value FROM conversion_action WHERE conversion_action.status != 'REMOVED' ORDER BY conversion_action.id LIMIT 201").await?;
+        let (rows, more) = self.search(token, login, customer, "SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category, conversion_action.origin, conversion_action.owner_customer, conversion_action.primary_for_goal, conversion_action.counting_type, conversion_action.click_through_lookback_window_days, conversion_action.value_settings.default_value, conversion_action.value_settings.default_currency_code, conversion_action.value_settings.always_use_default_value FROM conversion_action WHERE conversion_action.status != 'REMOVED' ORDER BY conversion_action.id LIMIT 201").await?;
         let mut actions = rows
             .iter()
             .map(|r| {
@@ -605,6 +641,7 @@ impl Client {
                     status: v["status"].as_str().unwrap_or("UNKNOWN").into(),
                     kind: v["type"].as_str().unwrap_or("UNKNOWN").into(),
                     category: v["category"].as_str().unwrap_or("UNKNOWN").into(),
+                    origin: v["origin"].as_str().unwrap_or("UNKNOWN").into(),
                     owner: v["ownerCustomer"]
                         .as_str()
                         .unwrap_or("")
@@ -623,6 +660,40 @@ impl Client {
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
+        let (rows, _) = self.search(token, login, customer, "SELECT customer_conversion_goal.category, customer_conversion_goal.origin, customer_conversion_goal.biddable FROM customer_conversion_goal LIMIT 201").await?;
+        let goals = rows
+            .iter()
+            .filter_map(|r| {
+                let g = &r["customerConversionGoal"];
+                Some(ConversionGoal {
+                    category: g["category"].as_str()?.into(),
+                    origin: g["origin"].as_str()?.into(),
+                    biddable: g["biddable"].as_bool().unwrap_or(false),
+                })
+            })
+            .collect::<Vec<_>>();
+        let names: Vec<(String, String, String, String)> = actions
+            .iter()
+            .map(|a| {
+                (
+                    a.id.clone(),
+                    a.name.clone(),
+                    a.category.clone(),
+                    a.origin.clone(),
+                )
+            })
+            .collect();
+        for a in &mut actions {
+            a.goal = goals
+                .iter()
+                .find(|g| g.category == a.category && g.origin == a.origin)
+                .cloned();
+            a.goal_shared_with = names
+                .iter()
+                .filter(|(id, _, c, o)| *id != a.id && *c == a.category && *o == a.origin)
+                .map(|(_, n, _, _)| n.clone())
+                .collect();
+        }
         let prefix = format!("customers/{customer}/conversionActions/");
         let action_of = |r: &Value| -> Option<String> {
             r["segments"]["conversionAction"]
@@ -654,7 +725,55 @@ impl Client {
                 a.last_conversion_date = Some(day.into());
             }
         }
-        Ok((actions, more))
+        Ok(Review {
+            actions,
+            goals,
+            more,
+        })
+    }
+    /// Change only `biddable` of one customer conversion goal (category and origin), which
+    /// changes what Smart Bidding optimizes toward for every campaign that uses the
+    /// account-default goals. Campaign-level goal overrides are never read or changed.
+    pub async fn set_goal_biddable(
+        &self,
+        token: &str,
+        login: &str,
+        customer: &str,
+        goal: &ConversionGoal,
+    ) -> Result<(), Error> {
+        if !customer_id(customer)
+            || !customer_id(login)
+            || !enum_name(&goal.category)
+            || !enum_name(&goal.origin)
+        {
+            return Err(Error::Response);
+        }
+        let resource = goal.resource(customer);
+        let (status, value) = self
+            .read(
+                self.http
+                    .post(format!(
+                        "{}/customers/{customer}/customerConversionGoals:mutate",
+                        self.ads
+                    ))
+                    .bearer_auth(token)
+                    .header("login-customer-id", login)
+                    .json(&json!({"validateOnly":false,"operations":[{
+                        "update":{"resourceName":resource,"biddable":goal.biddable},
+                        "updateMask":"biddable"}]})),
+            )
+            .await?;
+        if status == 400 {
+            return Err(Error::GoalNotMutable);
+        }
+        let value = Self::classify(status, value, false)?;
+        let ok = value["results"]
+            .as_array()
+            .is_some_and(|r| r.len() == 1 && r[0]["resourceName"] == resource.as_str());
+        if !ok {
+            return Err(Error::Response);
+        }
+        Ok(())
     }
     /// Change only `primary_for_goal` of one action. Nothing else is sent, so names,
     /// values, counting and status cannot change. A 400 means Google refused the change.

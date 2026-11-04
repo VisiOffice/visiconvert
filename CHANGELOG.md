@@ -15,6 +15,23 @@
   `primary_for_goal` on an action owned by the saved account, records
   `google_action_goal_changed` with the key or connection, and returns 422 with a clear
   message when Google refuses.
+- The review also reads `conversion_action.origin` and every `customer_conversion_goal`
+  (category, origin, biddable). Each action reports `origin`, `goal`
+  `{category, origin, biddable}`, `goal_shared_with` (other actions in the same goal) and
+  `bidding` (primary and a biddable goal). `dead_upload`, `call_overlap` and the
+  `active_other_uploader` warning now use `bidding`, so a primary action in a goal that is
+  not used for bidding is no longer flagged.
+- New `PUT /api/v1/conversion-setup/google-goal` `{category, origin, biddable, login?}`
+  and MCP tool `set_google_goal_biddable`, requiring `conversions:send`: changes only
+  `biddable` on one CustomerConversionGoal of the saved account
+  (`customers/{id}/customerConversionGoals/{category}~{origin}`), records
+  `google_goal_biddable_changed` with the goal and its actions under the key or
+  connection, and never touches campaign-level goal overrides. This is how Google-hosted
+  actions such as clicks to call stop counting for bidding.
+- `set_google_action_goal` no longer sends Google-hosted actions to Google; it and any
+  Google refusal return 422 naming the action's goal and every other action in it, for
+  `set_google_goal_biddable`. It now returns only the changed action with the summary and
+  warnings, not the full review.
 
 ## Unreleased — agent-chosen Google destination
 

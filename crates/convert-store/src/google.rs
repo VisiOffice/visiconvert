@@ -234,4 +234,14 @@ impl Store {
             .bind(self.workspace).bind(actor).bind(payload).execute(&self.pool).await?;
         Ok(())
     }
+    /// An account-level conversion goal switched in or out of bidding.
+    pub async fn log_google_goal_biddable_change(
+        &self,
+        actor: &str,
+        payload: &Value,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO conversion_events(workspace_id,kind,actor,payload) VALUES($1,'google_goal_biddable_changed',$2,$3)")
+            .bind(self.workspace).bind(actor).bind(payload).execute(&self.pool).await?;
+        Ok(())
+    }
 }
