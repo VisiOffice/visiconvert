@@ -1499,8 +1499,102 @@
       },
       "ConversionSetup": {
         "type": "object",
-        "description": "Pipeline setup checklist. next_steps items have actor (owner, agent or administrator) and step. Owner steps (connect Google, choose the account, consent policy, Google delivery, automatic sending) cannot be done with a key.",
+        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google, choose the account, first destination check) cannot be done with a key.",
         "additionalProperties": true
+      },
+      "ConversionDelivery": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "auto_send": {
+            "type": "boolean"
+          },
+          "auto_send_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "consent_policy": {
+            "type": "string",
+            "enum": [
+              "per_lead",
+              "not_required_outside_eea"
+            ]
+          },
+          "attested_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The owner the attestation is recorded for. A key or MCP connection attests on behalf of the owner who created it."
+          },
+          "attested_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "setup": {
+            "$ref": "#/components/schemas/ConversionSetup"
+          },
+          "warning": {
+            "type": "string",
+            "description": "Present while automatic sending is on: turn off every other uploader for the same Google actions to avoid double counting."
+          }
+        },
+        "required": [
+          "enabled",
+          "auto_send",
+          "auto_send_at",
+          "consent_policy",
+          "attested_by",
+          "attested_at",
+          "version",
+          "setup"
+        ],
+        "additionalProperties": false
+      },
+      "ConversionDeliveryInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Current version from GET /conversion-delivery; a stale version returns 409."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Google delivery for this workspace."
+          },
+          "auto_send": {
+            "type": "boolean",
+            "description": "Send eligible pipeline events automatically. Events recorded while it was off are never sent."
+          },
+          "consent_policy": {
+            "type": "string",
+            "enum": [
+              "per_lead",
+              "not_required_outside_eea"
+            ]
+          },
+          "attest_no_eea_advertising": {
+            "type": "boolean",
+            "description": "Required true when setting not_required_outside_eea, and allowed only then: the owner confirms this workspace does not advertise to people in the EEA, UK or Switzerland."
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
       },
       "GoogleDiscovery": {
         "type": "object",
@@ -8285,7 +8379,7 @@
     },
     "/conversion-setup": {
       "get": {
-        "summary": "Pipeline conversion setup checklist, including which owner-only switches are left",
+        "summary": "Pipeline conversion setup checklist, including which owner steps are left",
         "operationId": "get_conversion_setup",
         "description": "Requires `read` permission.",
         "security": [
@@ -8409,6 +8503,278 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversion-delivery": {
+      "get": {
+        "summary": "Google delivery, automatic sending and consent policy with its attestation, the current version, and the setup checklist",
+        "operationId": "get_conversion_delivery",
+        "description": "Requires `read` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversionDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Turn Google delivery or automatic sending on or off, or set the consent policy, at the current version. Omitted fields are unchanged. Only a workspace owner can grant conversions:send; attestations are recorded for that owner. Conversions sent to Google cannot be retracted",
+        "operationId": "put_conversion_delivery",
+        "description": "Requires `conversions:send` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversionDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversionDeliveryInput"
               }
             }
           }

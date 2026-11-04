@@ -1,3 +1,25 @@
+## Unreleased — agent-controlled conversion sending (`conversions:send`)
+
+- New owner-granted `conversions:send` permission for API keys and MCP connections
+  (additive migration 0024). With it, `PUT /api/v1/conversion-delivery`
+  `{version, enabled?, auto_send?, consent_policy?, attest_no_eea_advertising?}` turns
+  Google delivery and automatic sending on or off and sets the consent policy, using the
+  owner routes' own rules and the shared delivery settings version.
+  `GET /api/v1/conversion-delivery` needs only `read`. `conversions:write` alone is refused.
+- `consent_policy: "not_required_outside_eea"` requires `attest_no_eea_advertising: true`.
+  `attested_by` names the owner who created the key or approved the MCP connection; the
+  conversion history row names the key or connection.
+- While automatic sending is on, the response carries a `warning` to turn off other
+  uploaders for the same Google actions, plus the setup checklist.
+- New MCP tools `get_conversion_delivery` and `set_conversion_delivery` (requires
+  `conversions:send`; the description tells agents to get the owner's explicit
+  confirmation in chat and to state the attestation). Checklist steps an agent may take
+  with the owner's go-ahead now have actor `owner_approval`.
+- API Keys has a separate **Sending permission** checkbox with a notice; expiry defaults
+  to 24 hours. The MCP approval page lists it apart, unchecked, with the same warning.
+  Hosted remote MCP needs Rails to offer `conversions:write` and `conversions:send`.
+- Connecting Google and choosing the advertising account still need the owner.
+
 ## Unreleased — automatic pipeline conversions (Google)
 
 - Workspaces define conversion actions (`lead`, `quote_sent`, `order`, …) with a trigger

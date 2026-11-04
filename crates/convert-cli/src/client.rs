@@ -161,11 +161,24 @@ impl Client {
         .await
     }
 
-    /// Pipeline conversions. Keys and MCP can define and map actions and post events;
-    /// sending, consent policy and the Google connection stay owner-only in the UI.
+    /// Pipeline conversions. Keys and MCP with conversions:write can define and map actions
+    /// and post events; conversions:send also switches delivery, automatic sending and the
+    /// consent policy. The Google connection stays owner-only in the UI.
     pub async fn conversion_setup(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/api/conversion-setup")))
             .await
+    }
+    pub async fn conversion_delivery(&self) -> Result<Value, Error> {
+        self.send(self.http.get(self.url("/api/conversion-delivery")))
+            .await
+    }
+    pub async fn set_conversion_delivery(&self, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .put(self.url("/api/conversion-delivery"))
+                .json(input),
+        )
+        .await
     }
     pub async fn conversion_actions(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/api/conversion-actions")))

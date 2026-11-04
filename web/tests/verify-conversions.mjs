@@ -96,7 +96,7 @@ async function verifyPipeline({page,api,lead,artifactDir}) {
   assert.deepEqual(overview.actions.map(a=>[a.key,a.name,a.default_value_minor,a.google_action_id,a.version]),[['order','Completed order',2050,'456',2]]);
   const consent=page.getByRole('region',{name:'Advertising consent',exact:true});
   const auto=page.getByRole('region',{name:'Automatic sending',exact:true});
-  assert.match(await auto.getByLabel('Setup checklist').innerText(),/Owner must turn on automatic sending in Conversions\./);
+  assert.match(await auto.getByLabel('Setup checklist').innerText(),/Turn on automatic sending: the owner in Conversions/);
   await consent.getByLabel('Not required: this workspace does not advertise in the EEA, UK or Switzerland').check();
   const save=consent.getByRole('button',{name:'Save consent policy',exact:true});
   assert(await save.isDisabled(),'The attestation must be confirmed first');

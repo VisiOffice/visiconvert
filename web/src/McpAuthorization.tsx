@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { navigate } from "./cloud";
 
 type Request = <T>(path: string, body?: unknown, method?: string) => Promise<T>;
-type Consent = { request_token: string; client_name: string; redirect_uri: string; scopes: string[]; workspaces: { id: string; name: string; available: boolean }[] };
+type Consent = { request_token: string; client_name: string; redirect_uri: string; scopes: string[]; owner_only_scopes?: string[]; workspaces: { id: string; name: string; available: boolean }[] };
 const descriptions: Record<string, string> = {
   read: "Read leads, contact details, bookings, reports, and tracking configuration",
   "setup:write": "Create and update websites and dynamic number pools",
@@ -10,7 +10,10 @@ const descriptions: Record<string, string> = {
   "leads:write": "Create leads and change qualification and notes",
   "bookings:write": "Record or cancel bookings and their values",
   "conversions:write": "Define Google conversion actions and post pipeline events (cannot turn on sending)",
+  "conversions:send": "Turn Google delivery and automatic sending on or off and set the consent policy",
 };
+// Granted only by the owner, listed apart from ordinary write access, never preselected.
+const defaultSending = ["conversions:send"];
 export function McpAuthorization({ request, verified }: { request: Request; verified: boolean }) {
   const [data, setData] = useState<Consent | null>(null);
   const [workspace, setWorkspace] = useState("");
@@ -36,6 +39,7 @@ export function McpAuthorization({ request, verified }: { request: Request; veri
       window.location.assign(result.redirect_to);
     } catch (e) { setError((e as Error).message); setBusy(false); }
   }
+  const sending = data?.owner_only_scopes ?? defaultSending;
   function submit(event: FormEvent) { event.preventDefault(); void decide("approve"); }
   return <section className="card cloud-panel" aria-label="Connect an agent">
     <span className="eyebrow">CONNECT AN AGENT</span><h1>Approve workspace access</h1>
@@ -49,8 +53,12 @@ export function McpAuthorization({ request, verified }: { request: Request; veri
         <fieldset className="mcp-permissions"><legend>Permissions</legend>
           <p>Choose what this agent can do. Read access is included; write access is optional and starts unchecked.</p>
           {data.scopes.includes("setup:write") && <p>For guided setup, select “Create and update websites and dynamic number pools.” Also select “Register phone numbers you already own” if you want the agent to add your numbers.</p>}
-          {data.scopes.map(scope => <label className="site-toggle" key={scope}><input type="checkbox" checked={scopes.includes(scope)} disabled={scope === "read"} onChange={e => setScopes(old => e.target.checked ? [...old, scope] : old.filter(s => s !== scope))} />{descriptions[scope] || scope}</label>)}
+          {data.scopes.filter(scope => !sending.includes(scope)).map(scope => <label className="site-toggle" key={scope}><input type="checkbox" checked={scopes.includes(scope)} disabled={scope === "read"} onChange={e => setScopes(old => e.target.checked ? [...old, scope] : old.filter(s => s !== scope))} />{descriptions[scope] || scope}</label>)}
         </fieldset>
+        {data.scopes.some(scope => sending.includes(scope)) && <fieldset className="mcp-permissions"><legend>Sending permission</legend>
+          {data.scopes.filter(scope => sending.includes(scope)).map(scope => <label className="site-toggle" key={scope}><input type="checkbox" checked={scopes.includes(scope)} onChange={e => setScopes(old => e.target.checked ? [...old, scope] : old.filter(s => s !== scope))} />{descriptions[scope] || scope}</label>)}
+          {scopes.includes("conversions:send") && <p className="notice">This agent can turn automatic Google sending on or off and attest the advertising consent policy on your behalf; attestations are recorded in your name. Conversions sent to Google cannot be retracted. Revoke this connection in Connected agents when setup is finished.</p>}
+        </fieldset>}
         <p role="status">{scopes.length === 1 ? "Read-only connection: the agent can inspect this workspace but cannot configure it." : "The agent will receive only the permissions selected above for this workspace."}</p>
         <p>The agent cannot change your password, billing, or provider credentials. This connection expires after 90 days. Revoke it anytime in Connected agents.</p>
         {error && <p role="alert" className="error">{error}</p>}

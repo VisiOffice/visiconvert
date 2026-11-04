@@ -72,14 +72,25 @@ validate and queue one at a time) is unchanged under **Advanced: manual review**
 bottom of the page. You don't need it for automatic conversions. Don't map the same
 Google action in both flows.
 
-### Owner-only switches
+### Owner switches
 
 Only the workspace owner, in the Conversions page, can connect or replace the Google
-login, choose the advertising account, set the consent policy and attestation, and turn
-Google delivery or automatic sending on or off. API keys and MCP agents cannot, even with
-every permission: those endpoints are not in the public API. `GET /api/v1/conversion-setup`
-and the MCP `get_conversion_setup` tool say which of these steps is left, for example
-*Owner must turn on automatic sending in Conversions.*
+login and choose the advertising account: both need the owner's Google sign-in, and no
+key or agent can do them.
+
+Google delivery, automatic sending and the consent policy are the owner's decisions too.
+The owner makes them in Conversions, or grants the separate **Sending permission**
+(`conversions:send`) to an API key or MCP connection so an agent can make them after the
+owner confirms in chat. `conversions:write` alone can't change them. Only the workspace
+owner can grant `conversions:send`. An attestation made through a key or connection is
+recorded in the name of the owner who created it (`attested_by`), and the conversion
+history names the key or connection that made the change. Conversions sent to Google
+can't be retracted, so revoke the key or connection once setup is finished.
+
+`GET /api/v1/conversion-setup` and the MCP `get_conversion_setup` tool say which steps
+are left and who can take them, for example *Turn on automatic sending: the owner in
+Conversions, or an agent with conversions:send (set_conversion_delivery) after the owner
+confirms that no other uploader sends the same Google actions.*
 
 Events recorded while automatic sending or Google delivery is off are kept for
 reporting and are **never sent later**, even if they are revised after you turn
@@ -228,10 +239,24 @@ Pipeline deliveries send the existing `conversion.delivered` and `conversion.fai
 
 ## API and MCP
 
-With a workspace API key (`read` to list, `conversions:write` to change):
+With a workspace API key (`read` to list, `conversions:write` to change actions and post
+events, `conversions:send` to change the switches):
 
 - `GET /api/v1/conversion-setup`: the checklist. `next_steps` items name the `actor`
-  (`owner`, `agent` or `administrator`) and the `step`; `ready` is true when nothing is left.
+  (`agent`, `owner_approval`, `owner` or `administrator`) and the `step`; `ready` is true
+  when nothing is left. `owner_approval` steps can be done with `conversions:send` once
+  the owner agrees.
+- `GET /api/v1/conversion-delivery` (`read`): `enabled`, `auto_send`, `auto_send_at`,
+  `consent_policy`, `attested_by`, `attested_at`, `version` and the `setup` checklist.
+- `PUT /api/v1/conversion-delivery` (`conversions:send`)
+  `{version, enabled?, auto_send?, consent_policy?, attest_no_eea_advertising?}`: omitted
+  fields are unchanged and an unchanged request writes nothing. `version` is the delivery
+  settings version shared with the owner's switches; a stale one returns 409. Setting
+  `consent_policy: "not_required_outside_eea"` requires `attest_no_eea_advertising: true`,
+  which is accepted only with that policy. While `auto_send` is on, the response includes
+  a `warning` to turn off any other uploader for the same Google actions. The rules are
+  the owner's: events recorded while sending was off are never sent, and turning sending
+  off and on again starts a new `auto_send_at`.
 - `GET /api/v1/connections/google/accounts[?login=]` and
   `GET /api/v1/connections/google/actions?login=&customer=`: read-only discovery for the
   connected Google login.
@@ -245,8 +270,11 @@ With a workspace API key (`read` to list, `conversions:write` to change):
 The MCP server (local `visiconvert mcp` and hosted remote MCP) exposes the same operations:
 `get_conversion_setup`, `list_google_accounts`, `list_google_conversion_actions`,
 `list_conversion_actions`, `create_conversion_action`, `update_conversion_action`,
-`create_google_conversion_action`, `record_conversion_event` and `list_conversion_events`.
-The four that change data require `conversions:write`. `get_status` includes the
+`create_google_conversion_action`, `record_conversion_event` and `list_conversion_events`,
+plus `get_conversion_delivery` and `set_conversion_delivery`. The four that change actions
+and events require `conversions:write`; `set_conversion_delivery` requires
+`conversions:send`, and its description tells the agent to get the owner's explicit
+confirmation in chat first and to state the attestation. `get_status` includes the
 conversion checklist in its next steps.
 
 The UI uses the private, owner-checked API: `GET /api/conversions/pipeline` (actions,

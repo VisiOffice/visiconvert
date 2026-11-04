@@ -389,14 +389,7 @@ impl Store {
         if current.unwrap_or(0) != version {
             return Err(Error::Conflict);
         }
-        sqlx::query("INSERT INTO conversion_delivery_settings(workspace_id,enabled) VALUES($1,$2) ON CONFLICT(workspace_id) DO UPDATE SET enabled=$2,version=conversion_delivery_settings.version+1").bind(self.workspace).bind(enabled).execute(&mut *tx).await?;
-        if !enabled {
-            // Automatic sends stay queued and are held by claim_delivery until resumed.
-            sqlx::query("UPDATE conversion_deliveries d SET state='needs_review',review_required=true,diagnostic='Delivery paused. Validate and queue again to resume.',due_at=NULL WHERE workspace_id=$1 AND state IN ('queued','retry') AND NOT EXISTS(SELECT 1 FROM conversion_outbox q WHERE q.workspace_id=d.workspace_id AND q.id=d.outbox_id AND q.kind='pipeline')").bind(self.workspace).execute(&mut *tx).await?;
-        } else {
-            sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND plan_state='blocked'").bind(self.workspace).execute(&mut *tx).await?;
-        }
-        sqlx::query("INSERT INTO conversion_events(workspace_id,kind,actor,payload) VALUES($1,'delivery_enabled',$2,$3)").bind(self.workspace).bind(actor).bind(json!({"enabled":enabled})).execute(&mut *tx).await?;
+        apply_delivery_enabled(&mut tx, self.workspace, enabled, actor).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -494,4 +487,24 @@ impl Store {
             workspace: self.workspace,
         })
     }
+}
+
+/// Turn Google delivery on or off inside the caller's locked, version-checked transaction.
+/// Shared by the owner route and credentials holding conversions:send, so both follow the
+/// same pause and resume rules.
+pub(crate) async fn apply_delivery_enabled(
+    conn: &mut sqlx::PgConnection,
+    workspace: Uuid,
+    enabled: bool,
+    actor: &str,
+) -> Result<()> {
+    sqlx::query("INSERT INTO conversion_delivery_settings(workspace_id,enabled) VALUES($1,$2) ON CONFLICT(workspace_id) DO UPDATE SET enabled=$2,version=conversion_delivery_settings.version+1").bind(workspace).bind(enabled).execute(&mut *conn).await?;
+    if !enabled {
+        // Automatic sends stay queued and are held by claim_delivery until resumed.
+        sqlx::query("UPDATE conversion_deliveries d SET state='needs_review',review_required=true,diagnostic='Delivery paused. Validate and queue again to resume.',due_at=NULL WHERE workspace_id=$1 AND state IN ('queued','retry') AND NOT EXISTS(SELECT 1 FROM conversion_outbox q WHERE q.workspace_id=d.workspace_id AND q.id=d.outbox_id AND q.kind='pipeline')").bind(workspace).execute(&mut *conn).await?;
+    } else {
+        sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND plan_state='blocked'").bind(workspace).execute(&mut *conn).await?;
+    }
+    sqlx::query("INSERT INTO conversion_events(workspace_id,kind,actor,payload) VALUES($1,'delivery_enabled',$2,$3)").bind(workspace).bind(actor).bind(json!({"enabled":enabled})).execute(&mut *conn).await?;
+    Ok(())
 }

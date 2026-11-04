@@ -21,7 +21,11 @@ Phase 1 differs from this design in these points:
 - MCP goes further than listing: with `conversions:write` an agent can create, map and
   update actions, create a Google action for one, and record events. Owner-only switches
   (Google OAuth, advertising account, consent policy, delivery, automatic sending) are not
-  reachable by keys or MCP; a setup checklist names which are left.
+  reachable by keys or MCP; a setup checklist names which are left. A follow-up added
+  the owner-granted `conversions:send` scope, which reaches delivery, automatic sending
+  and the consent policy (attested in the owner's name) through
+  `PUT /api/v1/conversion-delivery` and `set_conversion_delivery`. Google OAuth and the
+  advertising account stay owner-only.
 - The Conversions page is pipeline-first; the reviewed qualified/booking flow is kept
   unchanged under "Advanced: manual review".
 

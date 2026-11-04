@@ -21,6 +21,11 @@ export function ApiKeys({ api, setup = false }: { api: Client; setup?: boolean }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
+  // Billable and sending permissions default to a 24-hour key.
+  function toggleHighRisk(scope: string, checked: boolean) {
+    setScopes(checked ? [...scopes, scope] : scopes.filter(s => s !== scope));
+    if (checked && !expires) setExpires(new Date(Date.now() + 86400000).toISOString().slice(0, 19));
+  }
   function create(e: FormEvent) { e.preventDefault(); void change("/api-keys", { name, scopes, expires_at: expires ? new Date(`${expires}Z`).toISOString() : null }); }
   return <div className="conversion-layout">
     {error && <p className="error" role="alert">{error}</p>}
@@ -34,8 +39,11 @@ export function ApiKeys({ api, setup = false }: { api: Client; setup?: boolean }
         <p>Read access is included. Optional write permissions:</p>
         {writeScopes.map(([scope, title]) => <label className="site-toggle" key={scope}><input type="checkbox" checked={scopes.includes(scope)} onChange={e => setScopes(e.target.checked ? [...scopes, scope] : scopes.filter(s => s !== scope))} />{title}</label>)}
         <p>Billable permission:</p>
-        <label className="site-toggle"><input type="checkbox" checked={scopes.includes("numbers:purchase")} onChange={e => { setScopes(e.target.checked ? [...scopes, "numbers:purchase"] : scopes.filter(s => s !== "numbers:purchase")); if (e.target.checked && !expires) setExpires(new Date(Date.now() + 86400000).toISOString().slice(0, 19)); }} />Search, buy, and release phone numbers (billable)</label>
+        <label className="site-toggle"><input type="checkbox" checked={scopes.includes("numbers:purchase")} onChange={e => toggleHighRisk("numbers:purchase", e.target.checked)} />Search, buy, and release phone numbers (billable)</label>
         {scopes.includes("numbers:purchase") && <p className="notice">Every number this key buys is billed monthly until it is released: by VisiConvert for managed numbers, or by your carrier for your own SignalWire project. Purchases are capped per workspace and by your spending limit. The expiration defaults to 24 hours; revoke the key as soon as the numbers are bought.</p>}
+        <p>Sending permission:</p>
+        <label className="site-toggle"><input type="checkbox" checked={scopes.includes("conversions:send")} onChange={e => toggleHighRisk("conversions:send", e.target.checked)} />Turn Google delivery and automatic sending on or off and set the consent policy</label>
+        {scopes.includes("conversions:send") && <p className="notice">This key can turn automatic Google sending on or off and attest the advertising consent policy on your behalf; attestations are recorded in your name. Conversions sent to Google cannot be retracted. The expiration defaults to 24 hours; revoke the key as soon as setup is finished.</p>}
         <div><button className="primary" disabled={busy || !!secret}>Create API key</button></div>
       </form>
     </section>

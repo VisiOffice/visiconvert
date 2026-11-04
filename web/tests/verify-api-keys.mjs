@@ -55,6 +55,22 @@ export async function verifyApiKeys({page,api,origin,artifactDir,root}) {
   const buyerCard=page.getByRole('article',{name:'API key Number buyer',exact:true});assert((await buyerCard.textContent()).includes('numbers:purchase'));
   await buyerCard.getByRole('button',{name:'Revoke key',exact:true}).click();await page.getByRole('button',{name:'Confirm revoke',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Key revoked.'}).waitFor();
+  // Sending permission: separate checkbox, notice, 24-hour default; only it reaches the switches.
+  await page.getByLabel('Key name',{exact:true}).fill('Conversion sender');
+  await page.getByLabel('Turn Google delivery and automatic sending on or off and set the consent policy',{exact:true}).check();
+  await page.getByText(/attest the advertising consent policy on your behalf.*cannot be retracted/).waitFor();
+  assert.notEqual(await page.getByLabel('Expires at (UTC, optional)',{exact:true}).inputValue(),'','Sending keys default to an expiration');
+  await page.getByRole('button',{name:'Create API key',exact:true}).click();
+  const sender=await page.getByLabel('New API key',{exact:true}).inputValue();
+  assert((await (await request(sender,'/workspace')).json()).scopes.includes('conversions:send'));
+  const put=(key,body)=>fetch(`${origin}/api/v1/conversion-delivery`,{method:'PUT',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  assert.equal((await request(sender,'/conversion-delivery')).status,200);
+  assert.equal((await put(writer,{version:0})).status,403,'Write scopes cannot change sending');
+  assert.equal((await put(sender,{version:0})).status,400,'An empty change is rejected without side effects');
+  await page.getByRole('button',{name:'I saved the key',exact:true}).click();
+  const senderCard=page.getByRole('article',{name:'API key Conversion sender',exact:true});assert((await senderCard.textContent()).includes('conversions:send'));
+  await senderCard.getByRole('button',{name:'Revoke key',exact:true}).click();await page.getByRole('button',{name:'Confirm revoke',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'Key revoked.'}).waitFor();
   await page.screenshot({path:path.join(artifactDir,'api-keys-desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'API keys must fit mobile');
   await page.screenshot({path:path.join(artifactDir,'api-keys-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1000});
