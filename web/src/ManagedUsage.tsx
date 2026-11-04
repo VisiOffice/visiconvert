@@ -10,7 +10,7 @@ type Period = {
 };
 type Usage = {
   enrolled: boolean; spending_blocked?: boolean; subscription_status?: string; payment_issues?: Payment[]; currency: string; monthly_limit_cents: number | null;
-  pricing: { number_month_cents: number; minute_cents: number; credit_cents: number } | null;
+  pricing: { number_month_cents: number; toll_free_number_month_cents?: number; minute_cents: number; credit_cents: number } | null;
   service?: { enforced: boolean; synced: boolean; grace_ends_at?: string; policy: { state?: string; reason?: string; release_at?: number; valid_until?: number } };
   periods: Period[];
 };
@@ -33,7 +33,7 @@ export function ManagedUsage({ workspaceId, request }: { workspaceId: string; re
   return <section className="managed-usage" aria-labelledby="managed-usage-title">
     <h2 id="managed-usage-title">Managed numbers and calls</h2>
     {error && <p role="alert" className="error">{error}</p>}
-    {usage?.pricing && <p>{dollars(usage.pricing.number_month_cents)} per number/month · {dollars(usage.pricing.minute_cents)} per minute. Includes {dollars(usage.pricing.credit_cents)} usage credit each paid billing period; unused credit does not carry forward.</p>}
+    {usage?.pricing && <p>{dollars(usage.pricing.number_month_cents)} per number/month{usage.pricing.toll_free_number_month_cents ? ` (${dollars(usage.pricing.toll_free_number_month_cents)} toll-free)` : ""} · {dollars(usage.pricing.minute_cents)} per minute. Includes {dollars(usage.pricing.credit_cents)} usage credit each paid billing period; unused credit does not carry forward.</p>}
     {usage?.monthly_limit_cents != null && <p>Configured usage budget: {dollars(usage.monthly_limit_cents)} before credit. Reservations below are pending spending, not charges.</p>}
     {usage?.subscription_status === "canceled" && <p role="status">Subscription ended. New managed-number purchases are blocked. Outstanding usage and number rental during the hold still need to be settled.</p>}
     {usage?.service?.enforced && <div role="status">

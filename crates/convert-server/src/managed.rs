@@ -39,7 +39,12 @@ fn hold_days() -> i32 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Search {
-    area_code: String,
+    /// Local: the three-digit area code. Toll-free: an optional prefix such as 888.
+    #[serde(default)]
+    area_code: Option<String>,
+    /// "local" (default) or "toll_free".
+    #[serde(default)]
+    kind: Option<String>,
     #[serde(default)]
     limit: Option<u8>,
 }
@@ -49,24 +54,50 @@ async fn search(
     Json(input): Json<Search>,
 ) -> Api<Value> {
     connections::authorize(&access).await?;
-    if input.area_code.len() != 3 || !input.area_code.bytes().all(|b| b.is_ascii_digit()) {
+    let toll_free = match input.kind.as_deref() {
+        None | Some("local") => false,
+        Some("toll_free") => true,
+        Some(_) => {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "kind must be local or toll_free".into(),
+            ));
+        }
+    };
+    let code = input.area_code.as_deref();
+    if toll_free {
+        if code.is_some_and(|c| !convert_domain::TOLL_FREE_PREFIXES.contains(&c)) {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "Use a toll-free prefix: 800, 833, 844, 855, 866, 877 or 888".into(),
+            ));
+        }
+    } else if !code.is_some_and(|c| c.len() == 3 && c.bytes().all(|b| b.is_ascii_digit()))
+        || code.is_some_and(|c| convert_domain::TOLL_FREE_PREFIXES.contains(&c))
+    {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
-            "Enter a three-digit US area code".into(),
+            "Enter a three-digit US area code, or search with kind toll_free".into(),
         ));
     }
     let (c, token) = signalwire::credentials(&a, &access.store).await?;
-    let numbers = a
-        .signalwire_client
-        .search_local(
-            &c.space_host,
-            &c.project_id.to_string(),
-            &token,
-            &input.area_code,
-            input.limit.unwrap_or(10),
-        )
-        .await?;
-    Ok(Json(json!({"numbers": numbers})))
+    let (space, project, limit) = (
+        &c.space_host,
+        c.project_id.to_string(),
+        input.limit.unwrap_or(10),
+    );
+    let numbers = if toll_free {
+        a.signalwire_client
+            .search_toll_free(space, &project, &token, code, limit)
+            .await?
+    } else {
+        a.signalwire_client
+            .search_local(space, &project, &token, code.unwrap_or_default(), limit)
+            .await?
+    };
+    Ok(Json(
+        json!({"kind": if toll_free {"toll_free"} else {"local"}, "numbers": numbers}),
+    ))
 }
 
 #[derive(Deserialize)]
