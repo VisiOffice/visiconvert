@@ -1218,3 +1218,126 @@ async fn conversions_send_key_follows_owner_rules() {
     server.abort();
     w.task.abort();
 }
+
+/// conversions:write runs the owner's "Check saved connection" through the same code:
+/// identical report, the same recorded check, and the checklist step goes to the agent.
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn conversions_write_runs_the_owner_destination_check() {
+    let w = world("per_lead", false).await;
+    let a = &w.a;
+    sqlx::query("UPDATE google_connections SET validation=NULL,validated_settings_version=NULL,checked_at=NULL WHERE workspace_id=$1")
+        .bind(a.store.workspace).execute(&a.store.pool).await.unwrap();
+    let (_, setup) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        &w.key,
+        Value::Null,
+    )
+    .await;
+    let step = setup["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| {
+            s["step"]
+                .as_str()
+                .unwrap()
+                .contains("check_google_destination")
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("{setup}"));
+    assert_eq!(step["actor"], "agent");
+    let body = json!({"revision":setup["connection_revision"],"settings_version":setup["settings_version"],"login":"1234567890"});
+    let read = a
+        .store
+        .issue_api_key(
+            &convert_store::api_keys::KeyInput {
+                name: "Read".into(),
+                scopes: vec!["read".into()],
+                expires_at: None,
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap()["secret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let path = "/api/v1/conversion-setup/check";
+    let (status, v) = api(a.clone(), "POST", path, &read, body.clone()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(v["error"].as_str().unwrap().contains("conversions:write"));
+    let (status, by_key) = api(a.clone(), "POST", path, &w.key, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{by_key}");
+    assert_eq!(by_key["valid"], true, "{by_key}");
+    assert_eq!(by_key["pipeline_actions_valid"], true);
+    let actor: String = sqlx::query_scalar("SELECT actor FROM conversion_events WHERE workspace_id=$1 AND kind='google_destination_checked' ORDER BY id DESC LIMIT 1")
+        .bind(a.store.workspace).fetch_one(&a.store.pool).await.unwrap();
+    assert!(actor.starts_with("API key "), "{actor}");
+    let (_, after) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        &w.key,
+        Value::Null,
+    )
+    .await;
+    assert!(after["checked_at"].is_string());
+    assert!(
+        !after["next_steps"]
+            .to_string()
+            .contains("check_google_destination"),
+        "{after}"
+    );
+    // The owner route returns the same report for the same inputs.
+    let (status, by_owner) = api(
+        a.clone(),
+        "POST",
+        "/api/connections/google/validate",
+        &a.api_key,
+        body.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{by_owner}");
+    assert_eq!(by_key, by_owner);
+    // Stale inputs conflict exactly as on the owner route.
+    let mut stale = body.clone();
+    stale["settings_version"] = json!(99);
+    assert_eq!(
+        api(a.clone(), "POST", path, &w.key, stale.clone()).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        api(
+            a.clone(),
+            "POST",
+            "/api/connections/google/validate",
+            &a.api_key,
+            stale
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    // MCP tool over the same key.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let app = router(a.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for (scopes, error) in [
+        (vec!["read"], true),
+        (vec!["read", "conversions:write"], false),
+    ] {
+        let mcp = convert_cli::mcp::Server::scoped(
+            Ok(convert_cli::client::Client::new(&origin, &w.key).unwrap()),
+            scopes.into_iter().map(String::from).collect(),
+        );
+        let r = mcp.handle(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_google_destination","arguments":body}})).await.unwrap()["result"].clone();
+        assert_eq!(r["isError"], error, "{r}");
+    }
+    server.abort();
+    w.task.abort();
+}

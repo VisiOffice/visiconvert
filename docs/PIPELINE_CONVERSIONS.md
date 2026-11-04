@@ -49,8 +49,9 @@ The **Conversions** page reads top to bottom in this order:
 
    Key, trigger and counting cannot change once an action exists, because that would
    change what counts and could count a conversion twice. Disable an action instead.
-   After mapping, click **Check saved connection** in step 1. VisiConvert then repeats
-   the read-only check itself whenever it is more than 24 hours old.
+   After mapping, click **Check saved connection** in step 1 (an agent can run the same
+   check with `conversions:write`). VisiConvert then repeats the read-only check itself
+   whenever it is more than 24 hours old.
 3. **Advertising consent.** Choose a consent policy:
    - **Send only leads with recorded advertising consent** (default): the same rule as
      reviewed conversions.
@@ -246,6 +247,12 @@ events, `conversions:send` to change the switches):
   (`agent`, `owner_approval`, `owner` or `administrator`) and the `step`; `ready` is true
   when nothing is left. `owner_approval` steps can be done with `conversions:send` once
   the owner agrees.
+- `POST /api/v1/conversion-setup/check` (`conversions:write`) `{revision, settings_version, login}`:
+  the owner's **Check saved connection**, a read-only Google check of the saved account
+  and mapped actions. It returns and records the same report as the owner route. Take
+  `revision` from the checklist's `connection_revision`, `settings_version` from the
+  checklist, and `login` from `/connections/google/accounts`. A replaced connection or
+  changed destination returns 409.
 - `GET /api/v1/conversion-delivery` (`read`): `enabled`, `auto_send`, `auto_send_at`,
   `consent_policy`, `attested_by`, `attested_at`, `version` and the `setup` checklist.
 - `PUT /api/v1/conversion-delivery` (`conversions:send`)
@@ -271,8 +278,9 @@ The MCP server (local `visiconvert mcp` and hosted remote MCP) exposes the same 
 `get_conversion_setup`, `list_google_accounts`, `list_google_conversion_actions`,
 `list_conversion_actions`, `create_conversion_action`, `update_conversion_action`,
 `create_google_conversion_action`, `record_conversion_event` and `list_conversion_events`,
-plus `get_conversion_delivery` and `set_conversion_delivery`. The four that change actions
-and events require `conversions:write`; `set_conversion_delivery` requires
+plus `check_google_destination`, `get_conversion_delivery` and `set_conversion_delivery`.
+The four that change actions and events, and `check_google_destination`, require
+`conversions:write`; `set_conversion_delivery` requires
 `conversions:send`, and its description tells the agent to get the owner's explicit
 confirmation in chat first and to state the attestation. `get_status` includes the
 conversion checklist in its next steps.

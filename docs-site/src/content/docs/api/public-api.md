@@ -191,8 +191,9 @@ sending are on. Reads (`GET /api/v1/conversion-setup`, `/conversion-delivery`,
 Keys with `conversions:send` can switch delivery and automatic sending and set the
 consent policy with `PUT /api/v1/conversion-delivery`; setting
 `not_required_outside_eea` needs `attest_no_eea_advertising: true`, recorded for the
-owner who created the key. `conversion-setup` says which steps are left; no key can
-connect Google or choose the advertising account. See [pipeline conversions](/guides/pipeline-conversions/).
+owner who created the key. `conversions:write` can also run the read-only destination check
+(`POST /api/v1/conversion-setup/check`). `conversion-setup` says which steps are left; no
+key can connect Google or choose the advertising account. See [pipeline conversions](/guides/pipeline-conversions/).
 
 ## Webhooks
 

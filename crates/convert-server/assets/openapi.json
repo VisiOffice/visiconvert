@@ -1499,7 +1499,38 @@
       },
       "ConversionSetup": {
         "type": "object",
-        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google, choose the account, first destination check) cannot be done with a key.",
+        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google, choose the account) cannot be done with a key. The checklist includes connection_revision and settings_version for POST /conversion-setup/check.",
+        "additionalProperties": true
+      },
+      "DestinationCheckInput": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "connection_revision from GET /conversion-setup"
+          },
+          "settings_version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "settings_version from GET /conversion-setup"
+          },
+          "login": {
+            "type": "string",
+            "pattern": "^[0-9]{10}$",
+            "description": "Google Ads access account from GET /connections/google/accounts"
+          }
+        },
+        "required": [
+          "revision",
+          "settings_version",
+          "login"
+        ],
+        "additionalProperties": false
+      },
+      "DestinationCheck": {
+        "type": "object",
+        "description": "The same report the owner route returns: valid, pipeline_actions_valid, login_customer_id, account, actions, settings_version, uploads_enabled and message.",
         "additionalProperties": true
       },
       "ConversionDelivery": {
@@ -8503,6 +8534,148 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversion-setup/check": {
+      "post": {
+        "summary": "Run the read-only Google destination check (the owner's Check saved connection) for the saved account and mapped actions, and record it. Uploads nothing; a replaced connection or changed destination returns 409",
+        "operationId": "post_conversion_setup_check",
+        "description": "Requires `conversions:write` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestinationCheck"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationCheckInput"
               }
             }
           }

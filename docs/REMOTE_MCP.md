@@ -67,7 +67,8 @@ Each connection is restricted to one workspace and expires after 90 days.
   absent from the tool surface. With `conversions:write`, an agent can list Google
   accounts and conversion actions, create, map and update pipeline actions, create a
   VisiConvert action in Google for one (mapping an existing action is the documented
-  default), and record events; reads need only `read`. With the separate
+  default), record events, and run the read-only destination check
+  (`check_google_destination`); reads need only `read`. With the separate
   `conversions:send`, `set_conversion_delivery` turns Google delivery and automatic
   sending on or off and sets the consent policy; its description tells the agent to get
   the owner's explicit confirmation in chat and to state the attestation. Attestations

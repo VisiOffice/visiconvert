@@ -18,6 +18,11 @@
 - API Keys has a separate **Sending permission** checkbox with a notice; expiry defaults
   to 24 hours. The MCP approval page lists it apart, unchecked, with the same warning.
   Hosted remote MCP needs Rails to offer `conversions:write` and `conversions:send`.
+- `conversions:write` can run the owner's read-only **Check saved connection**:
+  `POST /api/v1/conversion-setup/check` `{revision, settings_version, login}` and MCP tool
+  `check_google_destination`. Both use the owner route's code and record the same report.
+  The checklist now includes `connection_revision`, and its first-check step is an
+  `agent` step.
 - Connecting Google and choosing the advertising account still need the owner.
 
 ## Unreleased — automatic pipeline conversions (Google)

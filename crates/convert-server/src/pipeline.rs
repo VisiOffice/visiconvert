@@ -5,7 +5,8 @@
 //! Keys and MCP with conversions:write may define and map actions and post events. Turning
 //! Google delivery or automatic sending on or off and attesting the consent policy need the
 //! separate conversions:send scope, which only an owner can grant; those changes go through
-//! the same store helpers as the owner routes. Starting a Google connection and choosing the
+//! the same store helpers as the owner routes. conversions:write may also run the read-only
+//! destination check. Starting a Google connection and choosing the
 //! advertising account stay in the private, owner-checked API (OAuth needs the owner).
 use super::*;
 use axum::extract::Query;
@@ -33,6 +34,7 @@ pub fn public_routes() -> Router<Shared> {
 fn shared_routes() -> Router<Shared> {
     Router::new()
         .route("/conversion-setup", get(setup))
+        .route("/conversion-setup/check", post(check_destination))
         .route(
             "/conversion-delivery",
             get(delivery_state).put(set_delivery),
@@ -109,6 +111,20 @@ async fn set_delivery(
         .set_conversion_delivery(&input, &actor, &attester)
         .await?;
     Ok(Json(delivery_value(&a, &access.store).await?))
+}
+/// conversions:write. The owner's "Check saved connection": a read-only Google check of
+/// the saved account and mapped actions, recorded exactly as the owner route records it.
+async fn check_destination(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+    key: Option<Extension<KeyAccess>>,
+    Json(input): Json<google::Validation>,
+) -> Api<Value> {
+    conversions::owner(&access).await?;
+    let actor = actor(&access, &key).await?;
+    Ok(Json(
+        google::check_destination(&a, &access, &input, &actor).await?,
+    ))
 }
 async fn overview(
     State(a): State<Shared>,
@@ -199,10 +215,11 @@ async fn setup(
 /// Checklist for the pipeline flow. `next_steps` names who acts: `agent` steps any key or
 /// connection with conversions:write can take; `owner_approval` switches need the owner,
 /// either in Conversions or through a conversions:send credential after the owner confirms;
-/// `owner` steps (Google OAuth, account choice, first check) need the owner in Conversions.
+/// `owner` steps (Google OAuth, account choice) need the owner in Conversions.
 pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiError> {
     let mut f = store.pipeline_setup().await?;
-    let connected = google::connected(a, &store.google_connection().await?);
+    let connection = store.google_connection().await?;
+    let connected = google::connected(a, &connection);
     let n = |k: &str| f[k].as_i64().unwrap_or(0);
     let on = |k: &str| f[k] == true;
     let mut steps: Vec<(&str, String)> = Vec::new();
@@ -227,7 +244,7 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
     }
     if connected && f["customer_id"].is_string() && n("mapped_actions") > 0 {
         if f["checked_at"].is_null() {
-            steps.push(("owner", "Owner must run Check saved connection once in Conversions; VisiConvert repeats the check automatically after that.".into()));
+            steps.push(("agent", "Run the destination check once (check_google_destination, or POST /api/v1/conversion-setup/check) with revision set to connection_revision and settings_version from this checklist, and login set to the access account from list_google_accounts; VisiConvert repeats it automatically after that.".into()));
         } else if !on("pipeline_actions_valid") && on("check_current") {
             steps.push((
                 "owner",
@@ -255,6 +272,7 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
     }
     let ready = steps.is_empty();
     f["google_connected"] = json!(connected);
+    f["connection_revision"] = json!(connection.revision);
     f["ready"] = json!(ready);
     f["next_steps"] = json!(
         steps
