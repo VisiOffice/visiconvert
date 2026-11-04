@@ -828,6 +828,8 @@ async fn managed_numbers_purchase_hold_and_release() {
         number_ids: vec![],
         dedicated_numbers: false,
         version: 0,
+        pool_id: None,
+        new_pool: false,
     };
     workspace_store.save_dni_pool(site, &pool).await.unwrap();
     assert!(workspace_store.request_release(active.id).await.is_err());

@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Client } from "./api";
-type Pool = { fallback_phone: string; destination_phone: string; enabled: boolean; version: number; fallback_count: number };
-type NumberRow = { id: string; label: string; phone_number: string; destination: string; site_id: string | null; enabled: boolean; used_as_fallback: boolean; reserved: boolean };
-type Assignment = { id: string; phone_number: string; source: string; campaign: string; assigned_at: string; expires_at: string; reusable_at: string; revoked_at: string | null };
-type Data = { pool: Pool | null; numbers: NumberRow[]; history: Assignment[] };
+type Pool = { id: string; fallback_phone: string; destination_phone: string; enabled: boolean; version: number; fallback_count: number; number_ids: string[] };
+type NumberRow = { id: string; label: string; phone_number: string; destination: string; site_id: string | null; pool_id: string | null; enabled: boolean; used_as_fallback: boolean; reserved: boolean };
+type Assignment = { id: string; pool_id: string; fallback_phone: string; phone_number: string; source: string; campaign: string; assigned_at: string; expires_at: string; reusable_at: string; revoked_at: string | null };
+type Data = { pool: Pool | null; pools: Pool[]; numbers: NumberRow[]; history: Assignment[] };
+const NEW = "new";
 export function NumberPool({ api, siteId }: { api: Client; siteId: string }) {
   const [data, setData] = useState<Data | null>(null);
   const [fallback, setFallback] = useState("");
@@ -14,17 +15,28 @@ export function NumberPool({ api, siteId }: { api: Client; siteId: string }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  function accept(v: Data) { setData(v); setFallback(v.pool?.fallback_phone || ""); setDestination(v.pool?.destination_phone || v.pool?.fallback_phone || ""); setEnabled(v.pool?.enabled || false); setIds(v.numbers.filter(n => n.site_id === siteId && n.enabled).map(n => n.id)); setDedicated(false); }
+  // Each pool replaces one published website number. `selected` is a pool id or NEW.
+  const [selected, setSelected] = useState(NEW);
+  // A reload that finishes after the owner picks another pool must keep that choice.
+  const choice = useRef<string | null>(null);
+  function show(v: Data, id: string) {
+    const pool = v.pools.find(p => p.id === id) || null;
+    choice.current = pool ? pool.id : NEW; setSelected(choice.current); setFallback(pool?.fallback_phone || ""); setDestination(pool?.destination_phone || pool?.fallback_phone || ""); setEnabled(pool?.enabled || false); setIds(pool?.number_ids || []); setDedicated(false);
+  }
+  function accept(v: Data, id?: string) { const keep = choice.current; setData(v); show(v, id ?? (keep === NEW ? NEW : keep && v.pools.some(p => p.id === keep) ? keep : v.pools[0]?.id || NEW)); }
+  const current = data?.pools.find(p => p.id === selected) || null;
   useEffect(() => { let active = true; api<Data>(`/sites/${siteId}/number-pool`).then(v => { if (active) accept(v); }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [api, siteId]); // component is keyed by site
   async function reload() { setError(""); try { accept(await api<Data>(`/sites/${siteId}/number-pool`)); } catch (e) { setError((e as Error).message); } }
   async function save(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(""); setNotice("");
-    try { await api(`/sites/${siteId}/number-pool`, { fallback_phone: fallback, destination_phone: destination, enabled, version: data?.pool?.version || 0, number_ids: ids, dedicated_numbers: dedicated }, "PUT"); accept(await api<Data>(`/sites/${siteId}/number-pool`)); setNotice("Number pool saved."); }
+    try { const saved = await api<{ pool_id: string }>(`/sites/${siteId}/number-pool`, { fallback_phone: fallback, destination_phone: destination, enabled, version: current?.version || 0, number_ids: ids, dedicated_numbers: dedicated, ...(current ? { pool_id: current.id } : { new_pool: true }) }, "PUT"); accept(await api<Data>(`/sites/${siteId}/number-pool`), saved.pool_id); setNotice("Number pool saved."); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return <section aria-label="Dynamic number insertion">
     <h3>Dynamic number insertion</h3>
     <p className="muted">Give each consenting visit a tracking number. Calls use the visit’s entry source as a timing-based inference. Choose the website number to replace, where calls should ring, and a dedicated pool. Register owned Twilio or SignalWire numbers under Tracking numbers first.</p>
+    <p className="muted">A site can have several pools, one for each published number it shows. For example, LA pages showing your LA line swap from an LA pool, and pages showing your toll-free number swap from a toll-free pool.</p>
+    {data && <label>Pool<select aria-label="Pool" value={selected} disabled={busy} onChange={e => { setError(""); setNotice(""); show(data, e.target.value); }}>{data.pools.map(p => <option key={p.id} value={p.id}>Replaces {p.fallback_phone}{p.enabled ? "" : " (off)"}</option>)}<option value={NEW}>Add a pool for another website number</option></select></label>}
     {error && <p className="error" role="alert">{error} Refresh the pool before retrying a conflicting edit.</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {data && <form className="site-form" onSubmit={save}>
@@ -38,19 +50,19 @@ export function NumberPool({ api, siteId }: { api: Client; siteId: string }) {
       </fieldset>
       <fieldset className="site-fields pool-step"><legend>3. Dedicated tracking numbers</legend>
         {!data.numbers.length && <p>No real registered numbers yet.</p>}
-        {data.numbers.map(n => <label key={n.id}><input type="checkbox" checked={ids.includes(n.id)} disabled={busy || !!n.site_id && n.site_id !== siteId || n.destination !== destination || n.phone_number === fallback || n.used_as_fallback} onChange={e => setIds(e.target.checked ? [...ids, n.id] : ids.filter(id => id !== n.id))} />{n.phone_number} · {n.label} · {(n.phone_number === fallback || n.used_as_fallback) ? "Website fallback — keep outside pools" : n.site_id && n.site_id !== siteId ? "Dedicated to another site" : n.destination !== destination ? `Forwards to ${n.destination}` : n.reserved ? "Reserved / cooling down" : "Available"}</label>)}
+        {data.numbers.map(n => { const elsewhere = n.enabled && !!n.pool_id && n.pool_id !== current?.id; return <label key={n.id}><input type="checkbox" checked={ids.includes(n.id)} disabled={busy || !!n.site_id && n.site_id !== siteId || elsewhere || n.destination !== destination || n.phone_number === fallback || n.used_as_fallback} onChange={e => setIds(e.target.checked ? [...ids, n.id] : ids.filter(id => id !== n.id))} />{n.phone_number} · {n.label} · {(n.phone_number === fallback || n.used_as_fallback) ? "Website fallback — keep outside pools" : n.site_id && n.site_id !== siteId ? "Dedicated to another site" : elsewhere ? `In the pool for ${data.pools.find(p => p.id === n.pool_id)?.fallback_phone || "another number"}` : n.destination !== destination ? `Forwards to ${n.destination}` : n.reserved ? "Reserved / cooling down" : "Available"}</label>; })}
       </fieldset>
       <div className="pool-review"><h4>4. Review and test</h4><p>Replace <strong>{fallback || "your published number"}</strong> with a visitor number from <strong>{ids.length} selected number{ids.length === 1 ? "" : "s"}</strong>. Calls to pool numbers forward to <strong>{destination || "your business line"}</strong>.</p></div>
       <label className="site-toggle"><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />Enable number swapping</label>
       <label className="site-toggle"><input type="checkbox" checked={dedicated} onChange={e => setDedicated(e.target.checked)} />These numbers are used only for this website’s pool.</label>
       <p className="small muted">Keep Google Business Profile, printed ads, and other static campaign numbers outside this pool.</p>
-      <p className="small muted">Assignments last up to 30 minutes, then numbers wait 30 more minutes before reuse. Removing a number or pausing keeps that reservation. Numbers remain dedicated to this site, including after removal.</p>
+      <p className="small muted">Assignments last up to 30 minutes, then numbers wait 30 more minutes before reuse. Removing a number or pausing keeps that reservation. Numbers remain dedicated to this site, including after removal. Remove a number from its pool before adding it to another pool on this site.</p>
       <div className="site-actions"><button className="primary" disabled={busy || enabled && (!dedicated || !ids.length)}>Save number pool</button><button type="button" className="secondary" disabled={busy} onClick={() => void reload()}>Refresh pool</button></div>
     </form>}
     <h4>Install phone swapping</h4><p className="muted">Add <code>data-dni="true"</code> to the tracker script above. Mark phone-only links or spans with <code>data-visiconvert-phone</code>. The original text and phone link must match the published website number, not the forwarding destination. Keep icons and other words outside the marked element.</p>
     <textarea className="site-code" aria-label="Phone marker example" readOnly rows={2} value={`<a data-visiconvert-phone href="tel:${fallback || "+12025550106"}">${fallback || "+12025550106"}</a>`} />
     <p className="small muted">No consent, unavailable pool, or network failure leaves the published website number visible. Configure voice and status callbacks on each pool number in Twilio or SignalWire. Then verify the visible number swaps, call it, confirm the destination rings, and inspect Call source evidence in the inbox. Pausing is checked by visible pages every minute. Saved numbers and delayed callbacks can belong to an earlier visitor.</p>
-    {data && <><p>Pool exhaustion responses: {data.pool?.fallback_count || 0}</p><details><summary>Recent number assignments ({data.history.length})</summary><ol className="inquiry-history">{data.history.map(a => <li key={a.id}><strong>{a.phone_number} · {a.source}</strong><small>{new Date(a.assigned_at).toLocaleString()} — {new Date(a.expires_at).toLocaleString()}</small><small>Reusable after {new Date(a.reusable_at).toLocaleString()}{a.revoked_at ? " · Revoked" : ""}</small>{a.campaign && <p>{a.campaign}</p>}</li>)}</ol></details></>}
+    {data && <><p>Pool exhaustion responses: {current?.fallback_count || 0}</p><details><summary>Recent number assignments ({data.history.length})</summary><ol className="inquiry-history">{data.history.map(a => <li key={a.id}><strong>{a.phone_number} · {a.source}</strong>{data.pools.length > 1 && <small>Replaced {a.fallback_phone}</small>}<small>{new Date(a.assigned_at).toLocaleString()} — {new Date(a.expires_at).toLocaleString()}</small><small>Reusable after {new Date(a.reusable_at).toLocaleString()}{a.revoked_at ? " · Revoked" : ""}</small>{a.campaign && <p>{a.campaign}</p>}</li>)}</ol></details></>}
   </section>;
 }
 export function DniEvidence({ api, leadId }: { api: Client; leadId: string }) {

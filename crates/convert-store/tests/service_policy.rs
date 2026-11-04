@@ -104,6 +104,8 @@ async fn managed_policy_ordering_isolation_expiry_dni_and_release_recovery() {
                 version: 0,
                 number_ids: vec![number],
                 dedicated_numbers: true,
+                pool_id: None,
+                new_pool: false,
             },
         )
         .await
@@ -120,7 +122,7 @@ async fn managed_policy_ordering_isolation_expiry_dni_and_release_recovery() {
         .unwrap();
     assert_eq!(
         store
-            .allocate_dni(site, "https://policy.example", session)
+            .allocate_dni(site, "https://policy.example", session, None)
             .await
             .unwrap()["phone_number"],
         input.phone_number
@@ -131,7 +133,7 @@ async fn managed_policy_ordering_isolation_expiry_dni_and_release_recovery() {
     policy.release_at = Some(Utc::now().timestamp() - 1);
     store.apply_service_policy(&policy).await.unwrap();
     let disabled = store
-        .allocate_dni(site, "https://policy.example", session)
+        .allocate_dni(site, "https://policy.example", session, None)
         .await
         .unwrap();
     assert_eq!(disabled["status"], "disabled");

@@ -100,11 +100,18 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
         .execute(&pool)
         .await
         .unwrap();
-    let migrated_pool = store.dni_pool(site).await.unwrap();
-    assert_eq!(migrated_pool["pool"]["fallback_phone"], "+12025550412");
-    assert_eq!(migrated_pool["pool"]["destination_phone"], "+12025550412");
-    assert_eq!(migrated_pool["pool"]["version"], 7);
-    assert_eq!(migrated_pool["pool"]["enabled"], false);
+    // Read the table directly: the store's queries target the latest schema.
+    let pool_row = |site: Uuid| {
+        sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT to_jsonb(p) FROM dni_pools p WHERE site_id=$1",
+        )
+        .bind(site)
+    };
+    let migrated_pool = pool_row(site).fetch_one(&pool).await.unwrap();
+    assert_eq!(migrated_pool["fallback_phone"], "+12025550412");
+    assert_eq!(migrated_pool["destination_phone"], "+12025550412");
+    assert_eq!(migrated_pool["version"], 7);
+    assert_eq!(migrated_pool["enabled"], false);
     // A restored older image can still insert a pool without the new column.
     let legacy_site = store
         .save_site(
@@ -121,7 +128,7 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
         .unwrap();
     sqlx::query("INSERT INTO dni_pools(site_id,workspace_id,fallback_phone,enabled) VALUES($1,$2,'+12025550414',false)").bind(legacy_site).bind(workspace).execute(&pool).await.unwrap();
     assert_eq!(
-        store.dni_pool(legacy_site).await.unwrap()["pool"]["destination_phone"],
+        pool_row(legacy_site).fetch_one(&pool).await.unwrap()["destination_phone"],
         "+12025550414"
     );
     // Existing numbers stay live and unpurchased; the phone number is still unique while live.
@@ -245,6 +252,25 @@ async fn migration_preserves_existing_reviews_ids_and_booking_values() {
                 .contains("Original event time")
         );
     }
+    // Several pools per site: existing pools keep their settings and gain an id.
+    for migration in [
+        include_str!("../migrations/0018_managed_service_policy.sql"),
+        include_str!("../migrations/0019_carrier_adoption.sql"),
+        include_str!("../migrations/0020_google_delivery.sql"),
+        include_str!("../migrations/0021_google_action_setup.sql"),
+        include_str!("../migrations/0022_webhooks.sql"),
+        include_str!("../migrations/0023_pipeline_conversions.sql"),
+        include_str!("../migrations/0024_conversions_send_scope.sql"),
+        include_str!("../migrations/0025_google_conversion_review.sql"),
+        include_str!("../migrations/0026_multi_pool_dni.sql"),
+    ] {
+        sqlx::raw_sql(migration).execute(&pool).await.unwrap();
+    }
+    let upgraded = store.dni_pool(site).await.unwrap();
+    assert_eq!(upgraded["pools"].as_array().unwrap().len(), 1);
+    assert_eq!(upgraded["pool"]["version"], 7);
+    assert_eq!(upgraded["pool"]["fallback_phone"], "+12025550412");
+    assert!(upgraded["pool"]["id"].is_string());
     pool.close().await;
     admin
         .execute("DROP SCHEMA inquiry_upgrade_fixture CASCADE")

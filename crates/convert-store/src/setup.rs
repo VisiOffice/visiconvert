@@ -5,11 +5,13 @@ impl Store {
     pub async fn setup_status(&self) -> Result<Value> {
         let sites: Vec<Value> = sqlx::query_scalar(
             "SELECT to_jsonb(s)-'workspace_id'-'created_at' || jsonb_build_object(
-              'pool_enabled',COALESCE(p.enabled,false), 'pool_configured',p.site_id IS NOT NULL,
+              'pool_enabled',EXISTS(SELECT 1 FROM dni_pools p WHERE p.workspace_id=s.workspace_id AND p.site_id=s.id AND p.enabled),
+              'pool_configured',EXISTS(SELECT 1 FROM dni_pools p WHERE p.workspace_id=s.workspace_id AND p.site_id=s.id),
+              'pool_count',(SELECT count(*) FROM dni_pools p WHERE p.workspace_id=s.workspace_id AND p.site_id=s.id),
               'pool_number_count',(SELECT count(*) FROM dni_pool_numbers n WHERE n.workspace_id=s.workspace_id AND n.site_id=s.id AND n.enabled),
               'assignment_count',(SELECT count(*) FROM dni_assignments a WHERE a.workspace_id=s.workspace_id AND a.site_id=s.id),
               'last_assignment_at',(SELECT max(a.assigned_at) FROM dni_assignments a WHERE a.workspace_id=s.workspace_id AND a.site_id=s.id))
-             FROM sites s LEFT JOIN dni_pools p ON p.workspace_id=s.workspace_id AND p.site_id=s.id
+             FROM sites s
              WHERE s.workspace_id=$1 ORDER BY s.created_at,s.id")
             .bind(self.workspace).fetch_all(&self.pool).await?;
         let numbers: Vec<Value> = sqlx::query_scalar(

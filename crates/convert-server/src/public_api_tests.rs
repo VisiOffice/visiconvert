@@ -940,7 +940,7 @@ async fn setup_scope_sites_pool_versions_evidence_and_tenant_isolation() {
         StatusCode::OK
     );
     store
-        .allocate_dni(id, "https://setup.example", session)
+        .allocate_dni(id, "https://setup.example", session, None)
         .await
         .unwrap();
     store

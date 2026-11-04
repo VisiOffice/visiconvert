@@ -61,13 +61,16 @@
   // Only explicit, phone-only markers are changed. Original markup stays intact.
   const dniEnabled = script.dataset.dni === "true";
   const originals = new Map();
-  let lease = null, refreshTimer = null, expiryTimer = null, numberJob = null;
+  // One lease per published number on the page, keyed by the number it replaces.
+  let leases = new Map(), requested = "", refreshTimer = null, expiryTimer = null, numberJob = null;
   let numberGeneration = 0;
   // A swapped number keeps the page's formatting: "(602) 428-7203" becomes "(602) 555-0105".
   const styled = (original, number) => { const digits = (String(original).match(/[0-9]/g) || []).length === 11 ? `1${number.slice(2)}` : number.slice(2); let i = 0; return String(original).replace(/[0-9]/g, () => digits[i++]); };
   const phone = value => { if (!/^\s*\+?[0-9\s().-]+\s*$/.test(String(value || ""))) return ""; const digits = String(value || "").replace(/[^0-9]/g, ""); return digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits[0] === "1" ? `+${digits}` : ""; };
+  // Published numbers in phone-only markers. Each can be replaced by its own pool.
+  const targets = () => { const found = new Set(); for (const node of document.querySelectorAll("[data-visiconvert-phone]")) { if (node.children.length) continue; const value = phone(originals.has(node) ? originals.get(node).text : node.textContent); if (value) found.add(value); if (found.size >= 10) break; } return [...found].sort(); };
   function restoreNumbers() {
-    lease = null;
+    leases = new Map();
     clearTimeout(expiryTimer);
     for (const [node, original] of originals) {
       if (original.aria !== null && node.getAttribute("aria-label") === original.ariaReplacement) node.setAttribute("aria-label", original.aria);
@@ -84,9 +87,11 @@
     clearTimeout(refreshTimer); restoreNumbers();
   }
   function applyNumbers() {
-    if (!lease || !consent || Date.now() >= lease.until) { if (dniEnabled) restoreNumbers(); return; }
+    if (!leases.size || !consent || [...leases.values()].some(lease => Date.now() >= lease.until)) { if (dniEnabled) restoreNumbers(); return; }
     for (const node of document.querySelectorAll("[data-visiconvert-phone]")) {
-      if (originals.has(node) || node.children.length || phone(node.textContent) !== lease.fallback_phone) continue;
+      if (originals.has(node) || node.children.length) continue;
+      const lease = leases.get(phone(node.textContent));
+      if (!lease) continue;
       const href = node.getAttribute("href");
       if (href !== null && (!href.startsWith("tel:") || phone(href.slice(4)) !== lease.fallback_phone)) continue;
       const replacement = styled(node.textContent, lease.phone_number);
@@ -109,17 +114,21 @@
       let timeout;
       try {
         const result = await Promise.race([
-          (async () => { const id = await session(epoch); return request("/numbers", { session_id: id, consent: "granted" }, epoch); })(),
+          (async () => { const id = await session(epoch); requested = targets().join(","); return request("/numbers", { session_id: id, consent: "granted", targets: requested ? requested.split(",") : [] }, epoch); })(),
           new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Number request timed out")), 8000); }),
         ]);
         requireConsent(epoch);
         if (attempt !== numberGeneration) return { status: "off" };
         restoreNumbers();
-        const until = Date.parse(result.expires_at);
-        if (result.status === "assigned" && /^\+1[0-9]{10}$/.test(result.phone_number) && /^\+1[0-9]{10}$/.test(result.fallback_phone) && until > Date.now() && until <= Date.now() + 31 * 60 * 1000) {
-          lease = { ...result, until };
+        const next = new Map();
+        for (const item of Array.isArray(result.assignments) ? result.assignments : []) {
+          const until = Date.parse(item.expires_at);
+          if (item.status === "assigned" && /^\+1[0-9]{10}$/.test(item.phone_number) && /^\+1[0-9]{10}$/.test(item.fallback_phone) && item.replaces === item.fallback_phone && until > Date.now() && until <= Date.now() + 31 * 60 * 1000) next.set(item.fallback_phone, { ...item, until });
+        }
+        if (next.size) {
+          leases = next;
           applyNumbers();
-          expiryTimer = setTimeout(restoreNumbers, until - Date.now());
+          expiryTimer = setTimeout(restoreNumbers, Math.min(...[...next.values()].map(lease => lease.until)) - Date.now());
         }
         return result;
       } catch {
@@ -137,7 +146,13 @@
     try { return await job; } finally { if (numberJob === job) numberJob = null; }
   }
   if (dniEnabled) {
-    new MutationObserver(() => { if (lease) applyNumbers(); }).observe(document.documentElement, { childList: true, subtree: true });
+    // A newly inserted published number may belong to a pool not yet leased.
+    let targetCheck = null;
+    new MutationObserver(() => {
+      if (leases.size) applyNumbers();
+      clearTimeout(targetCheck);
+      targetCheck = setTimeout(() => { if (consent && !document.hidden && !numberJob && targets().join(",") !== requested) void refreshNumbers(); }, 250);
+    }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) stopNumbers(); else if (consent) void refreshNumbers();
     });

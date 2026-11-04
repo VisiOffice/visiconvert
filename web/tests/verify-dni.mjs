@@ -24,6 +24,20 @@ export async function verifyDni({browser,page,origin,api,artifactDir}) {
     await page.getByLabel('These numbers are used only for this website’s pool.',{exact:true}).check();
     await page.getByRole('button',{name:'Save number pool',exact:true}).click();
     await page.getByRole('status').filter({hasText:'Number pool saved.'}).waitFor();
+    // A second pool replaces a different published number on the same page.
+    assert.equal((await api('/numbers',{label:'Second pool line',phone_number:'+12025550104',destination:'+12025550108',source:'Verification',campaign:'Second pool'})).status,200);
+    await page.getByRole('button',{name:'Refresh pool',exact:true}).click();
+    await page.getByRole('checkbox',{name:/\+12025550104/}).waitFor();
+    await page.getByLabel('Pool',{exact:true}).selectOption({label:'Add a pool for another website number'});
+    await page.getByLabel('Published website number',{exact:true}).fill('+12025550109');
+    await page.getByLabel('Forwarding destination',{exact:true}).fill('+12025550108');
+    await page.getByRole('checkbox',{name:/\+12025550104/}).check();
+    await page.getByLabel('Enable number swapping',{exact:true}).check();
+    await page.getByLabel('These numbers are used only for this website’s pool.',{exact:true}).check();
+    await page.getByRole('button',{name:'Save number pool',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Number pool saved.'}).waitFor();
+    assert.equal((await api(`/sites/${siteId}/number-pool`)).body.pools.length,2);
+    await page.getByLabel('Pool',{exact:true}).selectOption({label:'Replaces +12025550107'});
     await visitor.goto(`${business}/?utm_source=google&utm_campaign=dni-browser`);
     await visitor.waitForFunction(()=>!!window.VisiConvert);
     assert.equal(await visitor.locator('#phone').textContent(),'(202) 555-0107');
@@ -33,12 +47,14 @@ export async function verifyDni({browser,page,origin,api,artifactDir}) {
     assert.equal(await visitor.locator('#text').textContent(),'202-555-0105');
     assert.equal(await visitor.locator('#phone').getAttribute('aria-label'),'(202) 555-0105');
     assert.equal(await visitor.locator('#unmarked').getAttribute('href'),'tel:+12025550107');
-    assert.equal(await visitor.locator('#other').getAttribute('href'),'tel:+12025550109');
+    assert.equal(await visitor.locator('#other').getAttribute('href'),'tel:+12025550104','Second published number swaps from its own pool');
+    assert.equal(await visitor.locator('#other').textContent(),'202-555-0104');
     assert.equal(await visitor.locator('#nested b').textContent(),'202-555-0107');
     await visitor.evaluate(()=>{const n=document.createElement('a');n.id='dynamic';n.dataset.visiconvertPhone='';n.href='tel:+12025550107';n.textContent='202-555-0107';document.body.append(n);});
     await visitor.waitForFunction(()=>document.querySelector('#dynamic').textContent==='202-555-0105');
     await second.goto(business);await second.waitForFunction(()=>!!window.VisiConvert);await second.evaluate(()=>window.VisiConvert.setConsent(true));
     assert.equal(await second.locator('#phone').getAttribute('href'),'tel:+12025550107','Exhausted pool uses normal business line');
+    assert.equal(await second.locator('#other').getAttribute('href'),'tel:+12025550109');
     // Explicit network fault injection: last number must not remain on failure.
     await visitor.route('**/collect/sites/*/numbers',route=>route.abort());
     assert.equal((await visitor.evaluate(()=>window.VisiConvert.refreshNumbers())).status,'unavailable');
@@ -48,7 +64,7 @@ export async function verifyDni({browser,page,origin,api,artifactDir}) {
     await visitor.evaluate(()=>window.VisiConvert.refreshNumbers());
     assert.equal(await visitor.locator('#phone').textContent(),'(202) 555-0105');
     // Exercise local expiry without waiting half an hour; preserve the real API response.
-    await visitor.route('**/collect/sites/*/numbers',async route=>{const response=await route.fetch();const body=await response.json();body.expires_at=new Date(Date.now()+400).toISOString();await route.fulfill({response,json:body});});
+    await visitor.route('**/collect/sites/*/numbers',async route=>{const response=await route.fetch();const body=await response.json();for(const a of body.assignments)a.expires_at=new Date(Date.now()+400).toISOString();await route.fulfill({response,json:body});});
     await visitor.evaluate(()=>window.VisiConvert.refreshNumbers());
     await visitor.waitForFunction(()=>document.querySelector('#phone').textContent==='(202) 555-0107');
     await visitor.unroute('**/collect/sites/*/numbers');
@@ -61,9 +77,9 @@ export async function verifyDni({browser,page,origin,api,artifactDir}) {
     assert.equal(data.pool.fallback_phone,'+12025550107');
     assert.equal(data.pool.destination_phone,'+12025550106');
     assert.equal(data.numbers.find(n=>n.phone_number==='+12025550105').destination,'+12025550106');
-    assert.equal(data.history.length,1);assert(data.pool.fallback_count>=1);
+    assert.equal(data.history.length,2);assert(data.pool.fallback_count>=1);
     await page.getByRole('button',{name:'Refresh pool',exact:true}).click();
-    await page.getByText('Recent number assignments (1)',{exact:true}).click();
+    await page.getByText('Recent number assignments (2)',{exact:true}).click();
     await page.screenshot({path:path.join(artifactDir,'dni-pool-desktop.png'),fullPage:true});
     await page.setViewportSize({width:390,height:844});
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
@@ -76,7 +92,9 @@ export async function verifyDni({browser,page,origin,api,artifactDir}) {
     await page.getByLabel('Enable number swapping',{exact:true}).uncheck();
     await page.getByRole('button',{name:'Save number pool',exact:true}).click();
     await page.getByRole('status').filter({hasText:'Number pool saved.'}).waitFor();
-    assert.equal((await second.evaluate(()=>window.VisiConvert.refreshNumbers())).status,'disabled');
+    const after=await second.evaluate(()=>window.VisiConvert.refreshNumbers());
+    assert.equal(after.assignments.find(a=>a.replaces==='+12025550107').status,'disabled');
+    assert.equal(after.assignments.find(a=>a.replaces==='+12025550109').status,'exhausted');
     assert.deepEqual(errors,[]);
   } finally {await visitor.close();await second.close();await new Promise(resolve=>fixture.close(resolve));}
 }

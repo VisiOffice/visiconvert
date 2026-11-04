@@ -384,6 +384,8 @@ async fn shared_signalwire_connections_and_calls() {
                 version: 0,
                 number_ids: vec![number_id],
                 dedicated_numbers: true,
+                pool_id: None,
+                new_pool: false,
             },
         )
         .await
@@ -392,7 +394,7 @@ async fn shared_signalwire_connections_and_calls() {
     tenant.capture_session(site, site_origin, visitor, &json!({"source":"newsletter", "utm_campaign":"SignalWire visit", "landing_url":"https://signalwire-dni.example/quote"})).await.unwrap();
     assert_eq!(
         tenant
-            .allocate_dni(site, site_origin, visitor)
+            .allocate_dni(site, site_origin, visitor, None)
             .await
             .unwrap()["status"],
         "assigned"
