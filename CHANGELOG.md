@@ -1,3 +1,11 @@
+## Unreleased — Toll-free numbers
+
+- `POST /numbers/search` takes `kind: "toll_free"` with an optional prefix (800, 833, 844,
+  855, 866, 877, 888) and searches SignalWire's toll-free inventory. The default is still
+  local, and a toll-free prefix without that kind is refused. Responses include `kind`.
+- The managed usage report marks each number `toll_free`, so VisiConvert Cloud can bill
+  toll-free numbers at their own monthly price. The usage screen shows that price.
+
 ## Unreleased — Several number pools per site
 
 - A site can run several DNI pools. Each replaces one published website number (its swap

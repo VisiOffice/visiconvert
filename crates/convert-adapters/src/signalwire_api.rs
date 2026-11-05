@@ -304,18 +304,50 @@ impl Client {
         if area_code.len() != 3 || !area_code.bytes().all(|b| b.is_ascii_digit()) {
             return Err(Error::Response);
         }
+        self.search(space, account, token, "Local", Some(area_code), limit)
+            .await
+    }
+    /// US toll-free voice numbers, optionally with one prefix such as 888.
+    pub async fn search_toll_free(
+        &self,
+        space: &str,
+        account: &str,
+        token: &str,
+        prefix: Option<&str>,
+        limit: u8,
+    ) -> Result<Vec<Available>, Error> {
+        if prefix.is_some_and(|p| !convert_domain::TOLL_FREE_PREFIXES.contains(&p)) {
+            return Err(Error::Response);
+        }
+        let numbers = self
+            .search(space, account, token, "TollFree", prefix, limit)
+            .await?;
+        Ok(numbers
+            .into_iter()
+            .filter(|n| convert_domain::toll_free(&n.phone_number))
+            .collect())
+    }
+    async fn search(
+        &self,
+        space: &str,
+        account: &str,
+        token: &str,
+        kind: &str,
+        area_code: Option<&str>,
+        limit: u8,
+    ) -> Result<Vec<Available>, Error> {
         let size = limit.clamp(1, 30).to_string();
+        let mut query = vec![("VoiceEnabled", "true"), ("PageSize", size.as_str())];
+        if let Some(code) = area_code {
+            query.push(("AreaCode", code));
+        }
         let value = self
             .get(
                 space,
                 account,
                 token,
-                "/AvailablePhoneNumbers/US/Local",
-                &[
-                    ("AreaCode", area_code),
-                    ("VoiceEnabled", "true"),
-                    ("PageSize", &size),
-                ],
+                &format!("/AvailablePhoneNumbers/US/{kind}"),
+                &query,
             )
             .await?;
         let entries = value["available_phone_numbers"]

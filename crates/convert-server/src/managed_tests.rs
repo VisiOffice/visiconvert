@@ -113,6 +113,11 @@ async fn mock_signalwire(
                 .collect();
             Json(json!({"incoming_phone_numbers": owned, "next_page_uri": null})).into_response()
         }
+        ("GET", "/AvailablePhoneNumbers/US/TollFree") => Json(json!({"available_phone_numbers": [
+            {"phone_number":"+18885550101"},
+            {"phone_number":"+12025550419"}
+        ]}))
+        .into_response(),
         ("GET", "/AvailablePhoneNumbers/US/Local") => Json(json!({"available_phone_numbers": [
             {"phone_number":"+12025550411","locality":"Washington","region":"DC"},
             {"phone_number":"+12025550412","locality":"Washington","region":"DC"},
@@ -370,6 +375,57 @@ async fn managed_numbers_purchase_hold_and_release() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(found["numbers"].as_array().unwrap().len(), 2);
     assert_eq!(found["numbers"][0]["locality"], "Washington");
+    assert_eq!(found["kind"], "local");
+    // Toll-free: optional prefix, only toll-free results, and prefix/kind checks.
+    let (status, toll_free) = api(
+        app.clone(),
+        "POST",
+        "/api/numbers/search",
+        &session,
+        json!({"kind":"toll_free","area_code":"888"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(toll_free["kind"], "toll_free");
+    let found: Vec<&str> = toll_free["numbers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["phone_number"].as_str().unwrap())
+        .collect();
+    assert_eq!(found, ["+18885550101"], "non-toll-free results are dropped");
+    assert!(
+        CARRIER
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.1 == "/AvailablePhoneNumbers/US/TollFree")
+    );
+    assert_eq!(
+        api(
+            app.clone(),
+            "POST",
+            "/api/numbers/search",
+            &session,
+            json!({"kind":"toll_free"})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    for bad in [
+        json!({"kind":"toll_free","area_code":"202"}),
+        json!({"area_code":"888"}),
+        json!({"kind":"mobile","area_code":"202"}),
+        json!({}),
+    ] {
+        assert_eq!(
+            api(app.clone(), "POST", "/api/numbers/search", &session, bad)
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
 
     // Purchase is idempotent and points the number at this workspace.
     let request = Uuid::new_v4();
@@ -965,6 +1021,7 @@ async fn managed_budget_and_verified_quantities() {
     assert_eq!(report["calls"].as_array().unwrap().len(), 1);
     assert_eq!(report["calls"][0]["connected_seconds"], 60);
     assert_eq!(report["numbers"].as_array().unwrap().len(), 1);
+    assert_eq!(report["numbers"][0]["toll_free"], false);
     assert!(!report.to_string().contains("+12025550398"));
     BAD_PAGE.store(true, SeqCst);
     assert_ne!(

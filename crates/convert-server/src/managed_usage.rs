@@ -70,6 +70,7 @@ pub async fn report(
         }
         let sid = row.sid;
         let phone = row.phone;
+        let is_toll_free = convert_domain::toll_free(&phone);
         let start = row.started_at;
         let stop = row.ended_at;
         let released = row.released_at;
@@ -82,7 +83,8 @@ pub async fn report(
             .entry(phone)
             .or_default()
             .push((start.timestamp(), stop.map(|t| t.timestamp())));
-        numbers.push(json!({"sid":sid,"request_id":row.request,"started_at":start.timestamp(),"ended_at":stop.map(|t|t.timestamp())}));
+        // Billing rates toll-free numbers separately; the flag comes from the number itself.
+        numbers.push(json!({"sid":sid,"request_id":row.request,"started_at":start.timestamp(),"ended_at":stop.map(|t|t.timestamp()),"toll_free":is_toll_free}));
     }
     let inventory = a
         .signalwire_client

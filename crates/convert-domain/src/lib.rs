@@ -28,6 +28,12 @@ pub fn us_number(value: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// US toll-free prefixes. A toll-free number is billed at its own monthly rate.
+pub const TOLL_FREE_PREFIXES: [&str; 7] = ["800", "833", "844", "855", "866", "877", "888"];
+pub fn toll_free(number: &str) -> bool {
+    number.len() == 12 && number.starts_with("+1") && TOLL_FREE_PREFIXES.contains(&&number[2..5])
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Qualification {
@@ -251,6 +257,14 @@ pub fn attribution_preview(input: &str) -> Result<AttributionPreview, Validation
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn toll_free_prefixes() {
+        assert!(super::toll_free("+18885033909"));
+        assert!(super::toll_free("+18335550100"));
+        assert!(!super::toll_free("+12132795046"));
+        assert!(!super::toll_free("+1888"));
+    }
+
     use super::*;
     #[test]
     fn missing_utm_is_not_direct() {
