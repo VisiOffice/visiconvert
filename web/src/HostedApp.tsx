@@ -9,6 +9,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : "So
 const currentRoute = () => window.location.pathname + window.location.search;
 const publicRoute = (path: string) => /^\/(session\/new|registration\/new|passwords\/new|password_reset\/edit|email_verification\/edit)$/.test(path);
 const uuid = "[0-9a-fA-F-]{36}";
+const RENEW_AFTER_MS = 12 * 60 * 1000;
 type Request = <T>(path: string, body?: unknown, method?: string) => Promise<T>;
 
 function Link({ to, children, className }: { to: string; children: ReactNode; className?: string }) {
@@ -25,7 +26,10 @@ export default function HostedApp() {
   const [session, setSession] = useState<CloudSession | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [engine, setEngine] = useState<{ token: string; workspace: string; user: string } | null>(null);
+  const [engine, setEngine] = useState<{ token: string; workspace: string; user: string; issued: number } | null>(null);
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
+  const renewing = useRef<Promise<boolean> | null>(null);
   const [opening, setOpening] = useState(false);
   const openingTask = useRef<{ key: string; promise: Promise<{ token: string }> } | null>(null);
   useEffect(() => {
@@ -49,6 +53,32 @@ export default function HostedApp() {
       throw error;
     }
   }, [session?.csrf_token]);
+  const launch = useCallback(async (workspace: string) => {
+    const prepared = await engineAuth<{ state: string }>("prepare", { workspace_id: workspace });
+    const launched = await request<{ code: string }>(`/workspaces/${workspace}/launch`, { state: prepared.state });
+    return engineAuth<{ token: string }>("exchange", { code: launched.code });
+  }, [request]);
+  // Workspace tokens last 15 minutes. Renew in place while the account session is valid,
+  // so the open workspace keeps its page instead of bouncing back to the workspace list.
+  const renew = useCallback(() => {
+    const current = engineRef.current;
+    if (!current) return Promise.resolve(false);
+    renewing.current ??= launch(current.workspace).then(result => {
+      if (engineRef.current?.workspace !== current.workspace) return false;
+      setEngine({ ...current, token: result.token, issued: Date.now() });
+      return true;
+    }, () => false).finally(() => { renewing.current = null; });
+    return renewing.current;
+  }, [launch]);
+  useEffect(() => {
+    if (!engine) return;
+    const due = engine.issued + RENEW_AFTER_MS;
+    const check = () => { if (document.visibilityState === "visible" && Date.now() >= due) void renew(); };
+    const timer = window.setTimeout(check, Math.max(0, due - Date.now()));
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => { window.clearTimeout(timer); document.removeEventListener("visibilitychange", check); window.removeEventListener("focus", check); };
+  }, [engine, renew]);
   const workspaceId = path.match(new RegExp(`^/app/(${uuid})$`))?.[1];
   useEffect(() => {
     if (!workspaceId || !session?.user || (engine?.workspace === workspaceId && engine.user === session.user.id)) return;
@@ -56,20 +86,13 @@ export default function HostedApp() {
     setOpening(true);
     const key = `${session.user.id}:${workspaceId}`;
     const user = session.user.id;
-    if (openingTask.current?.key !== key) {
-      const promise = (async () => {
-        const prepared = await engineAuth<{ state: string }>("prepare", { workspace_id: workspaceId });
-        const launched = await request<{ code: string }>(`/workspaces/${workspaceId}/launch`, { state: prepared.state });
-        return engineAuth<{ token: string }>("exchange", { code: launched.code });
-      })();
-      openingTask.current = { key, promise };
-    }
+    if (openingTask.current?.key !== key) openingTask.current = { key, promise: launch(workspaceId) };
     openingTask.current.promise.then(result => {
-      if (active) { setEngine({ token: result.token, workspace: workspaceId, user }); setError(""); }
+      if (active) { setEngine({ token: result.token, workspace: workspaceId, user, issued: Date.now() }); setError(""); }
     }).catch(error => { if (active) setError(message(error)); })
       .finally(() => { if (active) setOpening(false); });
     return () => { active = false; };
-  }, [workspaceId, session?.user?.id, engine?.workspace, request]);
+  }, [workspaceId, session?.user?.id, engine?.workspace, launch]);
 
   const revokeEngine = useCallback(async () => {
     if (engine) {
@@ -87,13 +110,16 @@ export default function HostedApp() {
   }, [request, revokeEngine]);
   const manageAccount = useCallback(() => navigate("/workspaces"), []);
   const sessionExpired = useCallback(() => {
-    setEngine(null); openingTask.current = null;
-    setNotice("Your workspace session expired. Open the workspace again to continue.");
-    navigate("/workspaces");
-  }, []);
+    void renew().then(renewed => {
+      if (renewed) return;
+      setEngine(null); openingTask.current = null;
+      setNotice("Your workspace session expired. Open the workspace again to continue.");
+      navigate("/workspaces");
+    });
+  }, [renew]);
 
   if (!session) return <main className="cloud-loading"><Brand /><p role="status">{error || "Loading your account…"}</p>{error && <button className="primary" onClick={() => window.location.reload()}>Try again</button>}</main>;
-  if (engine && workspaceId === engine.workspace && session.user?.id === engine.user) return <App key={engine.token}
+  if (engine && workspaceId === engine.workspace && session.user?.id === engine.user) return <App key={`${engine.user}:${engine.workspace}`}
     hosted={{ token: engine.token, onManage: manageAccount, onSignOut: signOut, onExpired: sessionExpired }} />;
   if (!session.user || publicRoute(path)) return <AccountForm key={route} path={path} session={session} request={request} notice={notice}
     done={(value, text) => {
