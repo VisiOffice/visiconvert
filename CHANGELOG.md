@@ -4,6 +4,7 @@
   claude.ai picks up new tool names on reconnect but keeps its cached definition of tools it
   already knew, so connectors stuck on the single-pool `configure_site_pool` could only edit
   a site's first pool. `configure_site_pool` stays as an alias.
+
 ## Unreleased — Hosted workspaces stay open
 
 - An open hosted workspace renews its 15-minute workspace token in place (after 12 minutes,
