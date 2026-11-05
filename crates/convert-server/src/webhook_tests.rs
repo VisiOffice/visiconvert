@@ -63,6 +63,7 @@ fn hosted_app(store: Store, cloud: Option<hosted::Config>) -> Shared {
         signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
+        microsoft: Default::default(),
     })
 }
 /// Drain everything currently due.

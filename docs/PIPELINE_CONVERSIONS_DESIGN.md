@@ -179,7 +179,8 @@ Uncertain sends never replay, exactly as today.
    event status, docs, tests against the local mock provider.
 2. **Microsoft Ads**: OAuth, developer token (provider application required),
    `ApplyOfflineConversions` with msclkid and goal name, `ApplyOfflineConversionAdjustments`
-   for restate and retract, per-action `microsoft_goal_name`.
+   for restate and retract, per-action `microsoft_goal_name`. Implemented in migration
+   0027 with separate Microsoft tables; see [Microsoft connection](MICROSOFT_CONNECTION.md).
 3. **No-CRM UI**: mark a lead quoted/sold with a value from the inbox.
 
 ## Quarry cutover

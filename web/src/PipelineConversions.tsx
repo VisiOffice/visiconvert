@@ -4,7 +4,7 @@ import type { Discovery, GoogleAction } from "./GoogleConnection";
 
 type Action = { key: string; name: string; trigger: "events" | "new_lead"; default_value_minor: number | null; counting: "once_per_click" | "every"; google_action_id: string | null; enabled: boolean; version: number };
 type Policy = { enabled: boolean; auto_send: boolean; consent_policy: "per_lead" | "not_required_outside_eea"; attested_by: string | null; attested_at: string | null; version: number };
-type Event = { id: string; action: string; external_id: string; lead_id: string | null; matched_by: string; value_minor: number | null; occurred_at: string; revision: number; status: string; delivery: { google: string; reason: string | null; request_id: string | null } };
+type Event = { id: string; action: string; external_id: string; lead_id: string | null; matched_by: string; value_minor: number | null; occurred_at: string; revision: number; status: string; delivery: { google: string; reason: string | null; request_id: string | null; microsoft?: { status: string; reason: string | null; tracking_id: string | null } | null } };
 type Setup = { ready: boolean; summary: string; next_steps: { actor: string; step: string }[] };
 type Overview = { actions: Action[]; policy: Policy; events: Event[]; setup: Setup };
 const blank: Action = { key: "", name: "", trigger: "events", default_value_minor: null, counting: "every", google_action_id: "", enabled: true, version: 0 };
@@ -21,14 +21,14 @@ const dollars = (minor: number | null) => minor === null ? "" : `${Math.floor(mi
 
 // `revision` is the shared delivery settings version; a change elsewhere on the page refetches.
 // `settingsVersion` is the saved Google destination; saving it refreshes the checklist.
-export function PipelineConversions({ api, revision, settingsVersion, discovery, onChange }: { api: Client; revision: number; settingsVersion: number; discovery: Discovery | null; onChange: () => Promise<void> }) {
+export function PipelineConversions({ api, revision, settingsVersion, refreshKey = 0, discovery, onChange }: { api: Client; revision: number; settingsVersion: number; refreshKey?: number; discovery: Discovery | null; onChange: () => Promise<void> }) {
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   async function refresh() { setData(await api<Overview>("/conversions/pipeline")); }
-  useEffect(() => { let active = true; api<Overview>("/conversions/pipeline").then(d => { if (active) setData(d); }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [api, revision, settingsVersion]);
+  useEffect(() => { let active = true; api<Overview>("/conversions/pipeline").then(d => { if (active) setData(d); }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [api, revision, settingsVersion, refreshKey]);
   async function mutate(path: string, body: unknown, message: string, method = "PUT") {
     setBusy(true); setError(""); setNotice("");
     try { await api(path, body, method); await refresh(); await onChange(); setNotice(message); setEditing(null); return true; }
@@ -67,7 +67,7 @@ export function PipelineConversions({ api, revision, settingsVersion, discovery,
         <button className="secondary" disabled={busy} onClick={() => void mutate("/conversions/delivery/settings", { enabled: !policy.enabled, version: policy.version }, policy.enabled ? "Google delivery paused. Queued sends wait until you resume." : "Google delivery turned on.")}>{policy.enabled ? "Pause Google delivery" : "Turn on Google delivery"}</button>
         <button className="primary" disabled={busy} onClick={() => void mutate("/conversions/pipeline/policy", { auto_send: !policy.auto_send, consent_policy: policy.consent_policy, attest: policy.consent_policy === "not_required_outside_eea", version: policy.version }, policy.auto_send ? "Automatic sending turned off. Events are still recorded." : "Automatic sending turned on. New eligible events are sent to Google.")}>{policy.auto_send ? "Turn off automatic sending" : "Turn on automatic sending"}</button>
       </div>
-      <p>Google delivery: <strong>{policy.enabled ? "on" : "paused"}</strong> (shared with manual review) · Automatic sending: <strong>{policy.auto_send ? "on" : "off"}</strong></p>
+      <p>Google delivery: <strong>{policy.enabled ? "on" : "paused"}</strong> (shared with manual review and Microsoft Advertising) · Automatic sending: <strong>{policy.auto_send ? "on" : "off"}</strong></p>
       <div className={setup.ready ? "notice" : "muted"} aria-label="Setup checklist"><strong>{setup.ready ? "Ready" : "Still to do"}</strong>{!setup.ready && <ul>{setup.next_steps.map(s => <li key={s.step}>{s.step}</li>)}</ul>}{setup.ready && <p>{setup.summary}</p>}</div>
     </section>
     <section className="card site-panel" aria-label="Recent pipeline events">
@@ -78,6 +78,7 @@ export function PipelineConversions({ api, revision, settingsVersion, discovery,
         <small>Revision {e.revision} · {e.value_minor === null ? "No value" : money(e.value_minor)} · {new Date(e.occurred_at).toLocaleString()} · matched by {label(e.matched_by)}</small>
         {e.delivery.reason && <p>{e.delivery.reason}</p>}
         {e.delivery.request_id && <small>Google request ID: <code>{e.delivery.request_id}</code></small>}
+        {e.delivery.microsoft && <small>Microsoft: <strong>{label(e.delivery.microsoft.status)}</strong>{e.delivery.microsoft.reason ? ` · ${e.delivery.microsoft.reason}` : ""}{e.delivery.microsoft.tracking_id && <> · tracking ID <code>{e.delivery.microsoft.tracking_id}</code></>}</small>}
       </article>)}</div>}
     </section>
   </>;

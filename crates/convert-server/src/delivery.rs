@@ -102,18 +102,37 @@ pub fn spawn(a: Shared) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            if plan(&a).await.is_err() {
-                tracing::error!("Pipeline conversion planning failed; due events are retried");
+            if a.google.is_some() {
+                if plan(&a).await.is_err() {
+                    tracing::error!("Pipeline conversion planning failed; due events are retried");
+                }
+                for _ in 0..20 {
+                    match run_one(&a).await {
+                        Ok(true) => (),
+                        Ok(false) => break,
+                        Err(_) => {
+                            tracing::error!(
+                                "Google delivery database pass failed; durable attempts will be recovered"
+                            );
+                            break;
+                        }
+                    }
+                }
             }
-            for _ in 0..20 {
-                match run_one(&a).await {
-                    Ok(true) => (),
-                    Ok(false) => break,
-                    Err(_) => {
-                        tracing::error!(
-                            "Google delivery database pass failed; durable attempts will be recovered"
-                        );
-                        break;
+            if a.microsoft.config.is_some() {
+                if microsoft::plan(&a).await.is_err() {
+                    tracing::error!("Microsoft conversion planning failed; due events are retried");
+                }
+                for _ in 0..20 {
+                    match microsoft::run_one(&a).await {
+                        Ok(true) => (),
+                        Ok(false) => break,
+                        Err(_) => {
+                            tracing::error!(
+                                "Microsoft delivery database pass failed; durable attempts will be recovered"
+                            );
+                            break;
+                        }
                     }
                 }
             }

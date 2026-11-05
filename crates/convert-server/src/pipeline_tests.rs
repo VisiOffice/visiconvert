@@ -9,17 +9,17 @@ use convert_store::{
 use google_tests::{Provider, api, begin, callback, fixture};
 use std::collections::BTreeMap;
 
-const ORIGIN: &str = "https://pipeline.example";
-struct World {
-    a: Shared,
-    p: Arc<Provider>,
-    site: Uuid,
-    key: String,
-    task: tokio::task::JoinHandle<()>,
+pub(super) const ORIGIN: &str = "https://pipeline.example";
+pub(super) struct World {
+    pub(super) a: Shared,
+    pub(super) p: Arc<Provider>,
+    pub(super) site: Uuid,
+    pub(super) key: String,
+    pub(super) task: tokio::task::JoinHandle<()>,
 }
 /// Google connected, destination saved with no reviewed actions, delivery enabled, and
 /// `quote` (once per click, $20 default) and `order` (every) mapped to eligible actions.
-async fn world(policy: &str, auto_send: bool) -> World {
+pub(super) async fn world(policy: &str, auto_send: bool) -> World {
     let (a, p, task) = fixture().await;
     // The worker claims and plans across workspaces; park pipeline work left by earlier
     // tests in this disposable database so it is never sent to this test's provider.
@@ -166,7 +166,7 @@ async fn lead(w: &World, contact: (&str, &str), click: Option<&str>, age_days: i
     }
     id
 }
-async fn post(w: &World, body: Value) -> (StatusCode, Value) {
+pub(super) async fn post(w: &World, body: Value) -> (StatusCode, Value) {
     api(
         w.a.clone(),
         "POST",
@@ -191,7 +191,7 @@ async fn due(a: &App) {
         .await
         .unwrap();
 }
-async fn consent(a: &App, lead: Uuid, at: chrono::DateTime<Utc>) {
+pub(super) async fn consent(a: &App, lead: Uuid, at: chrono::DateTime<Utc>) {
     a.store
         .save_conversion_consent(
             lead,

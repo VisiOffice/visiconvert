@@ -204,6 +204,7 @@ async fn shared_connections_verify_credentials_ownership_and_isolate_callbacks()
         signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
+        microsoft: Default::default(),
     });
     let standalone = Arc::new(App {
         cloud: None,
@@ -641,6 +642,7 @@ async fn manual_browser_fixture() {
         signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
+        microsoft: Default::default(),
     });
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(

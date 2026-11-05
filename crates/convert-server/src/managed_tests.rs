@@ -255,6 +255,7 @@ async fn managed_numbers_purchase_hold_and_release() {
         signalwire_client: convert_adapters::signalwire_api::Client::for_test(origin),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
+        microsoft: Default::default(),
     });
     let workspace = Uuid::new_v4();
     let session = bearer(&store, workspace).await;
@@ -950,6 +951,7 @@ async fn managed_budget_and_verified_quantities() {
         signalwire_client: convert_adapters::signalwire_api::Client::for_test(origin),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
+        microsoft: Default::default(),
     });
     let workspace = Uuid::new_v4();
     let session = bearer(&store, workspace).await;

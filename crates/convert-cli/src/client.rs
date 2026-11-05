@@ -280,6 +280,65 @@ impl Client {
         )
         .await
     }
+    pub async fn microsoft_accounts(&self) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .get(self.url("/api/connections/microsoft/accounts")),
+        )
+        .await
+    }
+    pub async fn microsoft_goals(&self, account: Option<&str>) -> Result<Value, Error> {
+        let mut request = self.http.get(self.url("/api/connections/microsoft/goals"));
+        if let Some(account) = account {
+            request = request.query(&[("account_id", account)]);
+        }
+        self.send(request).await
+    }
+    pub async fn set_microsoft_destination(&self, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .put(self.url("/api/conversion-setup/microsoft-destination"))
+                .json(input),
+        )
+        .await
+    }
+    pub async fn check_microsoft_destination(&self, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .post(self.url("/api/conversion-setup/microsoft-check"))
+                .json(input),
+        )
+        .await
+    }
+    pub async fn microsoft_review(&self) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .get(self.url("/api/conversion-setup/microsoft-review")),
+        )
+        .await
+    }
+    pub async fn create_microsoft_goal(&self, key: &str, input: &Value) -> Result<Value, Error> {
+        let key = urlencoding(key);
+        self.send(
+            self.http
+                .post(self.url(&format!("/api/conversion-actions/{key}/microsoft-goal")))
+                .json(input),
+        )
+        .await
+    }
+    pub async fn set_microsoft_action_goal(
+        &self,
+        key: &str,
+        input: &Value,
+    ) -> Result<Value, Error> {
+        let key = urlencoding(key);
+        self.send(
+            self.http
+                .put(self.url(&format!("/api/conversion-actions/{key}/microsoft-goal")))
+                .json(input),
+        )
+        .await
+    }
 
     pub async fn health(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/health"))).await

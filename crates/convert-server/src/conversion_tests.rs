@@ -80,6 +80,7 @@ async fn conversion_routes_require_workspace_authentication() {
         signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
+        microsoft: Default::default(),
     });
     let config = json!({"customer_id":"1234567890","qualified_action_id":"123","booking_action_id":"456","allow_inferred_calls":false,"version":0});
     for credential in ["", "wrong", "conversion-service-key-at-least-32"] {

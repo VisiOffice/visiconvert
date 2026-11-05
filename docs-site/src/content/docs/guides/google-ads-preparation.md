@@ -8,7 +8,7 @@ This shared Rust/Vite feature is available in both hosted and self-hosted builds
 It prepares qualified inquiries and bookings for review and can deliver explicitly
 queued events through Google's Data Manager API. **Delivery is off by default.**
 An upgrade never queues existing preparations. See [Google connection](/guides/google-ads-connection/)
-for OAuth and destination configuration. Microsoft delivery is not implemented.
+for OAuth and destination configuration. Microsoft delivery is available only for [pipeline conversions](/guides/pipeline-conversions/).
 
 To send conversions from your CRM or booking system automatically instead of reviewing
 each one, see [pipeline conversions](/guides/pipeline-conversions/). Pipeline rows are kept
@@ -150,7 +150,7 @@ opt-in, not proof of delivery. All tables are included in normal database backup
 
 ## Remaining work
 
-Microsoft delivery, automated consent synchronization, automatic event rules,
+Microsoft delivery for this reviewed flow, automated consent synchronization, automatic event rules,
 external monitoring alerts for stalled uploads and a supported automated Google
 retraction path remain follow-up work. Real Google acceptance and attribution
 must be verified with an eligible real event before a production cutover. Automated

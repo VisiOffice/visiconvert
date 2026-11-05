@@ -504,6 +504,7 @@ pub(crate) async fn apply_delivery_enabled(
         sqlx::query("UPDATE conversion_deliveries d SET state='needs_review',review_required=true,diagnostic='Delivery paused. Validate and queue again to resume.',due_at=NULL WHERE workspace_id=$1 AND state IN ('queued','retry') AND NOT EXISTS(SELECT 1 FROM conversion_outbox q WHERE q.workspace_id=d.workspace_id AND q.id=d.outbox_id AND q.kind='pipeline')").bind(workspace).execute(&mut *conn).await?;
     } else {
         sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND plan_state='blocked'").bind(workspace).execute(&mut *conn).await?;
+        crate::microsoft::wake_plans(conn, workspace, None).await?;
     }
     sqlx::query("INSERT INTO conversion_events(workspace_id,kind,actor,payload) VALUES($1,'delivery_enabled',$2,$3)").bind(workspace).bind(actor).bind(json!({"enabled":enabled})).execute(&mut *conn).await?;
     Ok(())

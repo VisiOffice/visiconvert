@@ -3,6 +3,7 @@ import { type Client, money, label } from "./api";
 import { GoogleConnection, type Discovery } from "./GoogleConnection";
 import { ReviewedGoogleActions } from "./ReviewedGoogleActions";
 import { PipelineConversions } from "./PipelineConversions";
+import { MicrosoftConnection } from "./MicrosoftConnection";
 
 export type Settings = { customer_id: string; qualified_action_id: string; booking_action_id: string; allow_inferred_calls: boolean; version: number };
 type Decision = "unknown" | "granted" | "denied";
@@ -21,6 +22,8 @@ export function Conversions({ api }: { api: Client }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
+  // Bumped when the Microsoft section changes actions or the checklist.
+  const [microsoftKey, setMicrosoftKey] = useState(0);
   async function refresh() { setData(await api<Preview>("/conversions")); }
   useEffect(() => { let active = true; api<Preview>("/conversions").then(d => { if (active) setData(d); }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [api]);
   async function mutate(path: string, body: unknown, message: string, method?: string) {
@@ -31,12 +34,13 @@ export function Conversions({ api }: { api: Client }) {
   }
   const candidate = data?.candidates.find(c => identity(c) === selected) ?? data?.candidates[0];
   return <div className="conversion-layout">
-    <p className="notice"><strong>Google conversions.</strong> Connect Google Ads, define the steps of your pipeline (like lead, quote sent and order) and map each to a Google conversion action. Your CRM or booking system posts events; VisiConvert finds the ad click and sends them automatically once you turn sending on. Microsoft delivery is not available yet.</p>
+    <p className="notice"><strong>Google and Microsoft conversions.</strong> Connect Google Ads, define the steps of your pipeline (like lead, quote sent and order) and map each to a Google conversion action. Your CRM or booking system posts events; VisiConvert finds the ad click and sends them automatically once you turn sending on. Microsoft Advertising can receive the same actions as a second destination; connect it below the Google steps.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
     {!data ? <p>Loading conversion preparation…</p> : <>
       <GoogleConnection api={api} settings={data.settings} onChange={refresh} onDiscovery={setDiscovery} />
-      <PipelineConversions api={api} revision={data.delivery_settings.version} settingsVersion={data.settings.version} discovery={discovery?.customer === data.settings.customer_id ? discovery : null} onChange={refresh} />
+      <PipelineConversions api={api} revision={data.delivery_settings.version} settingsVersion={data.settings.version} refreshKey={microsoftKey} discovery={discovery?.customer === data.settings.customer_id ? discovery : null} onChange={refresh} />
+      <MicrosoftConnection api={api} revision={data.delivery_settings.version} onChange={async () => { setMicrosoftKey(k => k + 1); await refresh(); }} />
       <section className="card site-panel" aria-label="Google delivery history"><h2>Google delivery history</h2>
         <p className="muted">Processed means Google processed this request; it does not prove ad attribution or inclusion in bidding reports. Warnings and uncertain outcomes need review using the saved request ID. An uncertain send is never automatically submitted again.</p>
         {!data.deliveries.length ? <p>No events validated or sent yet.</p> : <div className="conversion-jobs">{data.deliveries.map(d => <article className="conversion-job" key={d.id}>

@@ -1499,7 +1499,7 @@
       },
       "ConversionSetup": {
         "type": "object",
-        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (advertising account, inferred calls, Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google) cannot be done with a key. The checklist includes connection_revision and settings_version for POST /conversion-setup/check. Items with advisory true come from the last Google Ads review (google_review) and never block ready.",
+        "description": "Pipeline setup checklist. next_steps items have actor (agent, owner_approval, owner or administrator) and step. owner_approval steps (advertising account, inferred calls, Google delivery, automatic sending) can be done with a conversions:send key once the owner confirms. Owner steps (connect Google) cannot be done with a key. The checklist includes connection_revision and settings_version for POST /conversion-setup/check. Items with advisory true come from the last Google Ads review (google_review) and never block ready. microsoft holds the Microsoft Advertising section with its own ready, next_steps, summary, connection_revision and destination_version; it never changes the Google fields.",
         "additionalProperties": true
       },
       "GoogleDestinationInput": {
@@ -1916,6 +1916,13 @@
                   "string",
                   "null"
                 ]
+              },
+              "microsoft": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Microsoft Advertising status, or null when the event was never planned for Microsoft: status (pending, queued, delivered, retracted, blocked, failed, uncertain, canceled), reason, delivery_id, delivery_state, kind (upload, restate, retract), delivery_revision and tracking_id."
               }
             },
             "required": [
@@ -1958,6 +1965,133 @@
           "next_cursor"
         ],
         "additionalProperties": false
+      },
+      "MicrosoftDestinationInput": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "microsoft.connection_revision from GET /conversion-setup"
+          },
+          "destination_version": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "microsoft.destination_version from GET /conversion-setup (0 before the first choice)"
+          },
+          "account_id": {
+            "type": "string",
+            "pattern": "^[0-9]{1,20}$",
+            "description": "Ad account ID from GET /connections/microsoft/accounts, reachable by the connected Microsoft user"
+          }
+        },
+        "required": [
+          "revision",
+          "destination_version",
+          "account_id"
+        ],
+        "additionalProperties": false
+      },
+      "MicrosoftDestination": {
+        "type": "object",
+        "description": "The chosen ad account (id, name, number, customer_id, status, currency), the new destination_version and the setup checklist.",
+        "additionalProperties": true
+      },
+      "MicrosoftCheckInput": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "microsoft.connection_revision from GET /conversion-setup"
+          },
+          "destination_version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "microsoft.destination_version from GET /conversion-setup"
+          }
+        },
+        "required": [
+          "revision",
+          "destination_version"
+        ],
+        "additionalProperties": false
+      },
+      "MicrosoftCheck": {
+        "type": "object",
+        "description": "valid, account {id, name, number, status, currency, customer_id}, goals (every offline conversion goal: id, name, status, count_type, window_minutes, scope, category, revenue_type, kind, exclude_from_bidding, eligible), mapped (per enabled mapped action: action, goal_name, found, eligible, accepts_uploads_after), destination_version and message.",
+        "additionalProperties": true
+      },
+      "MicrosoftReview": {
+        "type": "object",
+        "description": "Every web and offline conversion goal in the saved ad account: id, name, type, status, category, count_type, window_minutes, exclude_from_bidding, used_by (VisiConvert actions that send to it) and flags (other_offline_goal, website_goal_same_category, mapped_goal_not_accepting, count_type_differs, short_window); warnings, summary and flag explanations. Read-only.",
+        "additionalProperties": true
+      },
+      "MicrosoftGoalMapInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Current action version"
+          },
+          "goal_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 100,
+            "description": "Exact name of an offline conversion goal in the saved ad account, or null to clear. A new or changed mapping applies only to events recorded from now on."
+          }
+        },
+        "required": [
+          "version",
+          "goal_name"
+        ],
+        "additionalProperties": false
+      },
+      "MicrosoftGoalInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Current action version"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "AddToCart",
+              "BeginCheckout",
+              "BookAppointment",
+              "Contact",
+              "GetDirections",
+              "Other",
+              "OutboundClick",
+              "PageView",
+              "Purchase",
+              "RequestQuote",
+              "Signup",
+              "SubmitLeadForm",
+              "Subscribe"
+            ],
+            "description": "Defaults to SubmitLeadForm for once_per_click and Purchase for every"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "MicrosoftGoalCreated": {
+        "type": "object",
+        "description": "action (the mapped action), goal {id, name}, created, accepts_uploads_after (Microsoft accepts uploads about 2 hours after creation) and notes.",
+        "additionalProperties": true
+      },
+      "MicrosoftDiscovery": {
+        "type": "object",
+        "description": "Microsoft Advertising discovery for the connected user: accounts and has_more, or account and goals.",
+        "additionalProperties": true
       },
       "VersionInput": {
         "type": "object",
@@ -10060,6 +10194,310 @@
         ]
       }
     },
+    "/conversion-actions/{key}/microsoft-goal": {
+      "post": {
+        "summary": "Create, or recover after an interrupted attempt, a VisiConvert offline conversion goal in the saved Microsoft Advertising account and map an action without a Microsoft goal to it. Mapping an existing goal is preferred. Microsoft accepts uploads for a new goal about 2 hours after creation",
+        "operationId": "post_conversion_actions_key_microsoft_goal",
+        "description": "Requires `conversions:write` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MicrosoftGoalCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MicrosoftGoalInput"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,39}$"
+            }
+          }
+        ]
+      },
+      "put": {
+        "summary": "Map an action to a Microsoft offline conversion goal by exact name, or clear it (goal_name null), at the current action version. Events recorded before a new or changed mapping are never sent to Microsoft",
+        "operationId": "put_conversion_actions_key_microsoft_goal",
+        "description": "Requires `conversions:write` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversionAction"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MicrosoftGoalMapInput"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,39}$"
+            }
+          }
+        ]
+      }
+    },
     "/connections/google/accounts": {
       "get": {
         "summary": "Google Ads access accounts for the connected Google login and, with login, the advertising accounts it reaches. Connecting Google is owner-only in the workspace UI",
@@ -10349,6 +10787,696 @@
             "schema": {
               "type": "string",
               "pattern": "^[0-9]{10}$"
+            }
+          }
+        ]
+      }
+    },
+    "/conversion-setup/microsoft-destination": {
+      "put": {
+        "summary": "Choose the Microsoft Advertising ad account that receives conversions, on the owner's behalf. Uploads nothing; delivery, automatic sending and consent are the shared switches",
+        "operationId": "put_conversion_setup_microsoft_destination",
+        "description": "Requires `conversions:send` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MicrosoftDestination"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MicrosoftDestinationInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversion-setup/microsoft-check": {
+      "post": {
+        "summary": "Run the read-only Microsoft destination check for the saved ad account and mapped goals, and record it. Uploads nothing; a replaced connection or changed destination returns 409",
+        "operationId": "post_conversion_setup_microsoft_check",
+        "description": "Requires `conversions:write` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MicrosoftCheck"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MicrosoftCheckInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversion-setup/microsoft-review": {
+      "get": {
+        "summary": "Review every conversion goal in the saved Microsoft Advertising account for overlap with VisiConvert. Read-only",
+        "operationId": "get_conversion_setup_microsoft_review",
+        "description": "Requires `read` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MicrosoftReview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/microsoft/accounts": {
+      "get": {
+        "summary": "Microsoft Advertising ad accounts the connected Microsoft user can reach, with the customer to operate from. Connecting Microsoft Advertising is owner-only in the workspace UI",
+        "operationId": "get_connections_microsoft_accounts",
+        "description": "Requires `read` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MicrosoftDiscovery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/microsoft/goals": {
+      "get": {
+        "summary": "Offline conversion goals in the saved ad account, or in another reachable account_id",
+        "operationId": "get_connections_microsoft_goals",
+        "description": "Requires `read` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MicrosoftDiscovery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "account_id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
             }
           }
         ]

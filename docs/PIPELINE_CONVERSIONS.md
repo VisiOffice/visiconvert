@@ -6,8 +6,8 @@ conversion to Google Ads automatically. Your system keeps the value logic; VisiC
 handles matching, click windows, deduplication, delivery and corrections.
 
 This works the same in hosted and self-hosted workspaces and needs engine migration
-0023 and a [Google connection](GOOGLE_CONNECTION.md). Microsoft Ads is not supported
-yet. The reviewed, one-at-a-time flow in [conversions](CONVERSIONS.md) is unchanged and
+0023 and a [Google connection](GOOGLE_CONNECTION.md). Microsoft Advertising can be added as a
+second destination for the same actions; see [Microsoft connection](MICROSOFT_CONNECTION.md) (migration 0027). The reviewed, one-at-a-time flow in [conversions](CONVERSIONS.md) is unchanged and
 can be used alongside it.
 
 ```text
@@ -361,5 +361,6 @@ recorded in the conversion history.
 
 ## Limits
 
-- Google only. Microsoft Ads (with retraction support) is planned.
+- Microsoft Advertising is a separate, optional destination ([Microsoft connection](MICROSOFT_CONNECTION.md)); it
+  is tested against a mock provider and not yet against live Microsoft.
 - USD values only. Up to 50 actions per workspace.
