@@ -4,7 +4,9 @@
   855, 866, 877, 888) and searches SignalWire's toll-free inventory. The default is still
   local, and a toll-free prefix without that kind is refused. Responses include `kind`.
 - The managed usage report marks each number `toll_free`, so VisiConvert Cloud can bill
-  toll-free numbers at their own monthly price. The usage screen shows that price.
+  toll-free numbers at their own monthly price. Each forwarded call is marked `toll_free`
+  too, by the number dialed, so toll-free minutes can be rated separately. The usage screen
+  shows both toll-free prices when the plan has them.
 
 ## Unreleased — Several number pools per site
 

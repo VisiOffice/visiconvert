@@ -175,7 +175,9 @@ pub async fn report(
         if seconds > end - start || seconds < 0 {
             return Err(invalid());
         }
-        calls.push(json!({"sid":call["sid"],"parent_sid":parent,"ended_at":end,"connected_seconds":seconds}));
+        // Minutes on a toll-free number are rated separately; the dialed number decides.
+        let toll_free = convert_domain::toll_free(phone);
+        calls.push(json!({"sid":call["sid"],"parent_sid":parent,"ended_at":end,"connected_seconds":seconds,"toll_free":toll_free}));
     }
     // Reject concurrent purchase/release changes rather than seal a torn snapshot.
     let changed = store.metering_changed_since(observed).await?;
