@@ -6,7 +6,7 @@ Enable the optional protocol with:
 
 - `VISICONVERT_CLOUD_SERVICE_KEY`: independent random 64-character hex server secret, different from `VISICONVERT_API_KEY`.
 - `VISICONVERT_CLOUD_ORIGIN`: fixed Rails origin, such as `https://cloud.visiconvert.com`.
-- `PUBLIC_URL`: engine origin, such as `https://app.visiconvert.com`.
+- `PUBLIC_URL`: engine origin, such as `https://workspaces.visiconvert.com`.
 
 Origins must be HTTPS, except loopback HTTP for development. Apply all migrations before starting the app. Never place the service key in the browser. Existing installations need neither cloud setting nor a Cloud account.
 
