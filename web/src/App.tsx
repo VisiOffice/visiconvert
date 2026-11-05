@@ -991,12 +991,15 @@ function CreateModal({
     [busy, setBusy] = useState(false);
   const [provider, setProvider] = useState<"twilio" | "signalwire">(!connected && signalwireConnected ? "signalwire" : "twilio");
   const [inventory, setInventory] = useState<TwilioInventory | null>(null);
+  const [inventoryError, setInventoryError] = useState("");
+  // Separate from the submit error: a renewed workspace token changes `api`, and reloading
+  // the inventory must not wipe the message telling the user their last submit failed.
   useEffect(() => {
     let active = true;
-    setInventory(null); setError("");
+    setInventory(null); setInventoryError("");
     if (kind === "number" && (provider === "twilio" ? connected : signalwireConnected)) {
       api<TwilioInventory>(`/connections/${provider}/numbers`).then(value => { if (active) setInventory(value); })
-        .catch(error => { if (active) setError(error.message); });
+        .catch(error => { if (active) setInventoryError(error.message); });
     }
     return () => { active = false; };
   }, [kind, connected, signalwireConnected, provider, api]);
@@ -1072,9 +1075,9 @@ function CreateModal({
           ))}
           {kind === "number" && <datalist id="twilio-owned-numbers">{inventory?.numbers.map(n => <option key={n.sid} value={n.phone_number}>{n.friendly_name}</option>)}</datalist>}
           {inventory?.has_more && <p className="small muted">Suggestions show the first page. Enter another owned number to verify it directly.</p>}
-          {error && (
+          {(error || inventoryError) && (
             <p className="error" role="alert">
-              {error}
+              {error || inventoryError}
             </p>
           )}
           <button className="primary" disabled={busy}>

@@ -11,6 +11,8 @@
   or when the tab regains focus) while the account session is valid, and retries renewal
   when a request comes back unauthorized. Users stay on the page they were on instead of
   being sent back to the workspace list; only an expired account session does that now.
+  A write that hit the expired token is not replayed: the form says nothing was saved and
+  to try again, and that message survives the renewal.
 
 ## Unreleased — Toll-free numbers
 
