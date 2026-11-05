@@ -69,7 +69,7 @@ Add the server to the client's MCP configuration. For Claude Desktop, that is `c
 | Tier | Tools | When |
 |---|---|---|
 | **Read** | `get_status`, `get_setup_status`, `list_sites`, `get_site_pool`, `list_numbers`, `list_twilio_numbers`, `list_signalwire_numbers`, `list_leads`, `get_lead_outcomes`, `source_report` | Always |
-| **Change** | `create_site`, `update_site`, `configure_site_pool`, `add_tracking_number`, `add_lead`, `qualify_lead`, `record_outcome` | With approved OAuth write scopes, or local `--allow-changes` plus key scopes |
+| **Change** | `create_site`, `update_site`, `save_site_pool` (legacy name `configure_site_pool`), `add_tracking_number`, `add_lead`, `qualify_lead`, `record_outcome` | With approved OAuth write scopes, or local `--allow-changes` plus key scopes |
 
 Every tool carries MCP annotations that mark it as read-only or not, so clients can ask before changes. For local stdio, without `--allow-changes` the change tools are not listed. Remote MCP independently filters tools by the scopes you approved.
 

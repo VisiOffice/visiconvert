@@ -581,7 +581,12 @@ async fn mcp_setup_tools_use_public_routes_and_preserve_versions() {
     let writer = mcp::Server::new(Ok(client), true);
     let site = Uuid::new_v4().to_string();
     let input = json!({"name":"Pilot","origin":"https://pilot.example","allowed_fields":["email"],"enabled":true});
-    for name in ["create_site", "update_site", "configure_site_pool"] {
+    for name in [
+        "create_site",
+        "update_site",
+        "save_site_pool",
+        "configure_site_pool",
+    ] {
         let blocked = reader
             .handle(rpc(1, "tools/call", json!({"name":name,"arguments":input})))
             .await
@@ -602,6 +607,10 @@ async fn mcp_setup_tools_use_public_routes_and_preserve_versions() {
             "configure_site_pool",
             json!({"site_id":site,"version":4,"fallback_phone":"+12025550111","destination_phone":"+12025550112","enabled":false,"number_ids":[],"dedicated_numbers":false}),
         ),
+        (
+            "save_site_pool",
+            json!({"site_id":site,"version":0,"new_pool":true,"fallback_phone":"+18885550100","enabled":true,"number_ids":[],"dedicated_numbers":true}),
+        ),
     ] {
         let result = writer
             .handle(rpc(2, "tools/call", json!({"name":name,"arguments":args})))
@@ -621,6 +630,9 @@ async fn mcp_setup_tools_use_public_routes_and_preserve_versions() {
     assert_eq!(seen[5].0, format!("PUT /api/v1/sites/{site}/number-pool"));
     assert_eq!(seen[5].1["version"], 4);
     assert_eq!(seen[5].1["destination_phone"], "+12025550112");
+    assert_eq!(seen[6].0, format!("PUT /api/v1/sites/{site}/number-pool"));
+    assert_eq!(seen[6].1["new_pool"], true);
+    assert!(seen[6].1.get("site_id").is_none());
     assert!(seen[5].1.get("site_id").is_none());
     task.abort();
 }

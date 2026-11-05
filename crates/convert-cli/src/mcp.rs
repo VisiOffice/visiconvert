@@ -112,8 +112,29 @@ const TOOLS: &[Tool] = &[
         schema: || site_input(true),
     },
     Tool {
-        name: "configure_site_pool",
+        name: "save_site_pool",
         description: "Replace one of a site's DNI pools using its pool_id and current version, or add a pool with new_pool true and version 0. A site can have several pools, each replacing a different published website number (for example an LA line and a toll-free line). Omitting both pool_id and new_pool edits the site's first pool. Requires setup:write. Confirm dedicated number IDs, published website number and forwarding destination first; removing numbers revokes assignments. A number must be removed from its pool before another pool on the site can use it. Does not purchase numbers or change carrier routing.",
+        changes: true,
+        idempotent: false,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,
+            "required":["site_id","version","fallback_phone","enabled","number_ids","dedicated_numbers"],
+            "properties":{
+                "site_id":{"type":"string","format":"uuid"},
+                "version":{"type":"integer","minimum":0},
+                "fallback_phone":{"type":"string","description":"Published website number to replace in US E.164; keep outside all pools."},
+                "destination_phone":{"type":"string","description":"Forwarding destination in US E.164 shared by pool numbers; not a tracking number. Omission preserves an existing destination or defaults to fallback_phone for a new pool."},
+                "enabled":{"type":"boolean"},
+                "number_ids":{"type":"array","maxItems":50,"uniqueItems":true,"items":{"type":"string","format":"uuid"}},
+                "dedicated_numbers":{"type":"boolean","description":"True only after owner confirms these numbers are dedicated to this website's DNI, not static/offline campaigns."},
+                "pool_id":{"type":"string","format":"uuid","description":"The pool to edit, from get_site_pool."},
+                "new_pool":{"type":"boolean","description":"True to add another pool for a different published number; use version 0 and omit pool_id."}
+            }})
+        },
+    },
+    Tool {
+        name: "configure_site_pool",
+        description: "Same as save_site_pool, kept for clients that cached its older single-pool definition. Prefer save_site_pool, which can add a pool (new_pool) or edit a specific one (pool_id).",
         changes: true,
         idempotent: false,
         schema: || {
@@ -425,7 +446,7 @@ const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
 3. Reuse existing sites. With approval, call create_site for missing exact origins and agreed allowed form fields. Call list_sites after an uncertain creation before retrying. Use update_site with the current version only after reviewing changes; pausing or changing origin revokes active DNI assignments.
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
-6. For DNI, call get_site_pool. A site has one pool per published number it shows; each page swaps whichever published numbers it displays. Confirm the published website number (fallback_phone), the forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before configure_site_pool. Pass pool_id to edit a pool, or new_pool true with version 0 to add one. Supply the current version; on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
+6. For DNI, call get_site_pool. A site has one pool per published number it shows; each page swaps whichever published numbers it displays. Confirm the published website number (fallback_phone), the forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before save_site_pool. Pass pool_id to edit a pool, or new_pool true with version 0 to add one. Supply the current version; on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
 7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google needs the owner in Conversions. With conversions:send, set_google_destination saves the advertising account and the inferred-call choice once the owner confirms the account name and ID and whether calls matched to visits by timing on DNI numbers are sent. Once actions are mapped, run check_google_destination once. Run review_google_conversion_setup and walk the owner through each flagged action; with conversions:send and the owner's explicit yes, set_google_action_goal can make it secondary. Google-hosted actions such as clicks to call cannot be made secondary; their bidding follows the account-level goal (category and origin), and set_google_goal_biddable turns that goal off for bidding across the account, for every action in it, so name every action in the goal to the owner and get their explicit yes first. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.";
 
@@ -462,7 +483,9 @@ impl Server {
     }
     fn permitted(&self, tool: &Tool) -> bool {
         let scope = match tool.name {
-            "create_site" | "update_site" | "configure_site_pool" => "setup:write",
+            "create_site" | "update_site" | "save_site_pool" | "configure_site_pool" => {
+                "setup:write"
+            }
             "add_tracking_number" => "numbers:write",
             "record_outcome" => "bookings:write",
             "create_conversion_action"
@@ -562,7 +585,7 @@ impl Server {
                     "inputSchema": (tool.schema)(),
                     "annotations": {
                         "readOnlyHint": !tool.changes,
-                        "destructiveHint": matches!(tool.name, "update_site" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable"),
+                        "destructiveHint": matches!(tool.name, "update_site" | "save_site_pool" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable"),
                         "idempotentHint": tool.idempotent,
                         "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable")
                     }
@@ -640,7 +663,7 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
             }
             client.save_site(id, &Value::Object(input)).await?
         }
-        "configure_site_pool" => {
+        "save_site_pool" | "configure_site_pool" => {
             let id = required(args, "site_id")?.parse()?;
             let mut input = args
                 .as_object()
@@ -856,7 +879,12 @@ mod scoped_tests {
         for (scope, allowed) in [
             (
                 "setup:write",
-                vec!["create_site", "update_site", "configure_site_pool"],
+                vec![
+                    "create_site",
+                    "update_site",
+                    "save_site_pool",
+                    "configure_site_pool",
+                ],
             ),
             ("numbers:write", vec!["add_tracking_number"]),
             ("leads:write", vec!["add_lead", "qualify_lead"]),
