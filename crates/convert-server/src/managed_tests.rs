@@ -1020,6 +1020,7 @@ async fn managed_budget_and_verified_quantities() {
     assert_eq!(report["complete"], true);
     assert_eq!(report["calls"].as_array().unwrap().len(), 1);
     assert_eq!(report["calls"][0]["connected_seconds"], 60);
+    assert_eq!(report["calls"][0]["toll_free"], false);
     assert_eq!(report["numbers"].as_array().unwrap().len(), 1);
     assert_eq!(report["numbers"][0]["toll_free"], false);
     assert!(!report.to_string().contains("+12025550398"));
