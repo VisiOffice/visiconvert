@@ -79,7 +79,11 @@ export function client(key: string, onUnauthorized?: () => void) {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) {
-      if (response.status === 401) onUnauthorized?.();
+      if (response.status === 401 && onUnauthorized) {
+        // The hosted shell renews the workspace session; the failed request is not replayed.
+        onUnauthorized();
+        throw new Error("Your workspace session was refreshed and nothing was saved. Please try again.");
+      }
       const value = await response
         .json()
         .catch(() => ({ error: `Request failed (${response.status})` }));
