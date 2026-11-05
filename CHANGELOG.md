@@ -1,3 +1,10 @@
+## Unreleased — Hosted workspaces stay open
+
+- An open hosted workspace renews its 15-minute workspace token in place (after 12 minutes,
+  or when the tab regains focus) while the account session is valid, and retries renewal
+  when a request comes back unauthorized. Users stay on the page they were on instead of
+  being sent back to the workspace list; only an expired account session does that now.
+
 ## Unreleased — Toll-free numbers
 
 - `POST /numbers/search` takes `kind: "toll_free"` with an optional prefix (800, 833, 844,

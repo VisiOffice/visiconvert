@@ -77,9 +77,11 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const api = useMemo(() => client(key, hosted?.onExpired), [key, hosted?.onExpired]);
+  useEffect(() => { if (hosted) setKey(hosted.token); }, [hosted?.token]);
   useEffect(() => {
+    // Load once per workspace; a renewed token must not reload the page under the user.
     if (hosted) void refresh(client(hosted.token, hosted.onExpired)).catch(error => setError(error instanceof Error ? error.message : "Unable to load workspace"));
-  }, [hosted?.token]);
+  }, []);
   useEffect(() => {
     const code = new URLSearchParams(window.location.hash.slice(1)).get("launch");
     if (!code) return;
