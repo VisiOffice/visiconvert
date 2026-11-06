@@ -1,3 +1,11 @@
+## Unreleased — Clearer Microsoft goal picker
+
+- On **Conversions → Microsoft Ads**, each action has a labeled **Microsoft goal** picker:
+  don't send, create a new VisiConvert goal, or any existing offline goal in the account
+  (paused goals are listed but cannot be picked). Choosing one shows **Use this goal** or
+  **Create goal** with Cancel. Goal names are shown exactly as Microsoft stores them
+  (dropdowns elsewhere capitalize their options). No API changes.
+
 ## Unreleased — Conversions tabs and page URLs
 
 - **Conversions** is split into tabs: Overview (a status card for Google Ads and for

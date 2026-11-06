@@ -115,10 +115,10 @@ export function MicrosoftConnection({ api, revision, onChange }: { api: Client; 
       </div>}
       {status.connected && status.account_id && <div className="site-form">
         <h3>Goal for each action</h3>
-        <p className="muted">Uploads use the goal’s exact name. Choose an existing offline conversion goal, or create one named after the action. Microsoft accepts uploads for a new goal about two hours after it is created; eligible events wait until then. Creating a goal turns on <code>msclkid</code> auto-tagging and counts the goal for bidding.</p>
-        {!goals ? <p role="status">Loading Microsoft goals…</p> : !actions.length ? <p>Add an enabled action on the Actions tab first.</p> : actions.map(a => <GoalRow key={`${a.key}:${a.version}`} action={a} goals={offline} busy={busy}
+        <p className="muted">For each action, open <strong>Microsoft goal</strong> and pick an existing offline conversion goal in this account, or create a new VisiConvert goal. Uploads use the goal’s exact name. A new goal accepts uploads about two hours after it is created (events wait until then), turns on <code>msclkid</code> auto-tagging and counts for bidding.</p>
+        {!goals ? <p role="status">Loading Microsoft goals…</p> : !actions.length ? <p>Add an enabled action on the Actions tab first.</p> : <div className="goal-rows">{actions.map(a => <GoalRow key={`${a.key}:${a.version}`} action={a} goals={offline} busy={busy}
           map={name => run(async () => { await api(`/conversion-actions/${a.key}/microsoft-goal`, { version: a.version, goal_name: name }, "PUT"); await changed(name ? `Action ${a.key} mapped to ${name}. Events recorded from now on are sent to Microsoft.` : `Action ${a.key} is no longer sent to Microsoft.`); })}
-          create={() => run(async () => { await api(`/conversion-actions/${a.key}/microsoft-goal`, { version: a.version }, "POST"); await loadGoals(); await changed(`Goal created or recovered for ${a.key}. Microsoft accepts uploads for it in about two hours.`); })} />)}
+          create={() => run(async () => { await api(`/conversion-actions/${a.key}/microsoft-goal`, { version: a.version }, "POST"); await loadGoals(); await changed(`Goal created or recovered for ${a.key}. Microsoft accepts uploads for it in about two hours.`); })} />)}</div>}
         <div className="google-actions">
           <button className="secondary" disabled={busy} onClick={() => void run(loadGoals)}>Refresh goals</button>
           <button className="secondary" disabled={busy} onClick={() => void run(async () => { const r = await api<Check>("/conversion-setup/microsoft-check", { revision: status.revision, destination_version: status.destination_version }); setNotice(r.message); })}>Check Microsoft destination</button>
@@ -132,21 +132,31 @@ export function MicrosoftConnection({ api, revision, onChange }: { api: Client; 
   </section>;
 }
 
+const CREATE = "__create__";
+/// One action's Microsoft goal: not sent, a new VisiConvert goal, or an existing offline goal.
 function GoalRow({ action, goals, busy, map, create }: { action: Action; goals: Goal[]; busy: boolean; map: (name: string | null) => Promise<void>; create: () => Promise<void> }) {
   const saved = action.microsoft_goal_name ?? "";
   const [draft, setDraft] = useState(saved);
   const id = `microsoft-goal-${action.key}`;
   const known = goals.some(g => g.name === saved);
-  return <div className="form-field">
-    <label htmlFor={id}>{action.name} · <code>{action.key}</code></label>
-    <select id={id} disabled={busy} value={draft} onChange={e => setDraft(e.target.value)}>
-      <option value="">Not sent to Microsoft</option>
-      {saved && !known && <option value={saved}>{saved} (not found in this account)</option>}
-      {goals.map(g => <option key={g.id} value={g.name} disabled={!g.eligible}>{g.name}{g.eligible ? "" : ` · ${g.status}`}</option>)}
-    </select>
-    <div className="site-actions">
-      {draft !== saved && <button className="primary" disabled={busy} onClick={() => void map(draft || null)}>{draft ? "Save goal" : "Stop sending to Microsoft"}</button>}
-      {!saved && <button className="secondary" disabled={busy} onClick={() => void create()}>Create goal in Microsoft</button>}
+  const changed = draft !== saved;
+  return <article className="goal-row" aria-label={`Microsoft goal for ${action.key}`}>
+    <div className="goal-row-head"><strong>{action.name}</strong><code>{action.key}</code><span className={`state-pill ${saved ? "on" : ""}`}>{saved ? "Sending" : "Not sent"}</span></div>
+    <div className="form-field">
+      <label htmlFor={id}>Microsoft goal</label>
+      <select id={id} className="goal-select" disabled={busy} value={draft} onChange={e => setDraft(e.target.value)}>
+        <option value="">Don’t send to Microsoft</option>
+        {!saved && <option value={CREATE}>Create a new VisiConvert goal</option>}
+        {saved && !known && <option value={saved}>{saved} (not found in this account)</option>}
+        <optgroup label="Existing offline goals in this account">
+          {goals.length ? goals.map(g => <option key={g.id} value={g.name} disabled={!g.eligible}>{g.name}{g.eligible ? "" : ` · ${g.status}`}</option>) : <option disabled value="__none__">No offline goals yet</option>}
+        </optgroup>
+      </select>
     </div>
-  </div>;
+    {draft === CREATE && <p className="muted">Creates an offline goal named after this action ({action.counting === "every" ? "counts every event" : "one per click"}, 90-day window). Microsoft accepts uploads about two hours later, and the goal counts for bidding.</p>}
+    {changed && <div className="site-actions">
+      <button className="primary" disabled={busy} onClick={() => void (draft === CREATE ? create() : map(draft || null))}>{draft === CREATE ? "Create goal" : draft ? "Use this goal" : "Stop sending to Microsoft"}</button>
+      <button className="secondary" disabled={busy} onClick={() => setDraft(saved)}>Cancel</button>
+    </div>}
+  </article>;
 }

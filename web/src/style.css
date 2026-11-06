@@ -1382,6 +1382,15 @@ footer button {
 .badge.delivery-delivered, .badge.delivery-sent, .badge.delivery-processed { background: #ecf3e4; color: #5f7f45; }
 .badge.delivery-blocked, .badge.delivery-failed, .badge.delivery-needs_review, .badge.delivery-uncertain { background: #fbf1e0; color: #a77a2e; }
 @media (max-width: 600px) { .conversion-tabs { flex-wrap: wrap; overflow-x: visible; } .conversion-tab { padding: 9px 10px 10px; } .destination-grid { grid-template-columns: 1fr; } }
+/* Microsoft goal per action: a labeled picker that shows exact goal names. */
+.goal-rows { display: grid; gap: 12px; margin: 4px 0 8px; }
+.goal-row { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid #e3e8dc; border-radius: 9px; background: #fbfcf8; min-width: 0; }
+.goal-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.goal-row-head .state-pill { margin-left: auto; }
+.goal-row .form-field { margin: 0; }
+.goal-row .muted { margin: 0; font-size: 12px; }
+.goal-row .site-actions { margin: 0; }
+select.goal-select { text-transform: none; }
 .google-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; }
 .google-callback { overflow-wrap: anywhere; }
 .google-connection select { max-width: 100%; }
