@@ -138,4 +138,38 @@ async function verifyPipeline({page,api,lead,artifactDir}) {
   await openTab(page,'Overview');
   await auto.getByRole('button',{name:'Turn off automatic sending',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Automatic sending turned off.'}).waitFor();
+  await verifyMicrosoftPicker({page,artifactDir});
+}
+// Microsoft goal picker against a stubbed connected account; nothing is submitted.
+async function verifyMicrosoftPicker({page,artifactDir}) {
+  const status={configured:true,connected:true,reconnect_required:false,revision:1,redirect_uri:'',customer_id:'254773925',account_id:'189241031',account_name:'Browser Ads',destination_version:1,validation:null,checked_at:null};
+  const goals=[{id:'1',name:'Lead (Old CRM)',status:'Active',kind:'OfflineConversion',category:'SubmitLeadForm',count_type:'All',window_minutes:43200,eligible:true},{id:'2',name:'Paused purchase',status:'Paused',kind:'OfflineConversion',category:'Purchase',count_type:'All',window_minutes:43200,eligible:false}];
+  const handler=route=>{const u=new URL(route.request().url());const body=u.pathname.endsWith('/goals')?{goals}:u.pathname.endsWith('/accounts')?{accounts:[{id:'189241031',name:'Browser Ads',number:'X1',customer_id:'254773925',status:'Active',currency:'USD'}],has_more:false}:status;return route.fulfill({json:body});};
+  await page.route('**/api/connections/microsoft**',handler);
+  try {
+    await openTab(page,'Microsoft Ads');
+    await page.getByRole('button',{name:'Refresh Microsoft connection',exact:true}).click();
+    const row=page.getByRole('article',{name:'Microsoft goal for order',exact:true});
+    const picker=row.getByLabel('Microsoft goal',{exact:true});
+    await picker.waitFor();
+    const options=await picker.locator('option').allInnerTexts();
+    assert.deepEqual(options,['Don’t send to Microsoft','Create a new VisiConvert goal','Lead (Old CRM)','Paused purchase · Paused']);
+    assert(await picker.locator('option[value="Paused purchase"]').isDisabled());
+    assert.equal(await picker.evaluate(e=>getComputedStyle(e).textTransform),'none','Goal names show exactly');
+    await picker.selectOption('Lead (Old CRM)');
+    await row.getByRole('button',{name:'Use this goal',exact:true}).waitFor();
+    await picker.selectOption('__create__');
+    await row.getByRole('button',{name:'Create goal',exact:true}).waitFor();
+    await row.getByText(/Microsoft accepts uploads about two hours later/).waitFor();
+    await page.screenshot({path:path.join(artifactDir,'conversions-microsoft-goal.png'),fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Goal picker fits a phone screen');
+    await page.screenshot({path:path.join(artifactDir,'conversions-microsoft-goal-mobile.png'),fullPage:true});
+    await page.setViewportSize({width:1440,height:1000});
+    await row.getByRole('button',{name:'Cancel',exact:true}).click();
+    assert.equal(await picker.inputValue(),'');
+    assert.equal(await row.getByRole('button',{name:'Create goal',exact:true}).count(),0);
+  } finally {
+    await page.unroute('**/api/connections/microsoft**',handler);
+  }
 }
