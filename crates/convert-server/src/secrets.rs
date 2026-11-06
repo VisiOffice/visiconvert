@@ -101,6 +101,30 @@ impl Vault {
     pub fn open(&self, workspace: Uuid, account: &str, encrypted: &str) -> Result<String, ()> {
         self.open_context(&Self::context(workspace, account), encrypted)
     }
+    /// Microsoft Advertising credentials use their own context, so a sealed Google value
+    /// can never be opened as a Microsoft one or the reverse.
+    pub fn seal_microsoft(
+        &self,
+        workspace: Uuid,
+        purpose: &str,
+        token: &str,
+    ) -> Result<String, ()> {
+        self.seal_context(
+            &format!("visiconvert:microsoft:v1:{workspace}:{purpose}"),
+            token,
+        )
+    }
+    pub fn open_microsoft(
+        &self,
+        workspace: Uuid,
+        purpose: &str,
+        encrypted: &str,
+    ) -> Result<String, ()> {
+        self.open_context(
+            &format!("visiconvert:microsoft:v1:{workspace}:{purpose}"),
+            encrypted,
+        )
+    }
     pub fn open_google(
         &self,
         workspace: Uuid,

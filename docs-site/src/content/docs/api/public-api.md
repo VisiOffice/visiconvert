@@ -34,8 +34,8 @@ Permissions:
 | `numbers:write` | Register an existing voice number in the connected Twilio or SignalWire account |
 | `numbers:purchase` | Search, buy, and release SignalWire numbers (`/numbers/search`, `/numbers/purchase`, `/numbers/{id}/release`, `/numbers/{id}/restore`). Billable: each number is charged monthly until released. Owners grant it under **Billable permission** in API Keys; the expiration defaults to 24 hours. |
 | `setup:write` | Create/update website settings and DNI pools (engine migration 0012) |
-| `conversions:write` | Define and map pipeline conversion actions (`PUT /conversion-actions/{key}`, `POST /conversion-actions/{key}/google-action`) and post pipeline conversion events (`POST /conversion-events`) that VisiConvert matches and sends to Google Ads (engine migration 0023) |
-| `conversions:send` | Choose the advertising account and whether inferred calls are sent (`PUT /conversion-setup/destination`), and turn Google delivery and automatic sending on or off and set the consent policy (`PUT /conversion-delivery`), on the owner's behalf. Attestations are recorded for the owner who created the key. It also makes a Google Ads conversion action primary or secondary (`PUT /conversion-setup/google-actions/{id}/goal`), and turns an account-level conversion goal on or off for bidding (`PUT /conversion-setup/google-goal`), which changes what Smart Bidding optimizes for across the account. Conversions sent to Google cannot be retracted. Owners grant it under **Sending permission** in API Keys; the expiration defaults to 24 hours (engine migration 0024). |
+| `conversions:write` | Define and map pipeline conversion actions (`PUT /conversion-actions/{key}`, `POST /conversion-actions/{key}/google-action`) and post pipeline conversion events (`POST /conversion-events`) that VisiConvert matches and sends to Google Ads (engine migration 0023). It also maps and creates Microsoft goals and runs the Microsoft check (migration 0027) |
+| `conversions:send` | Choose the advertising account and whether inferred calls are sent (`PUT /conversion-setup/destination`), and turn Google delivery and automatic sending on or off and set the consent policy (`PUT /conversion-delivery`), on the owner's behalf. Attestations are recorded for the owner who created the key. It also makes a Google Ads conversion action primary or secondary (`PUT /conversion-setup/google-actions/{id}/goal`), and turns an account-level conversion goal on or off for bidding (`PUT /conversion-setup/google-goal`), which changes what Smart Bidding optimizes for across the account. Conversions sent to Google cannot be retracted. It also saves the Microsoft Advertising account (`PUT /conversion-setup/microsoft-destination`). Owners grant it under **Sending permission** in API Keys; the expiration defaults to 24 hours (engine migration 0024). |
 
 Keys cannot manage keys, billing, provider credentials, inquiry grouping,
 reviewed conversion preparation, or the Google connection. Google delivery, automatic sending and the consent policy need `conversions:send`. Use the workspace UI for the rest. Read-only
@@ -198,6 +198,15 @@ account and inferred-call opt-in (`PUT /api/v1/conversion-setup/destination`).
 the Google Ads account that would double count, and `conversions:send` can make one
 secondary, or, for Google-hosted actions such as clicks to call, turn its account-level
 goal off for bidding (`PUT /api/v1/conversion-setup/google-goal`). `conversion-setup` says which steps are left; no key can connect Google. See [pipeline conversions](/guides/pipeline-conversions/).
+
+Microsoft Advertising uses the same scopes. `read`: `GET /api/v1/connections/microsoft/accounts`,
+`GET /api/v1/connections/microsoft/goals` and `GET /api/v1/conversion-setup/microsoft-review`.
+`conversions:write`: map an action to a goal (`PUT /api/v1/conversion-actions/{key}/microsoft-goal`),
+create a goal for it (`POST` on the same path) and run the read-only check
+(`POST /api/v1/conversion-setup/microsoft-check`). `conversions:send`: save the ad account
+(`PUT /api/v1/conversion-setup/microsoft-destination`). The `microsoft` section of
+`conversion-setup` lists the steps left; no key can connect Microsoft. See
+[Microsoft connection](/guides/microsoft-ads-connection/).
 
 ## Webhooks
 

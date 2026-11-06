@@ -36,6 +36,23 @@ class SelfHostTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'encryption key'):
             host.validate(values)
 
+    def test_microsoft_configuration_is_all_or_none_and_needs_the_encryption_key(self):
+        values = dict(self.install.values)
+        values['VISICONVERT_MICROSOFT_CLIENT_ID'] = '00000000-0000-4000-8000-000000000000'
+        with self.assertRaisesRegex(ValueError, 'all three Microsoft'):
+            host.validate(values)
+        values['VISICONVERT_MICROSOFT_CLIENT_SECRET'] = 'fixture~microsoft.secret-not-real'
+        values['VISICONVERT_MICROSOFT_DEVELOPER_TOKEN'] = 'FIXTURE0TOKEN'
+        host.write_config(self.install.config, values)
+        self.assertEqual(self.install.config.stat().st_mode & 0o777, 0o600)
+        values['VISICONVERT_MICROSOFT_DEVELOPER_TOKEN'] = 'not a token'
+        with self.assertRaisesRegex(ValueError, 'developer token'):
+            host.validate(values)
+        values['VISICONVERT_MICROSOFT_DEVELOPER_TOKEN'] = 'FIXTURE0TOKEN'
+        values['VISICONVERT_ENCRYPTION_KEY'] = ''
+        with self.assertRaisesRegex(ValueError, 'encryption key'):
+            host.validate(values)
+
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)

@@ -30,6 +30,7 @@ pub fn public_routes() -> Router<Shared> {
     shared_routes()
         .route("/connections/google/accounts", get(google::accounts))
         .route("/connections/google/actions", get(google::actions))
+        .merge(microsoft::public_routes())
 }
 fn shared_routes() -> Router<Shared> {
     Router::new()
@@ -51,6 +52,7 @@ fn shared_routes() -> Router<Shared> {
         )
         .route("/conversion-events", get(list).post(record))
         .merge(super::google_review::routes())
+        .merge(microsoft::shared_routes())
 }
 async fn actor(
     access: &hosted::Access,
@@ -118,6 +120,10 @@ async fn delivery_value(a: &App, store: &Store) -> Result<Value, ApiError> {
             if !uploading.is_empty() {
                 warning.push_str(&format!(" The last Google Ads review found another tool still uploading to: {}. Turn those uploaders off or make the actions secondary.", uploading.join(", ")));
             }
+        }
+        let microsoft = &value["setup"]["microsoft"];
+        if microsoft["account_id"].is_string() && microsoft["mapped_actions"].as_i64() > Some(0) {
+            warning.push_str(" The same applies to Microsoft Advertising: turn off any other offline conversion upload to the mapped Microsoft goals. Microsoft conversions can be retracted when an event is canceled.");
         }
         value["warning"] = json!(warning);
     }
@@ -227,6 +233,7 @@ async fn create_google_action(
     ))
 }
 async fn record(
+    State(a): State<Shared>,
     Extension(access): Extension<hosted::Access>,
     key: Option<Extension<KeyAccess>>,
     Json(input): Json<EventInput>,
@@ -238,6 +245,9 @@ async fn record(
         .store
         .plan_pipeline(Some(id), &delivery::build)
         .await?;
+    if a.microsoft.config.is_some() {
+        access.store.plan_microsoft(Some(id)).await?;
+    }
     Ok(Json(access.store.pipeline_event(id).await?))
 }
 async fn list(
@@ -334,6 +344,8 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
         }
     }
     f["google_review"] = review.unwrap_or(Value::Null);
+    // Additive: Microsoft readiness never changes Google's ready, next_steps or summary.
+    f["microsoft"] = microsoft::setup_status(a, store).await?;
     f["google_connected"] = json!(connected);
     f["connection_revision"] = json!(connection.revision);
     f["ready"] = json!(ready);

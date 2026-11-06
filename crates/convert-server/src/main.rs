@@ -9,6 +9,7 @@ mod hosted;
 mod inquiries;
 mod managed;
 mod managed_usage;
+mod microsoft;
 mod pipeline;
 mod public_api;
 mod remote_mcp;
@@ -61,6 +62,7 @@ struct App {
     signalwire_client: convert_adapters::signalwire_api::Client,
     google: Option<google::Config>,
     google_client: convert_adapters::google_api::Client,
+    microsoft: microsoft::Microsoft,
 }
 type Shared = Arc<App>;
 
@@ -141,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|config| config.app_origin.as_deref())
         .unwrap_or(&public_url);
     let google = google::Config::from_env(browser_origin, vault.is_some())?;
+    let microsoft_config = microsoft::Config::from_env(browser_origin, vault.is_some())?;
     let app = Arc::new(App {
         store,
         api_key,
@@ -153,6 +156,10 @@ async fn main() -> anyhow::Result<()> {
         signalwire_client: convert_adapters::signalwire_api::Client::new()?,
         google,
         google_client: convert_adapters::google_api::Client::new()?,
+        microsoft: microsoft::Microsoft {
+            config: microsoft_config,
+            client: convert_adapters::microsoft_api::Client::new()?,
+        },
     });
     if matches!(cli.command, Some(Command::ReconcileNumberPurchases)) {
         managed::reconcile_purchases(&app).await?;
@@ -166,7 +173,7 @@ async fn main() -> anyhow::Result<()> {
     if app.vault.is_some() {
         managed::spawn_release_loop(app.clone());
     }
-    if app.google.is_some() {
+    if app.google.is_some() || app.microsoft.config.is_some() {
         delivery::spawn(app.clone());
     }
     // Private destinations are an explicit self-hosted choice; hosted mode never allows them.
@@ -223,6 +230,7 @@ fn router(app: Shared) -> Router {
         .merge(delivery::routes())
         .merge(pipeline::private_routes())
         .merge(google::routes())
+        .merge(microsoft::routes())
         .merge(api_keys::routes())
         .merge(webhooks::routes())
         .route("/bootstrap", get(bootstrap))
@@ -243,6 +251,9 @@ fn router(app: Shared) -> Router {
         .route("/auth/google/callback", get(google::callback))
         .route("/auth/google/result", get(google::result))
         .route("/auth/google/result.js", get(google::result_script))
+        .route("/auth/microsoft/callback", get(microsoft::callback))
+        .route("/auth/microsoft/result", get(microsoft::result))
+        .route("/auth/microsoft/result.js", get(microsoft::result_script))
         .route("/health", get(|| async { Json(json!({"status":"ok"})) }))
         .route("/runtime.json", get(|State(app): State<Shared>| async move {
             Json(json!({"hosted_app_origin": app.cloud.as_ref().and_then(|config| config.app_origin.as_deref())}))
@@ -645,6 +656,7 @@ mod tests {
             signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
             google: None,
             google_client: convert_adapters::google_api::Client::new().unwrap(),
+            microsoft: Default::default(),
             public_url: "https://convert.example.com".into(),
             twilio_account: configured.then(|| format!("AC{}", "1".repeat(32))),
             twilio_token: configured.then(|| "test-token".into()),
@@ -803,5 +815,7 @@ mod delivery_tests;
 #[cfg(test)]
 mod webhook_tests;
 
+#[cfg(test)]
+mod microsoft_tests;
 #[cfg(test)]
 mod pipeline_tests;

@@ -21,8 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_KEYS = {'COMPOSE_PROJECT_NAME', 'VISICONVERT_POSTGRES_PASSWORD', 'VISICONVERT_API_KEY',
         'VISICONVERT_WORKSPACE_ID', 'VISICONVERT_HOST_PORT', 'PUBLIC_URL',
         'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'}
+MICROSOFT_KEYS = ('VISICONVERT_MICROSOFT_CLIENT_ID', 'VISICONVERT_MICROSOFT_CLIENT_SECRET',
+                  'VISICONVERT_MICROSOFT_DEVELOPER_TOKEN')
 KEYS = REQUIRED_KEYS | {'VISICONVERT_ENCRYPTION_KEY', 'VISICONVERT_GOOGLE_CLIENT_ID', 'VISICONVERT_GOOGLE_CLIENT_SECRET',
-                        'VISICONVERT_WEBHOOKS_ALLOW_PRIVATE'}
+                        'VISICONVERT_WEBHOOKS_ALLOW_PRIVATE', *MICROSOFT_KEYS}
 
 
 def require(condition, message):
@@ -74,6 +76,16 @@ def validate(v):
                 and re.fullmatch(r'[A-Za-z0-9._-]+\.apps\.googleusercontent\.com', google_id)
                 and re.fullmatch(r'[A-Za-z0-9_-]{16,256}', google_secret),
                 'Google OAuth requires a Web client ID, client secret, and the existing encryption key.')
+    ms_id, ms_secret, ms_token = (v.get(k, '') for k in MICROSOFT_KEYS)
+    require(len({bool(ms_id), bool(ms_secret), bool(ms_token)}) == 1,
+            'Set all three Microsoft Advertising values or leave all empty.')
+    if ms_id:
+        require(v.get('VISICONVERT_ENCRYPTION_KEY')
+                and re.fullmatch(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', ms_id)
+                and re.fullmatch(r'[A-Za-z0-9~._-]{16,256}', ms_secret)
+                and re.fullmatch(r'[A-Za-z0-9]{6,64}', ms_token),
+                'Microsoft Advertising requires the application (client) ID, a client secret, '
+                'a developer token, and the existing encryption key.')
     require(v.get('VISICONVERT_WEBHOOKS_ALLOW_PRIVATE', '') in ('', 'true', 'false'),
             'VISICONVERT_WEBHOOKS_ALLOW_PRIVATE must be true, false, or empty.')
     require(bool(account) == bool(token), 'Set both Twilio values or leave both empty.')

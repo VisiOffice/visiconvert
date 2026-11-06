@@ -189,14 +189,21 @@ impl Matcher {
 
 /// Lead → captured website visit, using the same joins as manual preparation: the
 /// lead's form submission session, or the DNI session behind an inferred_window call.
-const CLICK: &str = "LEFT JOIN LATERAL (SELECT s.evidence,s.created_at AS visit_at FROM website_submissions f JOIN website_sessions s ON s.site_id=f.site_id AND s.id=f.session_id WHERE f.workspace_id=l.workspace_id AND f.lead_id=l.id ORDER BY f.created_at LIMIT 1) ws ON true
+pub(crate) const CLICK: &str = "LEFT JOIN LATERAL (SELECT s.evidence,s.created_at AS visit_at FROM website_submissions f JOIN website_sessions s ON s.site_id=f.site_id AND s.id=f.session_id WHERE f.workspace_id=l.workspace_id AND f.lead_id=l.id ORDER BY f.created_at LIMIT 1) ws ON true
 LEFT JOIN LATERAL (SELECT s.evidence,s.created_at AS visit_at FROM dni_call_evidence dc JOIN dni_assignments da ON da.id=dc.assignment_id AND da.workspace_id=dc.workspace_id JOIN website_sessions s ON s.site_id=da.site_id AND s.id=da.session_id WHERE dc.workspace_id=l.workspace_id AND dc.lead_id=l.id AND dc.status='inferred_window' LIMIT 1) ds ON true";
 const HAS_CLICK: &str = "(COALESCE(COALESCE(ws.evidence,ds.evidence)->>'gclid','')<>'' OR COALESCE(COALESCE(ws.evidence,ds.evidence)->>'gbraid','')<>'' OR COALESCE(COALESCE(ws.evidence,ds.evidence)->>'wbraid','')<>'')";
+/// A Microsoft Advertising click (msclkid). Considered only for actions mapped to a
+/// Microsoft goal, so Google-only workspaces match leads exactly as before.
+const HAS_MSCLKID: &str = "(COALESCE(COALESCE(ws.evidence,ds.evidence)->>'msclkid','')<>'')";
 /// Only compile-time SQL fragments are interpolated; every value is bound.
-fn sql(s: String) -> sqlx::AssertSqlSafe<String> {
+pub(crate) fn sql(s: String) -> sqlx::AssertSqlSafe<String> {
     sqlx::AssertSqlSafe(s)
 }
-const EVENT: &str = "SELECT e.*,d.id AS delivery_id,d.state AS delivery_state,d.diagnostic,d.request_id,(d.snapshot->>'revision')::int AS delivery_revision FROM pipeline_events e LEFT JOIN LATERAL (SELECT d.* FROM conversion_deliveries d WHERE d.workspace_id=e.workspace_id AND d.outbox_id=e.outbox_id AND d.snapshot->>'event_id'=e.id::text ORDER BY d.created_at DESC LIMIT 1) d ON true WHERE e.workspace_id=$1";
+const EVENT: &str = "SELECT e.*,d.id AS delivery_id,d.state AS delivery_state,d.diagnostic,d.request_id,(d.snapshot->>'revision')::int AS delivery_revision,
+ mp.revision AS ms_plan_revision,mp.state AS ms_plan_state,mp.reason AS ms_reason,md.id AS ms_delivery_id,md.state AS ms_delivery_state,md.kind AS ms_kind,md.diagnostic AS ms_diagnostic,md.tracking_id AS ms_tracking_id,md.event_revision AS ms_delivery_revision
+ FROM pipeline_events e LEFT JOIN LATERAL (SELECT d.* FROM conversion_deliveries d WHERE d.workspace_id=e.workspace_id AND d.outbox_id=e.outbox_id AND d.snapshot->>'event_id'=e.id::text ORDER BY d.created_at DESC LIMIT 1) d ON true
+ LEFT JOIN microsoft_event_plans mp ON mp.workspace_id=e.workspace_id AND mp.event_id=e.id
+ LEFT JOIN LATERAL (SELECT m.* FROM microsoft_deliveries m WHERE m.workspace_id=e.workspace_id AND m.event_id=e.id ORDER BY m.created_at DESC LIMIT 1) md ON true WHERE e.workspace_id=$1";
 
 fn event_json(r: &sqlx::postgres::PgRow) -> Value {
     let status: String = r.get("status");
@@ -227,9 +234,10 @@ fn event_json(r: &sqlx::postgres::PgRow) -> Value {
         "value_minor":r.get::<Option<i64>,_>("value_minor"),"currency":r.get::<String,_>("currency"),"occurred_at":r.get::<DateTime<Utc>,_>("occurred_at"),
         "revision":revision,"status":status,"created_at":r.get::<DateTime<Utc>,_>("created_at"),"updated_at":r.get::<DateTime<Utc>,_>("updated_at"),
         "delivery":{"google":google,"reason":reason,"delivery_id":r.get::<Option<Uuid>,_>("delivery_id"),"delivery_state":raw,
-            "delivery_revision":r.get::<Option<i32>,_>("delivery_revision"),"request_id":r.get::<Option<String>,_>("request_id")}})
+            "delivery_revision":r.get::<Option<i32>,_>("delivery_revision"),"request_id":r.get::<Option<String>,_>("request_id"),
+            "microsoft":crate::microsoft::event_status(r, revision)}})
 }
-async fn record(
+pub(crate) async fn record(
     conn: &mut PgConnection,
     workspace: Uuid,
     kind: &str,
@@ -247,11 +255,14 @@ async fn record(
     .await?;
     Ok(())
 }
+/// The lead with a Google click, else (for an action mapped to a Microsoft goal) the lead
+/// with a Microsoft click, so a lead Google would match is never displaced.
 async fn find_lead(
     conn: &mut PgConnection,
     workspace: Uuid,
     matcher: &Matcher,
     attribution: &str,
+    microsoft: bool,
 ) -> Result<Option<Uuid>> {
     let (condition, value) = match matcher {
         Matcher::Lead(id) => {
@@ -276,8 +287,17 @@ async fn find_lead(
     } else {
         "ASC"
     };
-    Ok(sqlx::query_scalar(sql(format!("SELECT l.id FROM leads l {CLICK} WHERE l.workspace_id=$1 AND NOT l.is_demo AND {HAS_CLICK} AND {condition} ORDER BY COALESCE(ws.visit_at,ds.visit_at) {order},l.created_at {order},l.id LIMIT 1")))
-        .bind(workspace).bind(value).fetch_optional(&mut *conn).await?)
+    for click in [HAS_CLICK, HAS_MSCLKID] {
+        if click == HAS_MSCLKID && !microsoft {
+            break;
+        }
+        let found = sqlx::query_scalar(sql(format!("SELECT l.id FROM leads l {CLICK} WHERE l.workspace_id=$1 AND NOT l.is_demo AND {click} AND {condition} ORDER BY COALESCE(ws.visit_at,ds.visit_at) {order},l.created_at {order},l.id LIMIT 1")))
+            .bind(workspace).bind(value).fetch_optional(&mut *conn).await?;
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    Ok(None)
 }
 fn matched_by(m: &Matcher) -> &'static str {
     match m {
@@ -346,6 +366,7 @@ async fn apply_pipeline_policy(
     if auto_send && !current.auto_send {
         sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND plan_state='blocked'")
             .bind(workspace).execute(&mut *conn).await?;
+        crate::microsoft::wake_plans(conn, workspace, None).await?;
     }
     let mut payload = json!({"auto_send":auto_send,"consent_policy":policy,"attested":attested,"version":version});
     if reattest {
@@ -410,6 +431,7 @@ impl Store {
         // Blocked events are reconsidered promptly with the new mapping.
         sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND action_key=$2 AND plan_state='blocked'")
             .bind(self.workspace).bind(&input.key).execute(&mut *tx).await?;
+        crate::microsoft::wake_plans(&mut tx, self.workspace, Some(&input.key)).await?;
         record(
             &mut tx,
             self.workspace,
@@ -560,7 +582,7 @@ impl Store {
         let (matcher, attribution, status) = input.parse()?;
         let mut tx = self.pool.begin().await?;
         self.lock_inquiry_writes(&mut tx).await?;
-        let action = sqlx::query("SELECT trigger,default_value_minor FROM conversion_actions WHERE workspace_id=$1 AND key=$2")
+        let action = sqlx::query("SELECT trigger,default_value_minor,microsoft_goal_name IS NOT NULL AS microsoft FROM conversion_actions WHERE workspace_id=$1 AND key=$2")
             .bind(self.workspace).bind(&input.action).fetch_optional(&mut *tx).await?
             .ok_or(ValidationError("Unknown action. Create it in Conversions first."))?;
         if action.get::<String, _>("trigger") != "events" {
@@ -578,7 +600,14 @@ impl Store {
                 return Err(Error::NotFound);
             }
             let m = matcher.as_ref().ok_or(Error::NotFound)?;
-            let lead = find_lead(&mut tx, self.workspace, m, attribution).await?;
+            let lead = find_lead(
+                &mut tx,
+                self.workspace,
+                m,
+                attribution,
+                action.get("microsoft"),
+            )
+            .await?;
             let sendable: bool = sqlx::query_scalar("SELECT COALESCE((SELECT enabled AND auto_send FROM conversion_delivery_settings WHERE workspace_id=$1),false)")
                 .bind(self.workspace).fetch_one(&mut *tx).await?;
             let id = Uuid::new_v4();
@@ -599,7 +628,14 @@ impl Store {
             || (e.get::<String, _>("matched_by") == "none" && status == "active");
         let (mut lead, mut by): (Option<Uuid>, String) = (e.get("lead_id"), e.get("matched_by"));
         if rematch && let Some(m) = &matcher {
-            lead = find_lead(&mut tx, self.workspace, m, attribution).await?;
+            lead = find_lead(
+                &mut tx,
+                self.workspace,
+                m,
+                attribution,
+                action.get("microsoft"),
+            )
+            .await?;
             by = if lead.is_some() {
                 matched_by(m).into()
             } else {
@@ -705,7 +741,8 @@ impl Store {
             FROM conversion_actions a JOIN leads l ON l.workspace_id=a.workspace_id AND l.created_at>=a.created_at AND l.created_at>now()-interval '90 days' AND NOT l.is_demo
             {CLICK}
             LEFT JOIN conversion_delivery_settings s ON s.workspace_id=a.workspace_id
-            WHERE a.workspace_id=$1 AND a.enabled AND a.trigger='new_lead' AND {HAS_CLICK}
+            WHERE a.workspace_id=$1 AND a.enabled AND a.trigger='new_lead'
+             AND ({HAS_CLICK} OR (a.microsoft_goal_name IS NOT NULL AND l.created_at>=a.microsoft_mapped_at AND {HAS_MSCLKID}))
              AND NOT EXISTS(SELECT 1 FROM pipeline_events e WHERE e.workspace_id=a.workspace_id AND e.action_key=a.key AND e.external_id=l.id::text)
             ORDER BY l.created_at LIMIT 200 ON CONFLICT DO NOTHING RETURNING id,action_key,external_id,value_minor)
             INSERT INTO conversion_events(workspace_id,kind,actor,payload) SELECT $1,'pipeline_event_recorded','system',jsonb_build_object('id',id,'action',action_key,'external_id',external_id,'revision',1,'matched',true,'value_minor',value_minor) FROM added")))
@@ -813,7 +850,7 @@ impl Store {
     }
 }
 /// How long an automatic `new_lead` conversion waits before it is sent.
-const NEW_LEAD_HOLD: Duration = Duration::hours(6);
+pub(crate) const NEW_LEAD_HOLD: Duration = Duration::hours(6);
 enum Plan {
     Queued,
     Final(&'static str),

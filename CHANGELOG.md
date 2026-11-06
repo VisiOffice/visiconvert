@@ -1,3 +1,30 @@
+## Unreleased — Microsoft Advertising as a second conversion destination
+
+- Pipeline conversion actions can also be sent to Microsoft Advertising (Bing) as
+  offline conversions, matched by `msclkid`. The owner connects Microsoft in
+  **Conversions** (OAuth with PKCE; rotating refresh tokens are stored encrypted), picks
+  the ad account and maps each action to an offline conversion goal by name, or has
+  VisiConvert create one. Delivery, automatic sending, the consent policy and
+  `allow_inferred_calls` are shared with Google.
+- Value changes are restated and canceled events are retracted with
+  `ApplyOfflineConversionAdjustments`. Only events recorded after an action is mapped are
+  sent, so an older uploader can be switched off without double counting. Uncertain sends
+  are never replayed.
+- New MCP tools (existing tool schemas are unchanged): `list_microsoft_accounts`,
+  `list_microsoft_goals`, `set_microsoft_destination`, `set_microsoft_action_goal`,
+  `create_microsoft_goal`, `check_microsoft_destination`,
+  `review_microsoft_conversion_setup`, with matching `/api/v1` routes and the same scopes
+  as their Google counterparts. `get_conversion_setup` adds a `microsoft` section and
+  each pipeline event adds `delivery.microsoft`; nothing existing is removed or renamed.
+- Server configuration: `VISICONVERT_MICROSOFT_CLIENT_ID`,
+  `VISICONVERT_MICROSOFT_CLIENT_SECRET` and `VISICONVERT_MICROSOFT_DEVELOPER_TOKEN`, all
+  or none, plus the existing encryption key. Without them Microsoft reports unavailable.
+  Redirect URI: `{origin}/auth/microsoft/callback`.
+- Migration 0027 is additive: new `microsoft_*` tables and two nullable columns on
+  `conversion_actions` (`microsoft_goal_name`, `microsoft_mapped_at`).
+- Tested against a mock Microsoft provider only; not yet run against live Microsoft
+  Advertising. See `docs/MICROSOFT_CONNECTION.md`.
+
 ## Unreleased — `save_site_pool` MCP tool
 
 - New MCP tool `save_site_pool` with the multi-pool arguments (`pool_id`, `new_pool`).

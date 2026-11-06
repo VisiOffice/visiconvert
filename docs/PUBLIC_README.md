@@ -61,7 +61,7 @@ provider charges. You can explore form leads and bookings without a carrier.
 Self-hosted administration uses one operator key per workspace; integrations can use
 separate scoped API keys. Local individual accounts,
 roles, native form-platform connectors,
-Microsoft conversion delivery, recordings, and SMS are not yet implemented.
+recordings, and SMS are not yet implemented. Microsoft Advertising conversion delivery is new and not yet verified against live Microsoft.
 Hosted billing is maintained in the separate Rails service. The application does not buy numbers or configure carrier routing for you.
 Booking totals represent recorded business outcomes, not settled payments.
 

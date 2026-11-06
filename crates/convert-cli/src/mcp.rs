@@ -408,6 +408,78 @@ const TOOLS: &[Tool] = &[
         },
     },
     Tool {
+        name: "list_microsoft_accounts",
+        description: "Microsoft Advertising ad accounts the connected Microsoft user can reach, with each account's ID, name, number, status, currency and the customer (manager account) VisiConvert operates from. The owner connects Microsoft Advertising in Conversions; this cannot start or replace a connection.",
+        changes: false,
+        idempotent: true,
+        schema: none,
+    },
+    Tool {
+        name: "set_microsoft_destination",
+        description: "Choose which Microsoft Advertising ad account receives conversions. Requires conversions:send, which only the workspace owner can grant. Before calling, tell the owner the account name and ID (from list_microsoft_accounts) and get their explicit yes in this conversation. Delivery, automatic sending, the consent policy and inferred calls are the same switches as for Google (set_conversion_delivery, set_google_destination). Use connection_revision and destination_version from get_conversion_setup (microsoft section); on conflict re-read and confirm again. Uploads nothing; run check_microsoft_destination after mapping actions to goals.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["revision","destination_version","account_id"],"properties":{
+                "revision":{"type":"integer","minimum":1,"description":"microsoft.connection_revision from get_conversion_setup"},
+                "destination_version":{"type":"integer","minimum":0,"description":"microsoft.destination_version from get_conversion_setup (0 before the first choice)"},
+                "account_id":{"type":"string","pattern":"^[0-9]{1,20}$","description":"Ad account ID the owner confirmed, from list_microsoft_accounts"}
+            }})
+        },
+    },
+    Tool {
+        name: "list_microsoft_goals",
+        description: "Offline conversion goals in the saved Microsoft Advertising ad account (or another reachable account_id): name, status, count type, conversion window, category and whether it can receive uploads. Uploads reference a goal by its exact name.",
+        changes: false,
+        idempotent: true,
+        schema: || json!({"type":"object","additionalProperties":false,"properties":{"account_id":{"type":"string","pattern":"^[0-9]{1,20}$","description":"Defaults to the saved ad account"}}}),
+    },
+    Tool {
+        name: "set_microsoft_action_goal",
+        description: "Map a VisiConvert pipeline action to an existing Microsoft offline conversion goal by its exact name (from list_microsoft_goals), or clear the mapping with goal_name null. Requires conversions:write. A new or changed mapping applies to events recorded from now on: earlier events are never sent to Microsoft, so switching from another uploader cannot count them twice. Turn off the other uploader for that goal at the same time.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["key","version","goal_name"],"properties":{
+                "key":{"type":"string"},
+                "version":{"type":"integer","minimum":1,"description":"Current action version from list_conversion_actions"},
+                "goal_name":{"type":["string","null"],"maxLength":100,"description":"Exact Microsoft goal name, or null to clear"}
+            }})
+        },
+    },
+    Tool {
+        name: "create_microsoft_goal",
+        description: "Create a new VisiConvert offline conversion goal in the saved Microsoft Advertising ad account for an action without a Microsoft goal, and map it. Requires conversions:write. Prefer mapping an existing goal; create one only when the owner wants a new one. Safe to retry: a retry finds the goal an interrupted attempt created. The goal counts Unique for once_per_click and All for every, with a 90-day window and the value of each event. Microsoft accepts uploads for a new goal about 2 hours after creation (VisiConvert waits), creating it turns on msclkid auto-tagging for the account, and it counts toward bidding by default.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["key","version"],"properties":{
+                "key":{"type":"string"},
+                "version":{"type":"integer","minimum":1,"description":"Current action version"},
+                "category":{"type":"string","enum":["SubmitLeadForm","RequestQuote","BookAppointment","Contact","Signup","Purchase","Other"],"description":"Defaults to SubmitLeadForm for once_per_click and Purchase for every"}
+            }})
+        },
+    },
+    Tool {
+        name: "check_microsoft_destination",
+        description: "Run the read-only Microsoft destination check: confirms the saved ad account is active and every mapped goal is an active offline conversion goal in it, and records the result so sending can start. Requires conversions:write. Uploads nothing. Use microsoft.connection_revision and microsoft.destination_version from get_conversion_setup; on conflict re-read it. VisiConvert repeats the check automatically after the first one.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["revision","destination_version"],"properties":{
+                "revision":{"type":"integer","minimum":1,"description":"microsoft.connection_revision from get_conversion_setup"},
+                "destination_version":{"type":"integer","minimum":1,"description":"microsoft.destination_version from get_conversion_setup"}
+            }})
+        },
+    },
+    Tool {
+        name: "review_microsoft_conversion_setup",
+        description: "Audit the saved Microsoft Advertising ad account's conversion goals for overlap with VisiConvert: each goal's type, status, category, count type, window, whether it is excluded from bidding and which VisiConvert actions send to it, with flags: other_offline_goal (an active offline goal VisiConvert does not send to; another uploader may send the same leads), website_goal_same_category (an active website goal in the same category as a mapped goal, counted for bidding), mapped_goal_not_accepting, count_type_differs, short_window. Read-only at Microsoft; changes are made by the owner in Microsoft Advertising.",
+        changes: false,
+        idempotent: true,
+        schema: none,
+    },
+    Tool {
         name: "record_conversion_event",
         description: "Post one pipeline event (for example a sent quote or an order) for an exact lead or a phone/email match. Requires conversions:write. Reposting the same external_id with the same fields is a no-op; a changed value creates a revision. The result includes the Google delivery state and any blocked reason.",
         changes: true,
@@ -447,7 +519,7 @@ const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
 6. For DNI, call get_site_pool. A site has one pool per published number it shows; each page swaps whichever published numbers it displays. Confirm the published website number (fallback_phone), the forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before save_site_pool. Pass pool_id to edit a pool, or new_pool true with version 0 to add one. Supply the current version; on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
-7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google needs the owner in Conversions. With conversions:send, set_google_destination saves the advertising account and the inferred-call choice once the owner confirms the account name and ID and whether calls matched to visits by timing on DNI numbers are sent. Once actions are mapped, run check_google_destination once. Run review_google_conversion_setup and walk the owner through each flagged action; with conversions:send and the owner's explicit yes, set_google_action_goal can make it secondary. Google-hosted actions such as clicks to call cannot be made secondary; their bidding follows the account-level goal (category and origin), and set_google_goal_biddable turns that goal off for bidding across the account, for every action in it, so name every action in the goal to the owner and get their explicit yes first. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left.
+7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google needs the owner in Conversions. With conversions:send, set_google_destination saves the advertising account and the inferred-call choice once the owner confirms the account name and ID and whether calls matched to visits by timing on DNI numbers are sent. Once actions are mapped, run check_google_destination once. Run review_google_conversion_setup and walk the owner through each flagged action; with conversions:send and the owner's explicit yes, set_google_action_goal can make it secondary. Google-hosted actions such as clicks to call cannot be made secondary; their bidding follows the account-level goal (category and origin), and set_google_goal_biddable turns that goal off for bidding across the account, for every action in it, so name every action in the goal to the owner and get their explicit yes first. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left. For Microsoft Advertising (when available), the owner connects it in Conversions; then use list_microsoft_accounts, set_microsoft_destination (conversions:send, after the owner confirms the account), map each action to an existing offline goal with set_microsoft_action_goal or create one with create_microsoft_goal, run check_microsoft_destination once and review_microsoft_conversion_setup; the microsoft section of get_conversion_setup lists what is left. Delivery, automatic sending and the consent policy are shared with Google.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.";
 
 /// The reference page for the docs site, from the same table `tools/list` serves.
@@ -492,9 +564,13 @@ impl Server {
             | "update_conversion_action"
             | "create_google_conversion_action"
             | "record_conversion_event"
-            | "check_google_destination" => "conversions:write",
+            | "check_google_destination"
+            | "set_microsoft_action_goal"
+            | "create_microsoft_goal"
+            | "check_microsoft_destination" => "conversions:write",
             "set_conversion_delivery"
             | "set_google_destination"
+            | "set_microsoft_destination"
             | "set_google_action_goal"
             | "set_google_goal_biddable" => "conversions:send",
             _ if tool.changes => "leads:write",
@@ -585,9 +661,9 @@ impl Server {
                     "inputSchema": (tool.schema)(),
                     "annotations": {
                         "readOnlyHint": !tool.changes,
-                        "destructiveHint": matches!(tool.name, "update_site" | "save_site_pool" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable"),
+                        "destructiveHint": matches!(tool.name, "update_site" | "save_site_pool" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable" | "set_microsoft_destination" | "set_microsoft_action_goal"),
                         "idempotentHint": tool.idempotent,
-                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable")
+                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable" | "set_microsoft_destination" | "create_microsoft_goal" | "check_microsoft_destination")
                     }
                 })
             })
@@ -851,6 +927,33 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
         }
         "record_conversion_event" => client.record_conversion_event(args).await?,
         "check_google_destination" => client.check_google_destination(args).await?,
+        "list_microsoft_accounts" => client.microsoft_accounts().await?,
+        "list_microsoft_goals" => {
+            client
+                .microsoft_goals(text(args, "account_id").as_deref())
+                .await?
+        }
+        "set_microsoft_destination" => client.set_microsoft_destination(args).await?,
+        "check_microsoft_destination" => client.check_microsoft_destination(args).await?,
+        "review_microsoft_conversion_setup" => client.microsoft_review().await?,
+        "set_microsoft_action_goal" | "create_microsoft_goal" => {
+            let mut input = args
+                .as_object()
+                .cloned()
+                .ok_or_else(|| anyhow!("Expected an object"))?;
+            input.remove("key");
+            let key = required(args, "key")?;
+            if name == "create_microsoft_goal" {
+                client
+                    .create_microsoft_goal(&key, &Value::Object(input))
+                    .await?
+            } else {
+                input.entry("goal_name").or_insert(Value::Null);
+                client
+                    .set_microsoft_action_goal(&key, &Value::Object(input))
+                    .await?
+            }
+        }
         "list_conversion_events" => {
             let mut query = vec![(
                 "limit",
@@ -897,6 +1000,9 @@ mod scoped_tests {
                     "create_google_conversion_action",
                     "record_conversion_event",
                     "check_google_destination",
+                    "set_microsoft_action_goal",
+                    "create_microsoft_goal",
+                    "check_microsoft_destination",
                 ],
             ),
             (
@@ -906,6 +1012,7 @@ mod scoped_tests {
                     "set_google_destination",
                     "set_google_action_goal",
                     "set_google_goal_biddable",
+                    "set_microsoft_destination",
                 ],
             ),
         ] {
@@ -1048,6 +1155,38 @@ mod scoped_tests {
         ] {
             assert!(description.contains(phrase), "{phrase}");
         }
+        // The Microsoft ad account is an owner switch too; its OAuth is never a tool.
+        for scopes in [&everything_but_send[..], &["read"]] {
+            let server = Server::scoped(
+                Err("no network".into()),
+                scopes.iter().map(|s| s.to_string()).collect(),
+            );
+            assert!(
+                !server
+                    .tools()
+                    .iter()
+                    .any(|t| t["name"] == "set_microsoft_destination")
+            );
+            for name in [
+                "list_microsoft_accounts",
+                "list_microsoft_goals",
+                "review_microsoft_conversion_setup",
+            ] {
+                assert!(server.tools().iter().any(|t| t["name"] == name), "{name}");
+            }
+        }
+        let ms = tools
+            .iter()
+            .find(|t| t["name"] == "set_microsoft_destination")
+            .unwrap();
+        assert_eq!(ms["annotations"]["destructiveHint"], true);
+        assert!(ms["description"].as_str().unwrap().contains("explicit yes"));
+        assert!(
+            TOOLS
+                .iter()
+                .all(|t| !t.name.contains("connect_microsoft")
+                    && !t.name.contains("developer_token"))
+        );
         assert!(TOOLS.iter().all(|t| !t.name.contains("connect_google")
             && !t.name.contains("oauth")
             && !t.name.contains("advertising_account")));

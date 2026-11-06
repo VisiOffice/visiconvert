@@ -110,6 +110,7 @@ async fn shared_signalwire_connections_and_calls() {
         signalwire_client: convert_adapters::signalwire_api::Client::for_test(origin),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
+        microsoft: Default::default(),
     });
     let workspace = Uuid::new_v4();
     let other = Uuid::new_v4();

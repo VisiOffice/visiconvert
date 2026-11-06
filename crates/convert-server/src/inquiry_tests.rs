@@ -103,6 +103,7 @@ async fn grouping_preserves_interactions_isolation_retries_and_money() {
         signalwire_client: convert_adapters::signalwire_api::Client::new().unwrap(),
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
+        microsoft: Default::default(),
     });
     let a = tenant.add_lead(&lead("a", "Google")).await.unwrap();
     let b = tenant.add_lead(&lead("b", "Referral")).await.unwrap();

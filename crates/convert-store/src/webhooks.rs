@@ -496,12 +496,23 @@ impl Store {
                     .parse::<Uuid>()
                     .map_err(|_| Error::NotFound)?;
                 // Pipeline deliveries also name the business event they report on.
-                sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'outbox_id',d.outbox_id,'outbox_version',d.outbox_version,'provider',d.provider,'state',d.state,'request_id',d.request_id,'diagnostic',d.diagnostic,'attempts',d.attempts,'updated_at',d.updated_at) || CASE WHEN d.snapshot->>'kind'='pipeline' THEN jsonb_build_object('pipeline_event',jsonb_build_object('id',d.snapshot->'event_id','action',d.snapshot->'action_key','external_id',d.snapshot->'external_id','revision',d.snapshot->'revision','value_minor',d.snapshot->'value_minor')) ELSE '{}'::jsonb END FROM conversion_deliveries d WHERE d.workspace_id=$1 AND d.id=$2")
+                let google: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'outbox_id',d.outbox_id,'outbox_version',d.outbox_version,'provider',d.provider,'state',d.state,'request_id',d.request_id,'diagnostic',d.diagnostic,'attempts',d.attempts,'updated_at',d.updated_at) || CASE WHEN d.snapshot->>'kind'='pipeline' THEN jsonb_build_object('pipeline_event',jsonb_build_object('id',d.snapshot->'event_id','action',d.snapshot->'action_key','external_id',d.snapshot->'external_id','revision',d.snapshot->'revision','value_minor',d.snapshot->'value_minor')) ELSE '{}'::jsonb END FROM conversion_deliveries d WHERE d.workspace_id=$1 AND d.id=$2")
                     .bind(self.workspace)
                     .bind(id)
                     .fetch_optional(&self.pool)
-                    .await?
-                    .unwrap_or(Value::Null)
+                    .await?;
+                match google {
+                    Some(v) => v,
+                    // Microsoft Advertising deliveries: same shape, provider microsoft and
+                    // Microsoft's TrackingId as request_id.
+                    None => sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'outbox_id',NULL,'outbox_version',d.event_revision,'provider','microsoft','kind',d.kind,'state',d.state,'request_id',d.tracking_id,'diagnostic',d.diagnostic,'attempts',d.attempts,'updated_at',d.updated_at,
+                        'pipeline_event',jsonb_build_object('id',d.snapshot->'event_id','action',d.snapshot->'action_key','external_id',d.snapshot->'external_id','revision',d.snapshot->'revision','value_minor',d.snapshot->'value_minor')) FROM microsoft_deliveries d WHERE d.workspace_id=$1 AND d.id=$2")
+                        .bind(self.workspace)
+                        .bind(id)
+                        .fetch_optional(&self.pool)
+                        .await?
+                        .unwrap_or(Value::Null),
+                }
             }
             _ => json!({"message":"Test event from VisiConvert. No action is needed.","endpoint_id":claim.endpoint_id}),
         };

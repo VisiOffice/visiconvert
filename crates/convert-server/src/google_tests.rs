@@ -483,6 +483,7 @@ pub(super) async fn fixture() -> (Shared, Arc<Provider>, tokio::task::JoinHandle
             redirect: "https://engine.example/auth/google/callback".into(),
         }),
         google_client: convert_adapters::google_api::Client::for_test(origin),
+        microsoft: Default::default(),
     });
     (a, p, task)
 }
