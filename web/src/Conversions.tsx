@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { type Client, money, label } from "./api";
 import { GoogleConnection, type Discovery } from "./GoogleConnection";
 import { ReviewedGoogleActions } from "./ReviewedGoogleActions";
-import { PipelineConversions } from "./PipelineConversions";
+import { PipelineConversions, type Setup } from "./PipelineConversions";
 import { MicrosoftConnection } from "./MicrosoftConnection";
 
 export type Settings = { customer_id: string; qualified_action_id: string; booking_action_id: string; allow_inferred_calls: boolean; version: number };
@@ -14,8 +14,11 @@ type Job = { id: string; kind: string; entity_key: string; state: string; versio
 type Delivery = { id: string; outbox_id: string; outbox_version: number; state: string; review_required: boolean; request_id: string | null; diagnostic: string | null; warnings: boolean; attempts: number; polls: number };
 type Preview = { delivery_settings: { enabled: boolean; version: number }; deliveries: Delivery[]; settings: Settings; candidates: Candidate[]; jobs: Job[]; limit: number; history: { id: number; kind: string; actor: string; created_at: string }[] };
 const identity = (c: { kind: string; entity_key: string }) => `${c.kind}:${c.entity_key}`;
+export type Tab = "overview" | "actions" | "google" | "microsoft" | "events" | "advanced";
+export type Panel = (t: Tab) => { id: string; role: "tabpanel"; "aria-labelledby": string; hidden: boolean; className: string };
+const TABS: [Tab, string][] = [["overview", "Overview"], ["actions", "Actions"], ["google", "Google Ads"], ["microsoft", "Microsoft Ads"], ["events", "Events"], ["advanced", "Advanced"]];
 const date = (s: string | null) => s ? new Date(s).toLocaleString() : "Not recorded";
-export function Conversions({ api }: { api: Client }) {
+export function Conversions({ api, tab: routeTab, onTab }: { api: Client; tab: string | null; onTab: (t: Tab) => void }) {
   const [data, setData] = useState<Preview | null>(null);
   const [selected, setSelected] = useState("");
   const [error, setError] = useState("");
@@ -24,6 +27,9 @@ export function Conversions({ api }: { api: Client }) {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   // Bumped when the Microsoft section changes actions or the checklist.
   const [microsoftKey, setMicrosoftKey] = useState(0);
+  const tab: Tab = TABS.some(([t]) => t === routeTab) ? routeTab as Tab : "overview";
+  const setTab = onTab;
+  const [setup, setSetup] = useState<Setup | null>(null);
   async function refresh() { setData(await api<Preview>("/conversions")); }
   useEffect(() => { let active = true; api<Preview>("/conversions").then(d => { if (active) setData(d); }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [api]);
   async function mutate(path: string, body: unknown, message: string, method?: string) {
@@ -33,28 +39,41 @@ export function Conversions({ api }: { api: Client }) {
     finally { setBusy(false); }
   }
   const candidate = data?.candidates.find(c => identity(c) === selected) ?? data?.candidates[0];
+  const panel = (t: Tab) => ({ id: `conversions-panel-${t}`, role: "tabpanel", "aria-labelledby": `conversions-tab-${t}`, hidden: tab !== t, className: "conversion-panel" } as const);
+  const manualInUse = !!data && !!(data.settings.qualified_action_id || data.settings.booking_action_id || data.jobs.length);
+  const dot = (t: Tab) => {
+    if (!setup) return null;
+    if (t === "google") return <i className={`tab-dot ${setup.ready ? "ok" : "todo"}`} aria-hidden="true" />;
+    if (t === "microsoft") { const m = setup.microsoft; return m?.configured ? <i className={`tab-dot ${m.ready ? "ok" : m.connected ? "todo" : "off"}`} aria-hidden="true" /> : null; }
+    return null;
+  };
+  function choose(t: Tab) { setTab(t); setNotice(""); }
+  function keys(e: KeyboardEvent<HTMLDivElement>) {
+    const i = TABS.findIndex(([t]) => t === tab);
+    const next = e.key === "ArrowRight" ? (i + 1) % TABS.length : e.key === "ArrowLeft" ? (i - 1 + TABS.length) % TABS.length : e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault(); setTab(TABS[next][0]);
+    document.getElementById(`conversions-tab-${TABS[next][0]}`)?.focus();
+  }
   return <div className="conversion-layout">
-    <p className="notice"><strong>Google and Microsoft conversions.</strong> Connect Google Ads, define the steps of your pipeline (like lead, quote sent and order) and map each to a Google conversion action. Your CRM or booking system posts events; VisiConvert finds the ad click and sends them automatically once you turn sending on. Microsoft Advertising can receive the same actions as a second destination; connect it below the Google steps.</p>
+    <div className="conversion-tabs" role="tablist" aria-label="Conversion settings" onKeyDown={keys}>
+      {TABS.map(([t, name]) => <button key={t} id={`conversions-tab-${t}`} role="tab" type="button" aria-selected={tab === t} aria-controls={`conversions-panel-${t}`} tabIndex={tab === t ? 0 : -1} className={`conversion-tab ${tab === t ? "on" : ""}`} onClick={() => choose(t)}>{name}{dot(t)}{t === "advanced" && manualInUse && <span className="tab-note">in use</span>}</button>)}
+    </div>
     {error && <p className="error" role="alert">{error}</p>}
-    {notice && <p className="notice" role="status">{notice}</p>}
-    {!data ? <p>Loading conversion preparation…</p> : <>
-      <GoogleConnection api={api} settings={data.settings} onChange={refresh} onDiscovery={setDiscovery} />
-      <PipelineConversions api={api} revision={data.delivery_settings.version} settingsVersion={data.settings.version} refreshKey={microsoftKey} discovery={discovery?.customer === data.settings.customer_id ? discovery : null} onChange={refresh} />
-      <MicrosoftConnection api={api} revision={data.delivery_settings.version} onChange={async () => { setMicrosoftKey(k => k + 1); await refresh(); }} />
-      <section className="card site-panel" aria-label="Google delivery history"><h2>Google delivery history</h2>
-        <p className="muted">Processed means Google processed this request; it does not prove ad attribution or inclusion in bidding reports. Warnings and uncertain outcomes need review using the saved request ID. An uncertain send is never automatically submitted again.</p>
-        {!data.deliveries.length ? <p>No events validated or sent yet.</p> : <div className="conversion-jobs">{data.deliveries.map(d => <article className="conversion-job" key={d.id}>
-          <strong>{label(d.state)}{d.review_required ? " · Review required" : ""}</strong>
-          <small>Preparation {d.outbox_id} · revision {d.outbox_version} · {d.attempts} delivery attempts</small>
-          {d.request_id && <small>Google request ID: <code>{d.request_id}</code></small>}
-          {d.diagnostic && <p>{d.diagnostic}</p>}
-          {d.warnings && <p className="notice">Google reported warnings. Inspect the request in Google diagnostics.</p>}
-          {d.state === "validated" && !d.review_required && <button className="primary" disabled={busy || !data.delivery_settings.enabled} onClick={() => void mutate(`/conversions/deliveries/${d.id}/queue`, {}, "Delivery queued. Refresh to check Google processing status.")}>Queue conversion for Google</button>}
-          {d.request_id && ["uncertain", "needs_review", "failed"].includes(d.state) && <button className="secondary" disabled={busy} onClick={() => void mutate(`/conversions/deliveries/${d.id}/recheck`, {}, "Receipt check queued. The event will not be uploaded again.")}>Recheck Google receipt</button>}
-        </article>)}</div>}
-      </section>
-      <details className="card site-panel conversion-advanced" aria-label="Advanced: manual review"><summary>Advanced: manual review{!!(data.settings.qualified_action_id || data.settings.booking_action_id || data.jobs.length) ? " · in use" : ""}</summary>
+    {!data ? <p>Loading conversions…</p> : <>
+      <PipelineConversions api={api} revision={data.delivery_settings.version} settingsVersion={data.settings.version} refreshKey={microsoftKey} discovery={discovery?.customer === data.settings.customer_id ? discovery : null} onChange={refresh} onSetup={setSetup} tab={tab} panel={panel} open={choose} />
+      <div {...panel("google")}>
+        <GoogleConnection api={api} settings={data.settings} onChange={refresh} onDiscovery={setDiscovery} />
+      </div>
+      <div {...panel("microsoft")}>
+        <MicrosoftConnection api={api} revision={data.delivery_settings.version} onChange={async () => { setMicrosoftKey(k => k + 1); await refresh(); }} />
+      </div>
+      <div {...panel("advanced")}>
+      {notice && <p className="notice" role="status">{notice}</p>}
+      <section className="card site-panel" aria-label="Advanced: manual review">
+        <div><span className="eyebrow">ADVANCED</span><h2>Manual review{manualInUse ? " · in use" : ""}</h2></div>
         <p className="muted">The original reviewed flow: fixed qualified-lead and booking actions that you stage, validate with Google and queue one conversion at a time. You don’t need it for automatic conversions. Don’t map the same Google action in both flows, or conversions count twice.</p>
+      </section>
         <ReviewedGoogleActions api={api} discovery={discovery?.customer === data.settings.customer_id ? discovery : null} settings={data.settings} onChange={refresh} />
       <section className="card site-panel" aria-label="Google delivery controls">
         <div className="section-heading"><div><span className="eyebrow">GOOGLE DELIVERY</span><h2>{data.delivery_settings.enabled ? "Delivery enabled" : "Delivery paused"}</h2></div><button className="secondary" disabled={busy} onClick={() => void mutate("/conversions/delivery/settings", { enabled: !data.delivery_settings.enabled, version: data.delivery_settings.version }, data.delivery_settings.enabled ? "Pending sends paused. Existing receipts can still be checked." : "Delivery enabled. Only explicitly queued events will be sent.", "PUT")}>{data.delivery_settings.enabled ? "Pause Google delivery" : "Enable reviewed delivery"}</button></div>
@@ -86,7 +105,19 @@ export function Conversions({ api }: { api: Client }) {
         </article>)}</div>}
       </section>
       <details className="card site-panel"><summary>Preparation history (latest 100)</summary><ul className="inquiry-history">{data.history.map(h => <li key={h.id}>{label(h.kind)} · {h.actor} · {date(h.created_at)}</li>)}</ul></details>
-      </details>
+      <section className="card site-panel" aria-label="Manual delivery history"><h2>Manual delivery history</h2>
+        <p className="muted">Processed means Google processed this request; it does not prove ad attribution or inclusion in bidding reports. Warnings and uncertain outcomes need review using the saved request ID. An uncertain send is never automatically submitted again.</p>
+        {!data.deliveries.length ? <p>No events validated or sent yet.</p> : <div className="conversion-jobs">{data.deliveries.map(d => <article className="conversion-job" key={d.id}>
+          <strong>{label(d.state)}{d.review_required ? " · Review required" : ""}</strong>
+          <small>Preparation {d.outbox_id} · revision {d.outbox_version} · {d.attempts} delivery attempts</small>
+          {d.request_id && <small>Google request ID: <code>{d.request_id}</code></small>}
+          {d.diagnostic && <p>{d.diagnostic}</p>}
+          {d.warnings && <p className="notice">Google reported warnings. Inspect the request in Google diagnostics.</p>}
+          {d.state === "validated" && !d.review_required && <button className="primary" disabled={busy || !data.delivery_settings.enabled} onClick={() => void mutate(`/conversions/deliveries/${d.id}/queue`, {}, "Delivery queued. Refresh to check Google processing status.")}>Queue conversion for Google</button>}
+          {d.request_id && ["uncertain", "needs_review", "failed"].includes(d.state) && <button className="secondary" disabled={busy} onClick={() => void mutate(`/conversions/deliveries/${d.id}/recheck`, {}, "Receipt check queued. The event will not be uploaded again.")}>Recheck Google receipt</button>}
+        </article>)}</div>}
+      </section>
+      </div>
     </>}
   </div>;
 }

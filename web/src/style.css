@@ -1343,6 +1343,45 @@ footer button {
 .conversion-job .badge, .conversion-job button { justify-self: start; }
 .conversion-layout .site-diagnostics dd { font-size: 16px; overflow-wrap: anywhere; }
 .conversion-layout .site-code { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Conversions: tabs, destination status and per-action mappings. */
+.conversion-tabs { display: flex; gap: 2px; border-bottom: 1px solid #e1e6db; overflow-x: auto; scrollbar-width: none; margin-bottom: -4px; }
+.conversion-tabs::-webkit-scrollbar { display: none; }
+.conversion-tab { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 10px 14px 11px; color: #75806f; border-bottom: 2px solid transparent; margin-bottom: -1px; border-radius: 0; white-space: nowrap; }
+.conversion-tab:hover:not(.on) { color: #3d5246; }
+.conversion-tab.on { color: #244c3b; border-bottom-color: #244c3b; }
+.conversion-tab:focus-visible { outline-offset: -3px; }
+.tab-dot { width: 6px; height: 6px; border-radius: 50%; background: #c3c9ba; }
+.tab-dot.ok { background: #6f9a4a; }
+.tab-dot.todo { background: #d39a3c; }
+.tab-note { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: #9aa28e; }
+.conversion-panel { display: grid; gap: 20px; min-width: 0; }
+.conversion-panel[hidden] { display: none; }
+.conversion-panel > *, .conversion-panel .form-field { min-width: 0; }
+.destination-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.destination-card { display: grid; gap: 10px; align-content: start; padding: 20px 22px; min-width: 0; overflow-wrap: anywhere; }
+.destination-card.ok { border-top: 3px solid #6f9a4a; }
+.destination-card.todo { border-top: 3px solid #d39a3c; }
+.destination-card.off { border-top: 3px solid #d7dccf; }
+.destination-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.destination-head h2 { font-size: 15px; margin: 0; }
+.destination-detail { margin: 0; font-size: 12px; color: #4f5d50; }
+.destination-steps { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.6; color: #64705f; }
+.destination-card .muted { margin: 0; font-size: 12px; }
+.destination-card button { justify-self: start; }
+.state-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 600; padding: 4px 9px; border-radius: 999px; background: #f1f2eb; color: #828a76; white-space: nowrap; }
+.state-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .8; }
+.state-pill.on { background: #ecf3e4; color: #5f7f45; }
+.state-pill.todo { background: #fbf1e0; color: #a77a2e; }
+.sending-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 0; }
+.sending-state small { color: #8c9685; font-size: 11px; }
+.action-destinations { display: flex; flex-wrap: wrap; gap: 8px; }
+.action-destinations span { display: inline-flex; align-items: baseline; gap: 6px; font-size: 11px; padding: 5px 9px; border-radius: 6px; background: #f6f7f2; color: #8a927e; border: 1px dashed #dfe4d7; }
+.action-destinations span.mapped { background: #f3f7ee; color: #4f6545; border-style: solid; border-color: #dfe8d5; }
+.action-destinations b { font-size: 9px; letter-spacing: .6px; text-transform: uppercase; color: inherit; opacity: .75; }
+.event-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge.delivery-delivered, .badge.delivery-sent, .badge.delivery-processed { background: #ecf3e4; color: #5f7f45; }
+.badge.delivery-blocked, .badge.delivery-failed, .badge.delivery-needs_review, .badge.delivery-uncertain { background: #fbf1e0; color: #a77a2e; }
+@media (max-width: 600px) { .conversion-tabs { flex-wrap: wrap; overflow-x: visible; } .conversion-tab { padding: 9px 10px 10px; } .destination-grid { grid-template-columns: 1fr; } }
 .google-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; }
 .google-callback { overflow-wrap: anywhere; }
 .google-connection select { max-width: 100%; }

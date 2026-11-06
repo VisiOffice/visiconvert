@@ -1,3 +1,16 @@
+## Unreleased — Conversions tabs and page URLs
+
+- **Conversions** is split into tabs: Overview (a status card for Google Ads and for
+  Microsoft Advertising with what is left to do, the sending switches and the consent
+  policy), Actions (each action's Google mapping and Microsoft goal side by side), Google
+  Ads, Microsoft Ads, Events (Google and Microsoft status per event) and Advanced (the
+  manual review flow, formerly a collapsed section). Setup copy names tabs instead of
+  numbered steps. No API or data changes.
+- Every workspace page and Conversions tab has its own URL, for example
+  `/app/<workspace>/conversions/microsoft` on hosted workspaces or `/logs` on a self-host.
+  Reloading or opening a link shows that page, and Back/Forward move between pages and
+  tabs. `/app/<workspace>` still opens the overview; unknown paths open the overview too.
+
 ## Unreleased — Grouped navigation and an activity log
 
 - The workspace sidebar is grouped into Workspace (Overview, Lead inbox, Tracking numbers,
