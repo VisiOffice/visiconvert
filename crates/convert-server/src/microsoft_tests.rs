@@ -1394,3 +1394,96 @@ async fn microsoft_consent_new_goal_wait_and_inferred_calls() {
     task.abort();
     w.task.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires disposable VISICONVERT_TEST_DATABASE_URL"]
+async fn microsoft_include_since_sends_earlier_clicks() {
+    let w = world("not_required_outside_eea", true).await;
+    let (a, m, task) = with_microsoft(&w.a).await;
+    let w = World { a: a.clone(), ..w };
+    assert!(connect(&a, &m, "good").await.ends_with("connected"));
+    choose(&a).await;
+    ms_lead(&w, "602-555-0400", None, Some("ms-click-old")).await;
+    let body = json!({"action":"order","external_id":"old","match":{"phone":"6025550400"},"value_minor":2500});
+    post(&w, body.clone()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    map(&a, "order", json!("Orders")).await;
+    check(&a).await;
+    let (_, v) = post(&w, body.clone()).await;
+    assert!(
+        v["delivery"]["microsoft"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("before this action was mapped"),
+        "{v}"
+    );
+    let version = |a: Shared| async move {
+        a.store
+            .conversion_actions()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|v| v["key"] == "order")
+            .unwrap()["version"]
+            .clone()
+    };
+    let path = "/api/conversion-actions/order/microsoft-goal";
+    // Beyond Microsoft's 90-day click window, in the future, or without a goal: refused.
+    for since in [
+        json!((chrono::Utc::now() - chrono::Duration::days(91)).to_rfc3339()),
+        json!((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339()),
+    ] {
+        let (s, v) = api(
+            a.clone(),
+            "PUT",
+            path,
+            &a.api_key,
+            json!({"version":version(a.clone()).await,"goal_name":"Orders","include_since":since}),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    }
+    let since = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+    let (s, v) = api(
+        a.clone(),
+        "PUT",
+        path,
+        &a.api_key,
+        json!({"version":version(a.clone()).await,"goal_name":null,"include_since":since}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    let (s, v) = api(
+        a.clone(),
+        "PUT",
+        path,
+        &a.api_key,
+        json!({"version":version(a.clone()).await,"goal_name":"Orders","include_since":since}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    // The event that was finalized only for predating the mapping is planned and sent.
+    microsoft::plan(&a).await.unwrap();
+    let (_, list) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-events?external_id=old",
+        &w.key,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        list["data"][0]["delivery"]["microsoft"]["status"], "queued",
+        "{list}"
+    );
+    assert_eq!(drain(&a).await, 1);
+    let applies = m.applies.lock().unwrap().clone();
+    assert_eq!(applies.len(), 1);
+    assert!(
+        applies[0].contains("<MicrosoftClickId>ms-click-old</MicrosoftClickId>"),
+        "{}",
+        applies[0]
+    );
+    task.abort();
+    w.task.abort();
+}

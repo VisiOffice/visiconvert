@@ -10,6 +10,8 @@
   `ApplyOfflineConversionAdjustments`. Only events recorded after an action is mapped are
   sent, so an older uploader can be switched off without double counting. Uncertain sends
   are never replayed.
+- `include_since` on the Microsoft goal mapping (owner-confirmed, at most 90 days back)
+  also sends earlier events and Microsoft-click leads that no other uploader saw.
 - New MCP tools (existing tool schemas are unchanged): `list_microsoft_accounts`,
   `list_microsoft_goals`, `set_microsoft_destination`, `set_microsoft_action_goal`,
   `create_microsoft_goal`, `check_microsoft_destination`,

@@ -2042,6 +2042,11 @@
             ],
             "maxLength": 100,
             "description": "Exact name of an offline conversion goal in the saved ad account, or null to clear. A new or changed mapping applies only to events recorded from now on."
+          },
+          "include_since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Owner-confirmed: also send events and Microsoft-click leads since this time, at most 90 days ago. Only for clicks no other uploader sent, or Microsoft counts them twice. Requires goal_name."
           }
         },
         "required": [
@@ -10347,7 +10352,7 @@
         ]
       },
       "put": {
-        "summary": "Map an action to a Microsoft offline conversion goal by exact name, or clear it (goal_name null), at the current action version. Events recorded before a new or changed mapping are never sent to Microsoft",
+        "summary": "Map an action to a Microsoft offline conversion goal by exact name, or clear it (goal_name null), at the current action version. Events recorded before a new or changed mapping are never sent to Microsoft unless include_since moves the start earlier",
         "operationId": "put_conversion_actions_key_microsoft_goal",
         "description": "Requires `conversions:write` permission.",
         "security": [
