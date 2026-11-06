@@ -2,16 +2,18 @@
 
 - The workspace sidebar is grouped into Workspace (Overview, Lead inbox, Tracking numbers,
   Sites), Advertising (Conversions, Connections) and Developers (API keys, Webhooks, Logs).
-  Button labels are unchanged. While setup is incomplete, Setup is pinned at the top with
-  progress from the existing setup evidence (a website or number, a tracked visit or call,
-  a real inquiry); afterwards it stays reachable below the groups.
+  Button labels are unchanged. Until the first real (non-demo) inquiry arrives, from any
+  source including the API, Setup is pinned at the top: it names the next step when no
+  website or tracking number is registered, and reads "Ready · waiting for your first lead"
+  once one is. Afterwards Setup stays reachable below the groups.
 - New **Logs** page: one newest-first timeline of calls, forms, pipeline conversion events
   and their Google and Microsoft deliveries, webhook deliveries (with HTTP status), and
   configuration changes made in the app, by API keys or by agents, with who made them.
-  Filter by kind and 24h/7d/30d, page with Load more, expand a row for details or to
-  open the lead.
+  Filter by kind (Calls, Forms, Conversions, Webhooks, Changes) and 24h/7d/30d, page with
+  Load more, expand a row for details or to open the lead.
 - New read-only `GET /api/v1/activity` (`read` scope, keyset `cursor`, `kind`, `since`,
-  `limit`) and the private `/api/activity` the UI uses. Items are summaries from fields
+  `limit`) and the private `/api/activity` the UI uses. Kinds are `call`, `form`,
+  `conversion`, `webhook` and `changes` (`api` is accepted as an alias for `changes`). Items are summaries from fields
   other endpoints already return; form and webhook payloads, provider requests, click
   IDs, endpoint URLs beyond their host, and secrets are never read into the response.
 - New MCP tool `list_activity` (existing tool schemas are unchanged).

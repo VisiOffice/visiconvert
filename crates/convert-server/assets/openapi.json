@@ -2141,7 +2141,7 @@
               "form",
               "conversion",
               "webhook",
-              "api"
+              "changes"
             ]
           },
           "occurred_at": {
@@ -2170,7 +2170,7 @@
               "string",
               "null"
             ],
-            "description": "Who made an api change"
+            "description": "Who made a change (kind changes)"
           },
           "lead_id": {
             "type": [
@@ -8765,7 +8765,7 @@
     },
     "/activity": {
       "get": {
-        "summary": "One timeline of calls, forms, pipeline conversion events and their Google and Microsoft deliveries, webhook deliveries, and API, agent and owner configuration changes, newest first",
+        "summary": "One timeline of calls, forms, pipeline conversion events and their Google and Microsoft deliveries, webhook deliveries, and changes to settings, API keys and webhooks made in the app, by API keys or by agents, newest first",
         "operationId": "get_activity",
         "description": "Requires `read` permission.",
         "security": [
@@ -8922,9 +8922,11 @@
                 "form",
                 "conversion",
                 "webhook",
+                "changes",
                 "api"
               ]
-            }
+            },
+            "description": "api is an alias for changes"
           },
           {
             "in": "query",

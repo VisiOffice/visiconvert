@@ -10,12 +10,12 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sqlx::Row;
 
-pub const KINDS: [&str; 5] = ["call", "form", "conversion", "webhook", "api"];
+pub const KINDS: [&str; 5] = ["call", "form", "conversion", "webhook", "changes"];
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActivityQuery {
-    /// One of KINDS; all kinds when absent.
+    /// One of KINDS (`api` is accepted for `changes`); all kinds when absent.
     pub kind: Option<String>,
     pub since: Option<DateTime<Utc>>,
     pub cursor: Option<String>,
@@ -73,21 +73,21 @@ const SOURCES: &[Source] = &[
     // Worker and trigger rows restate the delivery and pipeline rows above; they are left out
     // here, and migration 0028 indexes exactly the rows that remain.
     Source {
-        kinds: &["api"],
+        kinds: &["changes"],
         at: "e.created_at",
         key: "'conversion_audit:'||lpad(e.id::text,20,'0')",
         fields: "'source','conversion_audit','id',e.id,'event',e.kind,'actor',e.actor,'payload',e.payload",
         from: "conversion_events e WHERE e.workspace_id=$1 AND e.actor NOT IN ('worker','system') AND e.kind NOT IN ('delivery_status','invalidated','pipeline_event_recorded','pipeline_event_canceled')",
     },
     Source {
-        kinds: &["api"],
+        kinds: &["changes"],
         at: "e.created_at",
         key: "'api_key_audit:'||lpad(e.id::text,20,'0')",
         fields: "'source','api_key_audit','id',e.id,'event',e.kind,'actor',e.actor,'key_name',k.name",
         from: "api_key_events e JOIN workspace_api_keys k ON k.workspace_id=e.workspace_id AND k.id=e.key_id WHERE e.workspace_id=$1",
     },
     Source {
-        kinds: &["api"],
+        kinds: &["changes"],
         at: "e.created_at",
         key: "'webhook_endpoint_audit:'||lpad(e.id::text,20,'0')",
         fields: "'source','webhook_endpoint_audit','id',e.id,'event',e.kind,'actor',e.actor,'endpoint_id',e.endpoint_id,'endpoint_host',{host:w.url},'endpoint_description',w.description",
@@ -308,7 +308,7 @@ fn item(at: DateTime<Utc>, f: &Value) -> Value {
                 }
             }
             (
-                "api",
+                "changes",
                 summary,
                 "recorded".into(),
                 "neutral",
@@ -350,9 +350,13 @@ impl Store {
         let kind = query
             .kind
             .as_deref()
-            .filter(|k| !k.is_empty() && *k != "all");
+            .filter(|k| !k.is_empty() && *k != "all")
+            // `api` was the working name for configuration changes; keep accepting it.
+            .map(|k| if k == "api" { "changes" } else { k });
         if kind.is_some_and(|k| !KINDS.contains(&k)) {
-            return Err(ValidationError("Use kind call, form, conversion, webhook or api").into());
+            return Err(
+                ValidationError("Use kind call, form, conversion, webhook or changes").into(),
+            );
         }
         let cursor = query.cursor.as_deref().map(parse_cursor).transpose()?;
         let branches: Vec<String> = SOURCES
@@ -414,7 +418,7 @@ mod tests {
         assert!(!text.contains("secret-token") && !text.contains("Cj0-click"));
         assert_eq!(value["detail"]["enabled"], true);
         assert_eq!(value["detail"]["action"], "booked");
-        assert_eq!(value["kind"], "api");
+        assert_eq!(value["kind"], "changes");
         assert_eq!(value["actor"], "owner");
     }
 }

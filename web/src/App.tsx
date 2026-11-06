@@ -186,14 +186,10 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
-  const setupSteps = [
-    { label: "Add a website or tracking number", done: !!evidence && (evidence.sites.length > 0 || evidence.numbers.length > 0) },
-    { label: "See a tracked visit or call", done: !!evidence && (evidence.sites.some(x => x.last_session_at) || evidence.numbers.some(x => x.last_call_at)) },
-    { label: "Receive a real inquiry", done: leads.some(l => !l.is_demo) },
-  ];
-  const setupDone = setupSteps.filter(x => x.done).length;
-  // Without setup evidence, a real inquiry is the existing sign that setup is finished.
-  const setupComplete = evidence ? setupDone === setupSteps.length : leads.some(l => !l.is_demo);
+  // Setup is finished once a real (non-demo) inquiry exists, from any source including the API.
+  const setupComplete = leads.some(l => !l.is_demo);
+  // A site or number is registered: nothing left to do but wait for the first lead.
+  const setupReady = evidence ? evidence.sites.length > 0 || evidence.numbers.length > 0 : numbers.length > 0;
   const go = (next: Page) => { setPage(next); setSetupKey(false); setError(""); };
   const navButton = (p: NavPage) => (
     <button key={p.name} className={page === p.name ? "active" : ""} aria-current={page === p.name ? "page" : undefined} onClick={() => go(p.name)}>
@@ -292,12 +288,13 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
         <nav aria-label="Workspace pages">
           {!setupComplete && (
             <>
-              <button className={`nav-setup ${page === "Setup" ? "active" : ""}`} aria-current={page === "Setup" ? "page" : undefined} aria-describedby="setup-progress" onClick={() => go("Setup")}>
-                <span className="nav-setup-title"><Sparkles size={17} />Setup<span className="nav-setup-count" aria-hidden="true">{setupDone}/{setupSteps.length}</span></span>
-                <span className="nav-setup-bar" aria-hidden="true"><i style={{ width: `${(setupDone / setupSteps.length) * 100}%` }} /></span>
-                <span className="nav-setup-next" aria-hidden="true">{setupSteps.find(x => !x.done)?.label}</span>
+              <button className={`nav-setup ${setupReady ? "ready" : ""} ${page === "Setup" ? "active" : ""}`} aria-current={page === "Setup" ? "page" : undefined} aria-describedby="setup-progress" onClick={() => go("Setup")}>
+                <span className="nav-setup-title"><Sparkles size={17} />Setup</span>
+                {setupReady
+                  ? <span className="nav-setup-next" aria-hidden="true"><i className="nav-setup-dot" />Ready · waiting for your first lead</span>
+                  : <span className="nav-setup-next" aria-hidden="true">Next: add a website or tracking number</span>}
               </button>
-              <span id="setup-progress" className="sr-only">{setupDone} of {setupSteps.length} setup steps done</span>
+              <span id="setup-progress" className="sr-only">{setupReady ? "Ready, waiting for your first lead" : "Next step: add a website or tracking number"}</span>
             </>
           )}
           {groups.map(g => (

@@ -264,7 +264,7 @@ async fn activity_unions_sources_filters_pages_and_isolates() {
         ),
         ("webhook", vec!["webhook_delivery"]),
         (
-            "api",
+            "changes",
             vec![
                 "conversion_audit",
                 "api_key_audit",
@@ -289,6 +289,17 @@ async fn activity_unions_sources_filters_pages_and_isolates() {
             "{kind}"
         );
     }
+    // `api` is the earlier name for `changes` and still filters the same rows.
+    let (s, alias, _) = get(a.clone(), "/api/activity?kind=api", OPERATOR).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(alias["data"].as_array().unwrap().len(), 3, "{alias}");
+    assert!(
+        alias["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["kind"] == "changes")
+    );
     let (_, forms, _) = get(a.clone(), "/api/activity?kind=form", OPERATOR).await;
     assert_eq!(forms["data"].as_array().unwrap().len(), 6);
     let cutoff = t(6) - chrono::Duration::seconds(30);

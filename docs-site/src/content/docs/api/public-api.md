@@ -106,7 +106,8 @@ inventory returns one provider page with `has_more`; it is not a complete export
 `GET /activity` (read) is one newest-first timeline: calls, forms, pipeline conversion
 events and their Google and Microsoft deliveries, webhook deliveries with their last HTTP
 status, and configuration changes made through the UI, API keys or agents with who made
-them. Filter with `kind` (call, form, conversion, webhook or api) and `since`; page with
+them. Filter with `kind` (call, form, conversion, webhook or changes; `api` is accepted as
+an alias for changes) and `since`; page with
 `limit` and `cursor` like the lists above. Items are summaries built from fields other
 endpoints already return: no form payloads, webhook payloads, provider requests, click IDs
 or secrets. The MCP tool `list_activity` reads the same log.

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ComponentType } from "react";
 import { money, type Client } from "./api";
 import { Activity, Check, ChevronDown, Code2, FileText, Loader2, Phone, RefreshCw, ScrollText, type IconProps } from "./icons";
 
-type Kind = "call" | "form" | "conversion" | "webhook" | "api";
+type Kind = "call" | "form" | "conversion" | "webhook" | "changes";
 type Outcome = "success" | "warning" | "failure" | "pending" | "neutral";
 export type ActivityItem = {
   id: string | number; source: string; kind: Kind; occurred_at: string; summary: string;
@@ -17,7 +17,7 @@ const kinds: { value: Kind | "all"; label: string; empty: string }[] = [
   { value: "form", label: "Forms", empty: "form submissions" },
   { value: "conversion", label: "Conversions", empty: "conversion events or deliveries" },
   { value: "webhook", label: "Webhooks", empty: "webhook deliveries" },
-  { value: "api", label: "API", empty: "API, agent or settings changes" },
+  { value: "changes", label: "Changes", empty: "settings, API key or webhook changes" },
 ];
 const ranges = [
   { value: "24h", label: "24h", name: "the last 24 hours", hours: 24 },
@@ -29,7 +29,7 @@ const kindMeta: Record<Kind, { label: string; icon: ComponentType<IconProps> }> 
   form: { label: "Form", icon: FileText },
   conversion: { label: "Conversion", icon: Check },
   webhook: { label: "Webhook", icon: Activity },
-  api: { label: "API", icon: Code2 },
+  changes: { label: "Changes", icon: Code2 },
 };
 const detailLabels: Record<string, string> = {
   contact: "Contact", campaign: "Campaign", tracking_number: "Tracking number", forwarded_to: "Forwarded to",
@@ -120,7 +120,7 @@ export function Logs({ api, onOpenLead }: { api: Client; onOpenLead: (inquiryId:
       : !items.length ? <div className="empty">
           <span className="empty-icon"><ScrollText size={22} /></span>
           <h3>No {kindName} in {rangeName}</h3>
-          <p>{kind === "webhook" ? "Deliveries appear once an endpoint in Webhooks receives an event." : kind === "api" ? "Settings, API key and webhook changes appear here with who made them." : kind === "conversion" ? "Pipeline events posted by your systems and their Google and Microsoft deliveries appear here." : "New calls, forms, deliveries and changes appear here as they happen."}</p>
+          <p>{kind === "webhook" ? "Deliveries appear once an endpoint in Webhooks receives an event." : kind === "changes" ? "Settings, API key and webhook changes appear here with who made them." : kind === "conversion" ? "Pipeline events posted by your systems and their Google and Microsoft deliveries appear here." : "New calls, forms, deliveries and changes appear here as they happen."}</p>
           {range !== "30d" && <button className="secondary" onClick={() => setRange("30d")}>Show the last 30 days</button>}
         </div>
       : <ol className="timeline">
@@ -128,7 +128,7 @@ export function Logs({ api, onOpenLead }: { api: Client; onOpenLead: (inquiryId:
             const key = `${item.source}:${item.id}`;
             const heading = day(item.occurred_at);
             const showDay = heading !== lastDay; lastDay = heading;
-            const meta = kindMeta[item.kind] || kindMeta.api;
+            const meta = kindMeta[item.kind] || kindMeta.changes;
             const details = Object.entries(item.detail || {}).filter(([, v]) => v !== null && v !== "" && v !== undefined);
             const expanded = open === key;
             return <li key={key} className={expanded ? "open" : ""}>
