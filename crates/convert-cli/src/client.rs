@@ -257,6 +257,10 @@ impl Client {
         )
         .await
     }
+    pub async fn activity(&self, query: &[(&str, String)]) -> Result<Value, Error> {
+        self.send(self.http.get(self.url("/api/activity")).query(query))
+            .await
+    }
     pub async fn conversion_events(&self, query: &[(&str, String)]) -> Result<Value, Error> {
         self.send(
             self.http

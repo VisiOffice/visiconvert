@@ -1,3 +1,27 @@
+## Unreleased — Grouped navigation and an activity log
+
+- The workspace sidebar is grouped into Workspace (Overview, Lead inbox, Tracking numbers,
+  Sites), Advertising (Conversions, Connections) and Developers (API keys, Webhooks, Logs).
+  Button labels are unchanged. While setup is incomplete, Setup is pinned at the top with
+  progress from the existing setup evidence (a website or number, a tracked visit or call,
+  a real inquiry); afterwards it stays reachable below the groups.
+- New **Logs** page: one newest-first timeline of calls, forms, pipeline conversion events
+  and their Google and Microsoft deliveries, webhook deliveries (with HTTP status), and
+  configuration changes made in the app, by API keys or by agents, with who made them.
+  Filter by kind and 24h/7d/30d, page with Load more, expand a row for details or to
+  open the lead.
+- New read-only `GET /api/v1/activity` (`read` scope, keyset `cursor`, `kind`, `since`,
+  `limit`) and the private `/api/activity` the UI uses. Items are summaries from fields
+  other endpoints already return; form and webhook payloads, provider requests, click
+  IDs, endpoint URLs beyond their host, and secrets are never read into the response.
+- New MCP tool `list_activity` (existing tool schemas are unchanged).
+- Migration 0028 is additive: five new indexes (Google, Microsoft and webhook deliveries,
+  webhook endpoint history, and the shown subset of conversion audit events). No table
+  or column changes.
+- Polish: consistent page headers with a section eyebrow and breadcrumb, styled notices
+  and empty states, hover, active and focus states, and a navigation row that keeps the
+  current page in view on phones. Colors are unchanged.
+
 ## Unreleased — Microsoft Advertising as a second conversion destination
 
 - Pipeline conversion actions can also be sent to Microsoft Advertising (Bing) as

@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod adoption;
 pub mod api_keys;
 pub mod connections;
