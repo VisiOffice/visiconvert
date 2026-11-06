@@ -55,6 +55,9 @@ pub fn goal_name(s: &str) -> bool {
     (1..=100).contains(&n) && !s.chars().any(char::is_control) && s.trim() == s
 }
 /// Reconsider blocked Microsoft plans now (all, or one action's).
+/// Microsoft accepts offline conversions for clicks up to 90 days old.
+const INCLUDE_SINCE_MAX_DAYS: i64 = 90;
+
 pub(crate) async fn wake_plans(
     conn: &mut PgConnection,
     workspace: Uuid,
@@ -333,14 +336,30 @@ impl Store {
     /// Map a pipeline action to a Microsoft offline conversion goal by name (uploads
     /// reference goals by name), or clear the mapping. A new or changed mapping starts
     /// now: events recorded earlier are never sent to Microsoft, so switching from
-    /// another uploader cannot count them twice. Shares the action's version.
+    /// another uploader cannot count them twice. `include_since` (owner's choice, at
+    /// most 90 days back, only with a goal) moves that start earlier so events and
+    /// Microsoft-click leads since then are sent too, for clicks no other uploader saw.
+    /// Shares the action's version.
     pub async fn set_microsoft_action_goal(
         &self,
         key: &str,
         goal: Option<&str>,
+        include_since: Option<DateTime<Utc>>,
         version: i32,
         actor: &str,
     ) -> Result<Value> {
+        if let Some(since) = include_since {
+            let now = Utc::now();
+            if goal.is_none() {
+                return Err(ValidationError("include_since needs a goal_name").into());
+            }
+            if since > now || since < now - Duration::days(INCLUDE_SINCE_MAX_DAYS) {
+                return Err(ValidationError(
+                    "include_since must be in the past and at most 90 days ago (Microsoft's click window)",
+                )
+                .into());
+            }
+        }
         if goal.is_some_and(|g| !goal_name(g)) {
             return Err(ValidationError(
                 "goal_name must be the Microsoft goal's exact name (1–100 characters)",
@@ -349,15 +368,21 @@ impl Store {
         }
         let mut tx = self.pool.begin().await?;
         self.lock_inquiry_writes(&mut tx).await?;
-        let saved: Value = sqlx::query_scalar("UPDATE conversion_actions a SET microsoft_mapped_at=CASE WHEN $3::text IS NULL THEN NULL WHEN a.microsoft_goal_name IS DISTINCT FROM $3 THEN now() ELSE a.microsoft_mapped_at END,microsoft_goal_name=$3,version=version+1,updated_at=now() WHERE workspace_id=$1 AND key=$2 AND version=$4 RETURNING to_jsonb(a)-'workspace_id'-'id'")
-            .bind(self.workspace).bind(key).bind(goal).bind(version).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+        let saved: Value = sqlx::query_scalar("UPDATE conversion_actions a SET microsoft_mapped_at=CASE WHEN $3::text IS NULL THEN NULL WHEN $5::timestamptz IS NOT NULL THEN $5 WHEN a.microsoft_goal_name IS DISTINCT FROM $3 THEN now() ELSE a.microsoft_mapped_at END,microsoft_goal_name=$3,version=version+1,updated_at=now() WHERE workspace_id=$1 AND key=$2 AND version=$4 RETURNING to_jsonb(a)-'workspace_id'-'id'")
+            .bind(self.workspace).bind(key).bind(goal).bind(version).bind(include_since).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+        if let Some(since) = include_since {
+            // Events already finalized only because they predated the mapping are planned
+            // again; anything that has a Microsoft request is left alone.
+            sqlx::query("DELETE FROM microsoft_event_plans p USING pipeline_events e WHERE p.workspace_id=$1 AND p.state='final' AND p.reason LIKE 'Recorded before this action was mapped%' AND e.workspace_id=p.workspace_id AND e.id=p.event_id AND e.action_key=$2 AND e.created_at>=$3 AND NOT EXISTS(SELECT 1 FROM microsoft_deliveries d WHERE d.workspace_id=p.workspace_id AND d.event_id=p.event_id)")
+                .bind(self.workspace).bind(key).bind(since).execute(&mut *tx).await?;
+        }
         wake_plans(&mut tx, self.workspace, Some(key)).await?;
         record(
             &mut tx,
             self.workspace,
             "microsoft_action_goal_saved",
             actor,
-            json!({"key":key,"version":saved["version"],"goal_name":goal}),
+            json!({"key":key,"version":saved["version"],"goal_name":goal,"include_since":include_since}),
         )
         .await?;
         tx.commit().await?;

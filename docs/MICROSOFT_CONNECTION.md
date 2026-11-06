@@ -121,6 +121,16 @@ Eligibility, checked per event:
   before the mapping are never sent, so switching off an older uploader does not double
   count.
 
+### Sending earlier clicks
+
+If some Microsoft clicks from before the mapping never reached any other uploader (for
+example calls only VisiConvert tracked), the owner can move the start earlier: map the
+action again with the same `goal_name` and `include_since` (at most 90 days ago, the
+Microsoft click window). Events and Microsoft-click leads since then are planned and sent
+like new ones. Use it only for clicks no other tool uploaded, or Microsoft counts them
+twice. Through MCP, `set_microsoft_action_goal` takes the same field and the agent must
+confirm the date with the owner first.
+
 ## Delivery guarantees
 
 - Each request is armed (`attempted_at`) before it leaves. If the response is lost or

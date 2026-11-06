@@ -669,6 +669,10 @@ pub(crate) struct MapGoal {
     version: i32,
     /// Exact name of a Microsoft offline conversion goal, or null to clear.
     goal_name: Option<String>,
+    /// Owner's choice: also send events and Microsoft-click leads since this time (at
+    /// most 90 days ago). Only for clicks no other uploader sent, or they count twice.
+    #[serde(default)]
+    include_since: Option<chrono::DateTime<chrono::Utc>>,
 }
 /// conversions:write. Uploads reference goals by name.
 async fn map_goal_route(
@@ -683,7 +687,7 @@ async fn map_goal_route(
     Ok(Json(
         access
             .store
-            .set_microsoft_action_goal(&path, name, input.version, &actor)
+            .set_microsoft_action_goal(&path, name, input.include_since, input.version, &actor)
             .await?,
     ))
 }
@@ -806,7 +810,7 @@ pub(crate) async fn create_goal(
             e => Err(e),
         })?;
     let action = store
-        .set_microsoft_action_goal(key, Some(&goal_name), input.version, actor)
+        .set_microsoft_action_goal(key, Some(&goal_name), None, input.version, actor)
         .await?;
     let ready = store
         .created_microsoft_goal(c.account_id.as_deref().unwrap(), key)

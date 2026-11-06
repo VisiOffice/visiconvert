@@ -436,14 +436,15 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "set_microsoft_action_goal",
-        description: "Map a VisiConvert pipeline action to an existing Microsoft offline conversion goal by its exact name (from list_microsoft_goals), or clear the mapping with goal_name null. Requires conversions:write. A new or changed mapping applies to events recorded from now on: earlier events are never sent to Microsoft, so switching from another uploader cannot count them twice. Turn off the other uploader for that goal at the same time.",
+        description: "Map a VisiConvert pipeline action to an existing Microsoft offline conversion goal by its exact name (from list_microsoft_goals), or clear the mapping with goal_name null. Requires conversions:write. A new or changed mapping applies to events recorded from now on: earlier events are never sent to Microsoft, so switching from another uploader cannot count them twice. Turn off the other uploader for that goal at the same time. To also send earlier Microsoft-click leads and events (for example calls no other uploader ever saw), pass include_since with the same goal_name: only after the owner explicitly confirms the date and that no other uploader sent conversions for those clicks, since Microsoft would count them twice.",
         changes: true,
         idempotent: true,
         schema: || {
             json!({"type":"object","additionalProperties":false,"required":["key","version","goal_name"],"properties":{
                 "key":{"type":"string"},
                 "version":{"type":"integer","minimum":1,"description":"Current action version from list_conversion_actions"},
-                "goal_name":{"type":["string","null"],"maxLength":100,"description":"Exact Microsoft goal name, or null to clear"}
+                "goal_name":{"type":["string","null"],"maxLength":100,"description":"Exact Microsoft goal name, or null to clear"},
+                "include_since":{"type":"string","format":"date-time","description":"Optional, owner-confirmed: also send leads and events since this time (at most 90 days ago). Omit to start from now."}
             }})
         },
     },
