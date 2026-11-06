@@ -404,6 +404,17 @@ No arguments.
 | `external_id` | string | No |  |
 | `limit` | integer | No | Default: `50`. |
 
+## `list_activity`
+
+**Read.** One timeline of everything that happened in the workspace, newest first: calls, form submissions, pipeline conversion events with their Google and Microsoft deliveries, webhook deliveries with HTTP status, and changes to settings, API keys and webhooks made in the app, by API keys or by agents, with who made them. Read-only summaries; no payloads, click IDs or secrets. Page with next_cursor.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `cursor` | string | No | next_cursor from the previous page, with the same kind and since. |
+| `kind` | `call`, `form`, `conversion`, `webhook`, `changes` | No | Only this kind; omit for everything. |
+| `limit` | integer | No | Default: `50`. |
+| `since` | string | No | 7d, 24h, 30m, or a date like 2026-10-01. |
+
 ## Prompt: `set_up_call_tracking`
 
 Walks an agent through setup:

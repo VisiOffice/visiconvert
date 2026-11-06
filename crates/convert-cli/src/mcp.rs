@@ -510,6 +510,20 @@ const TOOLS: &[Tool] = &[
             }})
         },
     },
+    Tool {
+        name: "list_activity",
+        description: "One timeline of everything that happened in the workspace, newest first: calls, form submissions, pipeline conversion events with their Google and Microsoft deliveries, webhook deliveries with HTTP status, and changes to settings, API keys and webhooks made in the app, by API keys or by agents, with who made them. Read-only summaries; no payloads, click IDs or secrets. Page with next_cursor.",
+        changes: false,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"properties":{
+                "kind":{"type":"string","enum":["call","form","conversion","webhook","changes"],"description":"Only this kind; omit for everything"},
+                "since":{"type":"string","description":"7d, 24h, 30m, or a date like 2026-10-01"},
+                "limit":{"type":"integer","minimum":1,"maximum":100,"default":50},
+                "cursor":{"type":"string","description":"next_cursor from the previous page, with the same kind and since"}
+            }})
+        },
+    },
 ];
 
 const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
@@ -970,6 +984,30 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
                 }
             }
             client.conversion_events(&query).await?
+        }
+        "list_activity" => {
+            let mut query = vec![(
+                "limit",
+                args["limit"]
+                    .as_u64()
+                    .unwrap_or(50)
+                    .clamp(1, 100)
+                    .to_string(),
+            )];
+            if let Some(since) = text(args, "since") {
+                let now = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now());
+                query.push((
+                    "since",
+                    ops::parse_since(&since, now)?
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                ));
+            }
+            for k in ["kind", "cursor"] {
+                if let Some(v) = text(args, k) {
+                    query.push((k, v));
+                }
+            }
+            client.activity(&query).await?
         }
         _ => bail!("Unknown tool {name}"),
     })

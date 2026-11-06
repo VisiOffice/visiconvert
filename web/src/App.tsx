@@ -8,6 +8,7 @@ import { Webhooks } from "./Webhooks";
 import { Conversions } from "./Conversions";
 import { Sites } from "./Sites";
 import { TwilioConnection } from "./TwilioConnection";
+import { Logs } from "./Logs";
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -26,6 +27,7 @@ import {
   Sparkles,
   Users,
   Activity,
+  ScrollText,
   X,
 } from "./icons";
 import {
@@ -45,18 +47,39 @@ import initWasm, {
   preview_attribution,
 } from "./generated/attribution/convert_wasm";
 
-type Page = "Setup" | "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys" | "Webhooks";
-const pages = [
-  { name: "Setup" as Page, icon: Sparkles },
-  { name: "Overview" as Page, icon: BarChart3 },
-  { name: "Lead inbox" as Page, icon: Users },
-  { name: "Tracking numbers" as Page, icon: Phone },
-  { name: "Sites" as Page, icon: Layers3 },
-  { name: "Connections" as Page, icon: Link2 },
-  { name: "Conversions" as Page, icon: Check },
-  { name: "API keys" as Page, icon: ShieldCheck },
-  { name: "Webhooks" as Page, icon: Activity },
+type Page = "Setup" | "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys" | "Webhooks" | "Logs";
+type NavPage = { name: Page; icon: typeof BarChart3 };
+// Button labels are part of the browser tests (engine and Cloud); keep them exact.
+const groups: { label: string; pages: NavPage[] }[] = [
+  { label: "Workspace", pages: [
+    { name: "Overview", icon: BarChart3 },
+    { name: "Lead inbox", icon: Users },
+    { name: "Tracking numbers", icon: Phone },
+    { name: "Sites", icon: Layers3 },
+  ] },
+  { label: "Advertising", pages: [
+    { name: "Conversions", icon: Check },
+    { name: "Connections", icon: Link2 },
+  ] },
+  { label: "Developers", pages: [
+    { name: "API keys", icon: ShieldCheck },
+    { name: "Webhooks", icon: Activity },
+    { name: "Logs", icon: ScrollText },
+  ] },
 ];
+const pageMeta: Record<Page, { group: string; eyebrow?: string; title?: string; text: string }> = {
+  Setup: { group: "Get started", text: "Connect your agent, choose how calls are tracked, and check what VisiConvert has observed." },
+  Overview: { group: "Workspace", eyebrow: "ATTRIBUTION, WITH CONTEXT", title: "See what’s working.", text: "Connect every inquiry to the source that started it." },
+  "Lead inbox": { group: "Workspace", text: "Review inquiries, qualify opportunities, and record bookings." },
+  "Tracking numbers": { group: "Workspace", text: "Give each campaign a number. Keep your existing phone system." },
+  Sites: { group: "Workspace", text: "Connect website visits and successful forms to their source." },
+  Conversions: { group: "Advertising", text: "Send pipeline conversions to Google Ads and Microsoft Advertising, and review what was sent." },
+  Connections: { group: "Advertising", text: "Connect Twilio or SignalWire and preview how a landing page is attributed." },
+  "API keys": { group: "Developers", text: "Give scripts, the CLI and agents scoped access to this workspace." },
+  Webhooks: { group: "Developers", text: "Send signed events to your CRM and automations." },
+  Logs: { group: "Developers", text: "Everything that happened in this workspace, newest first." },
+};
+type SetupEvidence = { sites: { last_session_at: string | null }[]; numbers: { last_call_at: string | null }[] };
 type HostedShell = { token: string; onManage: () => void; onSignOut: () => Promise<void>; onExpired: () => void };
 export default function App({ hosted }: { hosted?: HostedShell }) {
   const [key, setKey] = useState(hosted?.token || "");
@@ -69,6 +92,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [numbers, setNumbers] = useState<TrackingNumber[]>([]);
   const [summary, setSummary] = useState<Summary[]>([]);
+  const [evidence, setEvidence] = useState<SetupEvidence | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Lead | null>(null);
@@ -77,6 +101,11 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const api = useMemo(() => client(key, hosted?.onExpired), [key, hosted?.onExpired]);
+  useEffect(() => {
+    // On phones the navigation is one scrolling row; keep the current page in view.
+    if (window.matchMedia("(max-width: 760px)").matches)
+      document.querySelector(".sidebar nav [aria-current='page']")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [page]);
   useEffect(() => { if (hosted) setKey(hosted.token); }, [hosted?.token]);
   useEffect(() => {
     // Load once per workspace; a renewed token must not reload the page under the user.
@@ -106,14 +135,17 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   }, []);
 
   async function refresh(request = api) {
-    const [b, l, n, s, c, sw] = await Promise.all([
+    const [b, l, n, s, c, sw, e] = await Promise.all([
       request<Bootstrap>("/bootstrap"),
       request<Lead[]>("/inquiries"),
       request<TrackingNumber[]>("/numbers"),
       request<Summary[]>("/summary"),
       request<Connection>("/connections/twilio"),
       request<SignalWireStatus>("/connections/signalwire"),
+      // Setup progress is a sidebar hint; never block the workspace on it.
+      request<SetupEvidence>("/setup").catch(() => null),
     ]);
+    setEvidence(e);
     setBoot(b);
     setConnection(c);
     setSignalwire(sw);
@@ -154,6 +186,19 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
+  // Setup is finished once a real (non-demo) inquiry exists, from any source including the API.
+  const setupComplete = leads.some(l => !l.is_demo);
+  // A site or number is registered: nothing left to do but wait for the first lead.
+  const setupReady = evidence ? evidence.sites.length > 0 || evidence.numbers.length > 0 : numbers.length > 0;
+  const go = (next: Page) => { setPage(next); setSetupKey(false); setError(""); };
+  const navButton = (p: NavPage) => (
+    <button key={p.name} className={page === p.name ? "active" : ""} aria-current={page === p.name ? "page" : undefined} onClick={() => go(p.name)}>
+      <p.icon size={17} />
+      {p.name}
+      {p.name === "Lead inbox" && <span className="count">{totals.leads}</span>}
+    </button>
+  );
+  const meta = pageMeta[page];
   if (!key)
     return (
       <main className="login">
@@ -240,25 +285,31 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
             <small>{boot?.hosted ? "Hosted workspace" : "Self-hosted pilot"}</small>
           </div>
         </div>
-        <span className="nav-label">WORKSPACE</span>
-        <nav>
-          {pages.map((p) => (
-            <button
-              key={p.name}
-              className={page === p.name ? "active" : ""}
-              onClick={() => {
-                setPage(p.name);
-                setSetupKey(false);
-                setError("");
-              }}
-            >
-              <p.icon size={18} />
-              {p.name}
-              {p.name === "Lead inbox" && (
-                <span className="count">{totals.leads}</span>
-              )}
-            </button>
+        <nav aria-label="Workspace pages">
+          {!setupComplete && (
+            <>
+              <button className={`nav-setup ${setupReady ? "ready" : ""} ${page === "Setup" ? "active" : ""}`} aria-current={page === "Setup" ? "page" : undefined} aria-describedby="setup-progress" onClick={() => go("Setup")}>
+                <span className="nav-setup-title"><Sparkles size={17} />Setup</span>
+                {setupReady
+                  ? <span className="nav-setup-next" aria-hidden="true"><i className="nav-setup-dot" />Ready · waiting for your first lead</span>
+                  : <span className="nav-setup-next" aria-hidden="true">Next: add a website or tracking number</span>}
+              </button>
+              <span id="setup-progress" className="sr-only">{setupReady ? "Ready, waiting for your first lead" : "Next step: add a website or tracking number"}</span>
+            </>
+          )}
+          {groups.map(g => (
+            <div className="nav-group" role="group" aria-labelledby={`nav-${g.label}`} key={g.label}>
+              <span className="nav-label" id={`nav-${g.label}`}>{g.label}</span>
+              {g.pages.map(navButton)}
+            </div>
           ))}
+          {setupComplete && (
+            <div className="nav-group nav-group-setup">
+              <button className={page === "Setup" ? "active" : ""} aria-current={page === "Setup" ? "page" : undefined} onClick={() => go("Setup")}>
+                <Sparkles size={17} />Setup
+              </button>
+            </div>
+          )}
         </nav>
         <div className="sidebar-bottom">
           {hosted && <button className="signout" onClick={hosted.onManage}><Layers3 size={16} />Workspaces & billing</button>}
@@ -296,7 +347,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
       <main className="main">
         <header className="topbar">
           <span>
-            Workspace <ChevronRight size={13} /> {page}
+            {meta.group} <ChevronRight size={13} /> <strong>{page}</strong>
           </span>
           <span className="status">
             <i /> {boot?.hosted ? "Hosted pilot" : "Local pilot"}
@@ -305,23 +356,11 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
         <div className="content">
           <div className="page-title">
             <div>
-              <span className="eyebrow">ATTRIBUTION, WITH CONTEXT</span>
-              <h1>{page === "Overview" ? "See what’s working." : page}</h1>
-              <p>
-                {page === "Overview"
-                  ? "Connect every inquiry to the source that started it."
-                  : page === "Lead inbox"
-                    ? "Review inquiries, qualify opportunities, and record bookings."
-                    : page === "Tracking numbers"
-                      ? "Give each campaign a number. Keep your existing phone system."
-                      : page === "Sites"
-                        ? "Connect website visits and successful forms to their source."
-                        : page === "Conversions" ? "Send pipeline conversions and review inquiries and bookings for Google Ads."
-                        : page === "Webhooks" ? "Send signed events to your CRM and automations."
-                        : "Start with your numbers and the tools you already use."}
-              </p>
+              <span className="eyebrow">{meta.eyebrow || meta.group.toUpperCase()}</span>
+              <h1>{meta.title || page}</h1>
+              <p>{meta.text}</p>
             </div>
-            {page !== "Setup" && page !== "Sites" && page !== "Conversions" && page !== "API keys" && page !== "Webhooks" && <button
+            {page !== "Setup" && page !== "Sites" && page !== "Conversions" && page !== "API keys" && page !== "Webhooks" && page !== "Logs" && <button
               className="primary"
               disabled={boot?.hosted && !connection?.connected && !signalwire?.connected && page === "Tracking numbers"}
               onClick={() => { setBusinessProfile(false); setModal(page === "Tracking numbers" ? "number" : "lead"); }}
@@ -594,6 +633,10 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
           {page === "Conversions" && <Conversions api={api} />}
           {page === "API keys" && <ApiKeys api={api} setup={setupKey} />}
           {page === "Webhooks" && <Webhooks api={api} />}
+          {page === "Logs" && <Logs api={api} onOpenLead={async (id) => {
+            const detail = await api<{ inquiry: Lead }>(`/inquiries/${id}`);
+            setSelected(detail.inquiry);
+          }} />}
           {page === "Connections" && connection && <Connections api={api} connection={connection} signalwire={signalwire} refresh={refresh} />}
           <footer>
             VisiConvert <span>Make the connection.</span>
@@ -661,7 +704,7 @@ export function Brand() {
 function Empty({ title, text }: { title: string; text: string }) {
   return (
     <div className="empty">
-      <Layers3 size={26} />
+      <span className="empty-icon"><Layers3 size={22} /></span>
       <h3>{title}</h3>
       <p>{text}</p>
     </div>

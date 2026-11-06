@@ -1,5 +1,6 @@
 import type { SVGProps } from "react";
 type Props = SVGProps<SVGSVGElement> & { size?: number };
+export type IconProps = Props;
 const icon = (path: string) => (props: Props) => (
   <svg
     width={props.size || 20}
@@ -46,3 +47,8 @@ export const Filter = icon("M3 5h18l-7 8v7l-4-2v-5L3 5Z");
 export const LogOut = icon("M9 3H3v18h6m6-15 6 6-6 6M7 12h14");
 export const Loader2 = icon("M21 12a9 9 0 1 1-9-9");
 export const Activity = icon("M3 12h4l3-8 4 16 3-8h4");
+export const ScrollText = icon("M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01");
+export const FileText = icon("M14 3H6v18h12V7l-4-4Zm0 0v4h4M9 13h6m-6 4h6");
+export const Code2 = icon("m8 7-5 5 5 5m8-10 5 5-5 5");
+export const ChevronDown = icon("m6 9 6 6 6-6");
+export const RefreshCw = icon("M20 11a8 8 0 0 0-14.9-3.6L4 9m0-5v5h5m-5 4a8 8 0 0 0 14.9 3.6L20 15m0 5v-5h-5");

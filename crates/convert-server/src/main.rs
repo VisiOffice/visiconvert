@@ -1,3 +1,4 @@
+mod activity;
 mod adoption;
 mod api_keys;
 mod connections;
@@ -233,6 +234,7 @@ fn router(app: Shared) -> Router {
         .merge(microsoft::routes())
         .merge(api_keys::routes())
         .merge(webhooks::routes())
+        .merge(activity::routes())
         .route("/bootstrap", get(bootstrap))
         .route("/leads", get(leads).post(add_lead))
         .route("/leads/{id}", patch(update_lead))
@@ -815,6 +817,8 @@ mod delivery_tests;
 #[cfg(test)]
 mod webhook_tests;
 
+#[cfg(test)]
+mod activity_tests;
 #[cfg(test)]
 mod microsoft_tests;
 #[cfg(test)]

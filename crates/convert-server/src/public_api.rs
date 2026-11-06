@@ -34,6 +34,7 @@ pub fn routes(app: Shared) -> Router<Shared> {
         .merge(managed::routes())
         .merge(super::webhooks::routes())
         .merge(super::pipeline::public_routes())
+        .merge(super::activity::routes())
         .route("/connections/signalwire", get(signalwire::show))
         .route(
             "/connections/signalwire/numbers",

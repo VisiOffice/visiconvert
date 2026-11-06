@@ -2110,6 +2110,124 @@
           "version"
         ],
         "additionalProperties": false
+      },
+      "ActivityItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "integer"
+            ],
+            "description": "Identifier within its source"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "interaction",
+              "pipeline_event",
+              "google_delivery",
+              "microsoft_delivery",
+              "webhook_delivery",
+              "conversion_audit",
+              "api_key_audit",
+              "webhook_endpoint_audit"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "call",
+              "form",
+              "conversion",
+              "webhook",
+              "changes"
+            ]
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "Call status, received, recorded, revised, blocked, canceled, delivery state, or the last HTTP status of a webhook delivery"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "success",
+              "warning",
+              "failure",
+              "pending",
+              "neutral"
+            ]
+          },
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who made a change (kind changes)"
+          },
+          "lead_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "inquiry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "is_demo": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "object",
+            "description": "Safe per-source fields such as contact, tracking number, attempts, diagnostic or HTTP status. Never payloads, click IDs, provider requests or secrets."
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "kind",
+          "occurred_at",
+          "summary",
+          "status",
+          "outcome",
+          "is_demo",
+          "detail"
+        ],
+        "additionalProperties": false
+      },
+      "ActivityPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "additionalProperties": false
       }
     }
   },
@@ -8640,6 +8758,182 @@
             "name": "external_id",
             "schema": {
               "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/activity": {
+      "get": {
+        "summary": "One timeline of calls, forms, pipeline conversion events and their Google and Microsoft deliveries, webhook deliveries, and changes to settings, API keys and webhooks made in the app, by API keys or by agents, newest first",
+        "operationId": "get_activity",
+        "description": "Requires `read` permission.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque next_cursor from the previous page. Preserve the same filters."
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "call",
+                "form",
+                "conversion",
+                "webhook",
+                "changes",
+                "api"
+              ]
+            },
+            "description": "api is an alias for changes"
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
             }
           }
         ]
