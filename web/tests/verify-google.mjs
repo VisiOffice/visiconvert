@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { openTab } from './verify-conversions.mjs';
 
 // UI contract coverage with a deterministic provider boundary. The Rust suite
 // separately exercises the real API/database and a local OAuth/Ads server.
 export async function verifyGoogle({ page, api, origin, artifactDir }) {
   await page.getByRole('button', { name:'Conversions', exact:true }).click();
+  await openTab(page,'Google Ads');
   await page.getByRole('heading', { name:'Connect Google Ads', exact:true }).waitFor();
   await page.getByText('Google connection is not configured on this installation.', { exact:false }).waitFor();
   assert.equal((await api('/connections/google')).body.configured,false);
@@ -48,11 +50,13 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
   // Start from a different saved account so choosing one is an explicit step.
   const initial=(await api('/conversions')).body.settings;
   assert.equal((await api('/conversions/settings',{...initial,customer_id:'9999999999',qualified_action_id:'',booking_action_id:''},'PUT')).status,200);
-  const advanced=async()=>{const s=page.locator('summary').filter({hasText:/^Advanced: manual review/});if(!(await page.getByRole('region',{name:'Manual review actions',exact:true}).isVisible()))await s.click();};
+  const advanced=()=>openTab(page,'Advanced');
+  const google=()=>openTab(page,'Google Ads');
   await page.context().route('https://accounts.google.com/o/oauth2/v2/auth?test=visiconvert',authorization);
   try {
     await page.getByRole('button',{name:'Overview',exact:true}).click();
     await page.getByRole('button',{name:'Conversions',exact:true}).click();
+    await google();
     const popupPromise=page.waitForEvent('popup');
     await page.getByRole('button',{name:'Sign in with Google',exact:true}).click();
     const popup=await popupPromise;
@@ -68,6 +72,7 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     await page.getByRole('button',{name:'Use this advertising account',exact:true}).click();
     await page.getByText('Advertising account saved.',{exact:false}).waitFor();
     assert.equal((await api('/conversions')).body.settings.customer_id,'1234567890');
+    await openTab(page,'Actions');
     const mapping=page.getByRole('region',{name:'Conversion actions',exact:true});
     await mapping.getByRole('button',{name:'Add action',exact:true}).click();
     const form=mapping.getByRole('form',{name:'New action',exact:true});
@@ -97,18 +102,21 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     await page.getByRole('alert').filter({hasText:'Creation could not be confirmed'}).waitFor();
     creationFails=false;
     await page.getByRole('button',{name:'Create conversion actions',exact:true}).click();
-    await page.getByText('Conversion actions created or reused and saved. Check the saved connection in step 1. Delivery remains unchanged.',{exact:true}).waitFor();
+    await page.getByText('Conversion actions created or reused and saved. Check the saved connection on the Google Ads tab. Delivery remains unchanged.',{exact:true}).waitFor();
     assert.equal(creationRequests,2);
+    await google();
     await page.setViewportSize({width:390,height:844});
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     await page.locator('.google-connection').screenshot({path:artifactDir+'/google-setup-mobile.png'});
     await page.setViewportSize({width:1440,height:1000});
+    await advanced();
     await page.getByText('Use existing actions (advanced)',{exact:true}).click();
     await page.getByLabel('Qualification conversion action',{exact:true}).selectOption('123');
     await page.getByLabel('Booking conversion action',{exact:true}).selectOption('456');
     assert(await page.getByLabel('Booking conversion action',{exact:true}).locator('option[value="999"]').isDisabled());
     await page.getByRole('button',{name:'Save conversion actions',exact:true}).click();
-    await page.getByText('Conversion actions saved. Check the saved connection in step 1 to finish setup. Delivery remains unchanged.',{exact:true}).waitFor();
+    await page.getByText('Conversion actions saved. Check the saved connection on the Google Ads tab to finish setup. Delivery remains unchanged.',{exact:true}).waitFor();
+    await google();
     await page.getByRole('button',{name:'Check saved connection',exact:true}).click();
     await page.getByText('Destination checks passed',{exact:true}).waitFor();
     await page.screenshot({path:artifactDir+'/google-desktop.png',fullPage:true});
@@ -123,6 +131,7 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     await reopen();
     await existing();
     await page.getByLabel('Booking conversion action',{exact:true}).waitFor();
+    await google();
     assert.equal(await page.getByLabel('Advertising account',{exact:true}).inputValue(),'1234567890');
     assert.match(await page.getByLabel('Advertising account',{exact:true}).locator('option:checked').innerText(),/Browser test Ads/);
     assert.equal(await page.getByLabel('Booking conversion action',{exact:true}).inputValue(),'456');
@@ -130,6 +139,7 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     // An API failure remains retryable from the connected state.
     discoveryFails=true;
     await reopen();
+    await google();
     await page.getByRole('alert').filter({hasText:'Account discovery temporarily unavailable'}).waitFor();
     discoveryFails=false;
     await page.getByRole('button',{name:'Refresh Google Ads accounts',exact:true}).click();
@@ -138,23 +148,28 @@ export async function verifyGoogle({ page, api, origin, artifactDir }) {
     // Multiple access accounts require an explicit choice if no saved check identifies one.
     logins=['1234567890','9876543210'];status.validation=null;
     await reopen();
+    await google();
     await page.getByLabel('Access through a Google Ads account',{exact:true}).selectOption('1234567890');
     await existing();
     await page.getByLabel('Booking conversion action',{exact:true}).waitFor();
     assert.deepEqual((await api('/conversions')).body.settings,savedSettings);
     logins=[];
     await reopen();
+    await google();
     await page.getByText('No Google Ads accounts are accessible with this Google login.',{exact:false}).waitFor();
     logins=['1234567890'];
     await reopen();
     await existing();
     await page.getByLabel('Booking conversion action',{exact:true}).waitFor();
+    await google();
     await page.getByRole('button',{name:'Check saved connection',exact:true}).click();
     await page.getByText('Destination checks passed',{exact:true}).waitFor();
+    await advanced();
     await page.getByText('Advanced destination settings',{exact:true}).click();
     await page.getByLabel('Booking action ID',{exact:true}).fill('789');
     await page.getByRole('button',{name:'Save destination',exact:true}).click();
     await page.getByRole('status').filter({hasText:'Destination saved.'}).waitFor();
+    await google();
     await page.getByText('Destination checks passed',{exact:true}).waitFor({state:'hidden'});
     await page.getByRole('button',{name:'Disconnect Google',exact:true}).click();
     await page.getByText('Google not connected',{exact:true}).waitFor();

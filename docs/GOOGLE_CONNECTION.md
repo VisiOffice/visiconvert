@@ -54,7 +54,7 @@ project; this implementation does not send a developer token.
 
 ## Workspace workflow
 
-1. Open **Conversions → Sign in with Google** and allow the consent popup.
+1. Open **Conversions → Google Ads → Sign in with Google** and allow the consent popup.
 2. Grant both requested permissions. If your browser isolates the popup, return
    and use **Refresh Google connection**.
 3. Account selection opens automatically. Choose an access account if prompted,

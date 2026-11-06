@@ -29,7 +29,7 @@ shared delivery switch and automatic sending are both on.
    The origin comes from `PUBLIC_URL`, or `VISICONVERT_APP_ORIGIN` for the
    [unified hosted frontend](HOSTED_FRONTEND.md). Hosted workspaces use
    `https://cloud.visiconvert.com/auth/microsoft/callback`. **Conversions →
-   Administrator setup** shows the exact value for an installation.
+   Microsoft Ads → Administrator setup** shows the exact value for an installation.
 3. Create a client secret for the application.
 4. Get a Microsoft Advertising **developer token** for the VisiConvert operator (one
    token for the whole installation, from the Microsoft Advertising developer portal).
@@ -47,7 +47,7 @@ shared delivery switch and automatic sending are both on.
    replace that key to enable Microsoft. These are server settings, never browser
    fields, public build variables or API keys. Restart the app after changing them.
 
-Without these values the Microsoft section in Conversions, `get_conversion_setup` and
+Without these values the Microsoft Ads tab in Conversions, `get_conversion_setup` and
 `GET /api/v1/conversion-setup` report Microsoft as unavailable and nothing else changes.
 Changing the client ID or the redirect origin requires each workspace to reconnect.
 
@@ -63,7 +63,7 @@ Changing the client ID or the redirect origin requires each workspace to reconne
 
 ## Workspace workflow
 
-1. **Conversions → Send to Microsoft Advertising → Connect Microsoft Advertising.**
+1. **Conversions → Microsoft Ads → Connect Microsoft Advertising.**
    Sign in with a Microsoft user who can manage the ad account and accept the
    permission. Only the workspace owner (or self-hosted operator) can connect; API keys
    and agents cannot.

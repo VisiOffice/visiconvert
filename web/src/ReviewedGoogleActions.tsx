@@ -25,7 +25,7 @@ export function ReviewedGoogleActions({ api, discovery, settings, onChange }: { 
   const section = (body: ReactNode) => <section className="card site-panel" aria-label="Manual review actions"><h2>Manual review actions</h2>
     <p className="muted">Fixed Google actions for qualified leads and bookings that you stage, validate and queue one at a time. Not needed for automatic conversions.</p>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p className="notice" role="status">{notice}</p>}{body}</section>;
-  if (!discovery) return section(<p>Connect Google and choose the advertising account in step 1 to set up manual review actions, or enter IDs in Advanced destination settings below.</p>);
+  if (!discovery) return section(<p>Connect Google and choose the advertising account on the Google Ads tab to set up manual review actions, or enter IDs in Advanced destination settings below.</p>);
   const { actions, login, revision } = discovery;
   const validSelection = [qualified, booking].filter(Boolean).every(id => actions.actions.some(a => a.id === id && a.eligible));
   return section(<>
@@ -41,7 +41,7 @@ export function ReviewedGoogleActions({ api, discovery, settings, onChange }: { 
         const r = await api<{ qualified_action_id: string; booking_action_id: string }>("/connections/google/actions/create", { revision, settings_version: settings.version, login, customer, qualified: createQualified, booking: createBooking });
         await onChange();
         setQualified(r.qualified_action_id); setBooking(r.booking_action_id);
-        setNotice("Conversion actions created or reused and saved. Check the saved connection in step 1. Delivery remains unchanged.");
+        setNotice("Conversion actions created or reused and saved. Check the saved connection on the Google Ads tab. Delivery remains unchanged.");
       })}>Create conversion actions</button>
     </div>
     <details className="google-existing-actions"><summary>Use existing actions (advanced)</summary><div className="site-form">
@@ -50,7 +50,7 @@ export function ReviewedGoogleActions({ api, discovery, settings, onChange }: { 
       {([["google-qualified", "Qualification conversion action", qualified, setQualified], ["google-booking", "Booking conversion action", booking, setBooking]] as const).map(([id, title, value, setter]) => <div className="form-field" key={id}><label htmlFor={id}>{title}</label><select id={id} disabled={busy} value={value} onChange={e => setter(e.target.value)}><option value="">Not mapped</option>{value && !actions.actions.some(a => a.id === value) && <option value={value} disabled>Saved action {value} · not in this list</option>}{actions.actions.map(a => <option key={a.id} value={a.id} disabled={!a.eligible}>{a.name} · {a.id}{a.eligible ? (a.primary ? " · primary" : " · secondary") : ` · ${a.kind} / ${a.status} / owner ${a.owner}`}</option>)}</select></div>)}
       {!actions.actions.some(a => a.eligible) && <p>No compatible existing actions were found. Use Create conversion actions above.</p>}
       {!!qualified && qualified === booking && <p className="error">Choose separate actions for qualification and bookings to avoid counting both as the same outcome.</p>}
-      <div><button className="primary" disabled={busy || !validSelection || (!!qualified && qualified === booking)} onClick={() => void run(async () => { await api("/conversions/settings", { ...settings, customer_id: customer, qualified_action_id: qualified, booking_action_id: booking }, "PUT"); await onChange(); setNotice("Conversion actions saved. Check the saved connection in step 1 to finish setup. Delivery remains unchanged."); })}>Save conversion actions</button></div>
+      <div><button className="primary" disabled={busy || !validSelection || (!!qualified && qualified === booking)} onClick={() => void run(async () => { await api("/conversions/settings", { ...settings, customer_id: customer, qualified_action_id: qualified, booking_action_id: booking }, "PUT"); await onChange(); setNotice("Conversion actions saved. Check the saved connection on the Google Ads tab to finish setup. Delivery remains unchanged."); })}>Save conversion actions</button></div>
     </div></details>
   </>);
 }

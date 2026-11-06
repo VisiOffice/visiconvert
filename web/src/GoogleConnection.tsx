@@ -111,8 +111,8 @@ export function GoogleConnection({ api, settings, onChange, onDiscovery }: { api
   const matchesSaved = !!customer && customer === settings.customer_id;
   const validation = status?.validation?.settings_version === settings.version ? status.validation : null;
   return <section className="card site-panel google-connection">
-    <div className="section-heading"><div><span className="eyebrow">STEP 1 · GOOGLE ADS</span><h2>Connect Google Ads</h2></div><button className="secondary" disabled={busy} onClick={() => void run(async () => { await refresh(); setNotice("Connection refreshed."); })}>Refresh Google connection</button></div>
-    <p className="muted">Sign in with Google and choose the account that runs your ads. Then map your actions below. Connecting an account does not send conversions.</p>
+    <div className="section-heading"><div><span className="eyebrow">GOOGLE ADS</span><h2>Connect Google Ads</h2></div><button className="secondary" disabled={busy} onClick={() => void run(async () => { await refresh(); setNotice("Connection refreshed."); })}>Refresh Google connection</button></div>
+    <p className="muted">Sign in with Google and choose the account that runs your ads. Then map your actions on the Actions tab. Connecting an account does not send conversions.</p>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p className="notice" role="status">{notice}</p>}
     {!status ? <p>Loading Google connection…</p> : !status.configured ? <>
       <p>Google connection is not configured on this installation. Your administrator must add the Google OAuth application credentials and enable the Google Ads and Data Manager APIs.</p>
@@ -138,9 +138,9 @@ export function GoogleConnection({ api, settings, onChange, onDiscovery }: { api
         {actions && <>
           <p>Selected account: <strong>{actions.account.name || accountId(customer)}</strong> · {accountId(customer)}</p>
           {actions.account.conversion_owner && actions.account.conversion_owner !== customer && <p className="notice">Conversion tracking is owned by {accountId(actions.account.conversion_owner)}. Choose that account above, or enter its ID, to map its actions.</p>}
-          {customer === settings.customer_id ? <p className="notice">This is your saved advertising account. Map your actions to its conversion actions below.</p> : <>
+          {customer === settings.customer_id ? <p className="notice">This is your saved advertising account. Map your actions to its conversion actions on the Actions tab.</p> : <>
             {settings.customer_id && <p className="muted">This replaces the saved account {accountId(settings.customer_id)}. Manual review action mappings for the old account are cleared; pipeline action mappings are kept, so re-map them if they belong to the old account.</p>}
-            <div><button className="primary" disabled={busy || actions.account.conversion_owner !== customer} onClick={() => void run(async () => { await api("/conversions/settings", { ...settings, customer_id: customer, qualified_action_id: "", booking_action_id: "" }, "PUT"); await onChange(); setNotice("Advertising account saved. Map your actions below, then check the saved connection. Nothing is sent yet."); })}>Use this advertising account</button></div>
+            <div><button className="primary" disabled={busy || actions.account.conversion_owner !== customer} onClick={() => void run(async () => { await api("/conversions/settings", { ...settings, customer_id: customer, qualified_action_id: "", booking_action_id: "" }, "PUT"); await onChange(); setNotice("Advertising account saved. Map your actions on the Actions tab, then check the saved connection here. Nothing is sent yet."); })}>Use this advertising account</button></div>
           </>}
         </>}
       </div>}

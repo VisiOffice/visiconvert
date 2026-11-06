@@ -28,11 +28,13 @@ call/form ──> VisiConvert lead (click ID from the website visit)
 
 ## Set up
 
-The **Conversions** page reads top to bottom in this order:
+The **Conversions** page has tabs: **Overview** (status of each destination, sending and
+consent), **Actions**, **Google Ads**, **Microsoft Ads**, **Events** and **Advanced**.
+Set up in this order:
 
-1. **Connect Google Ads.** Sign in with Google, choose the advertising account that owns
+1. **Connect Google Ads** (Google Ads tab). Sign in with Google, choose the advertising account that owns
    your conversion tracking and click **Use this advertising account**.
-2. **Your actions.** Under **Conversion actions**, add one action per pipeline step and
+2. **Your actions** (Actions tab). Under **Conversion actions**, add one action per pipeline step and
    map each to a Google Ads import (`UPLOAD_CLICKS`) conversion action:
 
    | Field | Meaning |
@@ -52,28 +54,28 @@ The **Conversions** page reads top to bottom in this order:
 
    Key, trigger and counting cannot change once an action exists, because that would
    change what counts and could count a conversion twice. Disable an action instead.
-   After mapping, click **Check saved connection** in step 1 (an agent can run the same
+   After mapping, click **Check saved connection** on the Google Ads tab (an agent can run the same
    check with `conversions:write`). VisiConvert then repeats the read-only check itself
    whenever it is more than 24 hours old.
-3. **Advertising consent.** Choose a consent policy:
+3. **Advertising consent** (Overview tab). Choose a consent policy:
    - **Send only leads with recorded advertising consent** (default): the same rule as
      reviewed conversions.
    - **Not required: this workspace does not advertise in the EEA, UK or Switzerland.**
      You confirm this as an attestation; VisiConvert stores who confirmed it and when,
      and sends conversions without a consent signal.
-4. **Automatic sending.** Turn on **Google delivery** and **automatic sending**; both must
+4. **Automatic sending** (Overview tab). Turn on **Google delivery** and **automatic sending**; both must
    be on to send. The card lists anything still to do. The same day, turn off any other
    uploader for the same Google conversion actions (for example a CRM job), or each
    conversion counts twice.
-5. **Results.** **Recent pipeline events** shows each event's delivery state and blocked
+5. **Results** (Events tab). **Recent pipeline events** shows each event's delivery state and blocked
    reason; **Google delivery history** lists every send.
 
 Create an API key with the **Define conversion actions and post pipeline events**
 (`conversions:write`) permission for your system.
 
 The original reviewed flow (fixed *Qualified leads* and *Bookings* actions you stage,
-validate and queue one at a time) is unchanged under **Advanced: manual review** at the
-bottom of the page. You don't need it for automatic conversions. Don't map the same
+validate and queue one at a time) is unchanged on the **Advanced** tab.
+You don't need it for automatic conversions. Don't map the same
 Google action in both flows.
 
 ### Owner switches

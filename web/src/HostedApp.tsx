@@ -79,7 +79,7 @@ export default function HostedApp() {
     window.addEventListener("focus", check);
     return () => { window.clearTimeout(timer); document.removeEventListener("visibilitychange", check); window.removeEventListener("focus", check); };
   }, [engine, renew]);
-  const workspaceId = path.match(new RegExp(`^/app/(${uuid})$`))?.[1];
+  const workspaceId = path.match(new RegExp(`^/app/(${uuid})(?:/[a-z-]+){0,2}/?$`))?.[1];
   useEffect(() => {
     if (!workspaceId || !session?.user || (engine?.workspace === workspaceId && engine.user === session.user.id)) return;
     let active = true;

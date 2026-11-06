@@ -96,7 +96,7 @@ export function MicrosoftConnection({ api, revision, onChange }: { api: Client; 
   const offline = goals?.filter(g => g.kind === "OfflineConversion") ?? [];
   return <section className="card site-panel microsoft-connection" aria-label="Microsoft Advertising">
     <div className="section-heading"><div><span className="eyebrow">OPTIONAL · MICROSOFT ADVERTISING</span><h2>Send to Microsoft Advertising</h2></div><button className="secondary" disabled={busy} onClick={() => void run(async () => { await refresh(); setNotice("Microsoft connection refreshed."); })}>Refresh Microsoft connection</button></div>
-    <p className="muted">The same actions and events can also go to Microsoft Advertising (Bing). Events with a Microsoft click ID (<code>msclkid</code>) are sent to the offline conversion goal you map each action to. Delivery, automatic sending and the consent policy in the steps above are shared with Google. Only events recorded after an action is mapped are sent, so an older uploader can be switched off without double counting.</p>
+    <p className="muted">The same actions and events can also go to Microsoft Advertising (Bing). Events with a Microsoft click ID (<code>msclkid</code>) are sent to the offline conversion goal you map each action to. Delivery, automatic sending and the consent policy on the Overview tab are shared with Google. Only events recorded after an action is mapped are sent, so an older uploader can be switched off without double counting.</p>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p className="notice" role="status">{notice}</p>}
     {!status ? <p>Loading Microsoft connection…</p> : !status.configured ? <>
       <p>Microsoft Advertising is not available on this installation.</p>
@@ -116,7 +116,7 @@ export function MicrosoftConnection({ api, revision, onChange }: { api: Client; 
       {status.connected && status.account_id && <div className="site-form">
         <h3>Goal for each action</h3>
         <p className="muted">Uploads use the goal’s exact name. Choose an existing offline conversion goal, or create one named after the action. Microsoft accepts uploads for a new goal about two hours after it is created; eligible events wait until then. Creating a goal turns on <code>msclkid</code> auto-tagging and counts the goal for bidding.</p>
-        {!goals ? <p role="status">Loading Microsoft goals…</p> : !actions.length ? <p>Add an enabled action above first.</p> : actions.map(a => <GoalRow key={`${a.key}:${a.version}`} action={a} goals={offline} busy={busy}
+        {!goals ? <p role="status">Loading Microsoft goals…</p> : !actions.length ? <p>Add an enabled action on the Actions tab first.</p> : actions.map(a => <GoalRow key={`${a.key}:${a.version}`} action={a} goals={offline} busy={busy}
           map={name => run(async () => { await api(`/conversion-actions/${a.key}/microsoft-goal`, { version: a.version, goal_name: name }, "PUT"); await changed(name ? `Action ${a.key} mapped to ${name}. Events recorded from now on are sent to Microsoft.` : `Action ${a.key} is no longer sent to Microsoft.`); })}
           create={() => run(async () => { await api(`/conversion-actions/${a.key}/microsoft-goal`, { version: a.version }, "POST"); await loadGoals(); await changed(`Goal created or recovered for ${a.key}. Microsoft accepts uploads for it in about two hours.`); })} />)}
         <div className="google-actions">

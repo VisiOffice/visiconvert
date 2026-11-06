@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
+export const openTab=(page,name)=>page.getByRole('tab',{name:new RegExp(`^${name}`)}).click();
 export async function verifyConversions({page,api,artifactDir}) {
   const lead=(await api('/leads')).body.find(l=>l.name==='Website browser customer');
   assert(lead,'Website fixture must exist');
@@ -8,12 +9,15 @@ export async function verifyConversions({page,api,artifactDir}) {
   const booking={external_id:'ads-browser-booking',amount_minor:12345,currency:'USD',status:'booked',revision:1};
   assert.equal((await api(`/inquiries/${inquiry.id}/outcomes`,booking,'PUT')).status,200);
   await page.getByRole('button',{name:'Conversions',exact:true}).click();
-  // Pipeline steps come first; nothing steers a new workspace to the fixed reviewed actions.
+  // Tabs open on the overview; nothing steers a new workspace to the fixed reviewed actions.
+  const tabs=await page.getByRole('tablist',{name:'Conversion settings'}).getByRole('tab').allInnerTexts();
+  assert.deepEqual(tabs.map(t=>t.replace(/in use$/i,'').replace(/\s+/g,' ').trim()),['Overview','Actions','Google Ads','Microsoft Ads','Events','Advanced']);
+  assert.equal(await page.getByRole('tab',{selected:true}).innerText(),'Overview');
+  await page.getByRole('article',{name:'Google Ads status',exact:true}).waitFor();
+  await openTab(page,'Events');
   await page.getByRole('region',{name:'Recent pipeline events',exact:true}).waitFor();
-  const order=await page.locator('section[aria-label], details[aria-label]').evaluateAll(n=>n.map(e=>e.getAttribute('aria-label')));
-  assert.deepEqual(order.filter(l=>['Conversion actions','Advertising consent','Automatic sending','Recent pipeline events','Advanced: manual review'].includes(l)),['Conversion actions','Advertising consent','Automatic sending','Recent pipeline events','Advanced: manual review']);
-  assert(!(await page.getByRole('button',{name:'Enable reviewed delivery',exact:true}).isVisible()),'Manual review starts collapsed');
-  await page.locator('summary').filter({hasText:/^Advanced: manual review/}).click();
+  assert(!(await page.getByRole('button',{name:'Enable reviewed delivery',exact:true}).isVisible()),'Manual review stays on its own tab');
+  await openTab(page,'Advanced');
   await page.getByText('Advanced destination settings',{exact:true}).click();
   await page.getByLabel('Google Ads customer ID').fill('1234567890');
   await page.getByLabel('Qualified inquiry action ID').fill('123');
@@ -74,6 +78,7 @@ export async function verifyConversions({page,api,artifactDir}) {
 }
 // Automatic conversions: actions, consent attestation, auto-send and event status.
 async function verifyPipeline({page,api,lead,artifactDir}) {
+  await openTab(page,'Actions');
   const section=page.getByRole('region',{name:'Conversion actions',exact:true});
   await section.getByRole('button',{name:'Add action',exact:true}).click();
   const form=section.getByRole('form',{name:'New action',exact:true});
@@ -94,9 +99,10 @@ async function verifyPipeline({page,api,lead,artifactDir}) {
   await page.getByRole('status').filter({hasText:'Action saved.'}).waitFor();
   let overview=(await api('/conversions/pipeline')).body;
   assert.deepEqual(overview.actions.map(a=>[a.key,a.name,a.default_value_minor,a.google_action_id,a.version]),[['order','Completed order',2050,'456',2]]);
+  await openTab(page,'Overview');
   const consent=page.getByRole('region',{name:'Advertising consent',exact:true});
   const auto=page.getByRole('region',{name:'Automatic sending',exact:true});
-  assert.match(await auto.getByLabel('Setup checklist').innerText(),/Turn on automatic sending: the owner in Conversions/);
+  assert.match(await page.getByRole('article',{name:'Google Ads status',exact:true}).getByLabel('Setup checklist').innerText(),/Turn on automatic sending: the owner in Conversions/);
   await consent.getByLabel('Not required: this workspace does not advertise in the EEA, UK or Switzerland').check();
   const save=consent.getByRole('button',{name:'Save consent policy',exact:true});
   assert(await save.isDisabled(),'The attestation must be confirmed first');
@@ -112,11 +118,24 @@ async function verifyPipeline({page,api,lead,artifactDir}) {
   const posted=await api('/v1/conversion-events',{action:'order',external_id:'browser-order-1',lead_id:lead.id,value_minor:41250});
   assert.equal(posted.status,200,JSON.stringify(posted.body));
   assert.equal(posted.body.delivery.google,'blocked');
+  await openTab(page,'Events');
   await page.getByRole('button',{name:'Refresh events',exact:true}).click();
   const event=page.getByRole('article',{name:'Event order browser-order-1',exact:true});
   await event.getByText(/Recorded while automatic sending was off/).waitFor();
   await event.getByText('$412.50',{exact:false}).waitFor();
   await page.screenshot({path:path.join(artifactDir,'conversions-pipeline.png'),fullPage:true});
+  await openTab(page,'Overview');
+  await page.screenshot({path:path.join(artifactDir,'conversions-overview.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Conversions tabs fit a phone screen');
+  await page.screenshot({path:path.join(artifactDir,'conversions-overview-mobile.png'),fullPage:true});
+  await openTab(page,'Actions');
+  await page.screenshot({path:path.join(artifactDir,'conversions-actions-mobile.png'),fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.screenshot({path:path.join(artifactDir,'conversions-actions.png'),fullPage:true});
+  await openTab(page,'Microsoft Ads');
+  await page.screenshot({path:path.join(artifactDir,'conversions-microsoft.png'),fullPage:true});
+  await openTab(page,'Overview');
   await auto.getByRole('button',{name:'Turn off automatic sending',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Automatic sending turned off.'}).waitFor();
 }

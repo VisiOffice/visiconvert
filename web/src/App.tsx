@@ -9,6 +9,7 @@ import { Conversions } from "./Conversions";
 import { Sites } from "./Sites";
 import { TwilioConnection } from "./TwilioConnection";
 import { Logs } from "./Logs";
+import { parse, go as visit, type Page, type Route } from "./routes";
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -47,7 +48,6 @@ import initWasm, {
   preview_attribution,
 } from "./generated/attribution/convert_wasm";
 
-type Page = "Setup" | "Overview" | "Lead inbox" | "Tracking numbers" | "Sites" | "Connections" | "Conversions" | "API keys" | "Webhooks" | "Logs";
 type NavPage = { name: Page; icon: typeof BarChart3 };
 // Button labels are part of the browser tests (engine and Cloud); keep them exact.
 const groups: { label: string; pages: NavPage[] }[] = [
@@ -85,7 +85,16 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   const [key, setKey] = useState(hosted?.token || "");
   const [setupKey, setSetupKey] = useState(false);
   const [entry, setEntry] = useState("");
-  const [page, setPage] = useState<Page>("Overview");
+  const [route, setRoute] = useState<Route>(() => parse());
+  const page = route.page;
+  // The address bar names the page (and tab), so reloads, links and Back/Forward work.
+  const show = (next: Page, tab: string | null = null) => { const r = { page: next, tab }; visit(r); setRoute(r); };
+  useEffect(() => {
+    visit(route, true); // Normalize unknown paths without adding history.
+    const update = () => setRoute(parse());
+    window.addEventListener("popstate", update);
+    return () => window.removeEventListener("popstate", update);
+  }, []);
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [signalwire, setSignalwire] = useState<SignalWireStatus | null>(null);
   const [connection, setConnection] = useState<Connection | null>(null);
@@ -190,7 +199,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
   const setupComplete = leads.some(l => !l.is_demo);
   // A site or number is registered: nothing left to do but wait for the first lead.
   const setupReady = evidence ? evidence.sites.length > 0 || evidence.numbers.length > 0 : numbers.length > 0;
-  const go = (next: Page) => { setPage(next); setSetupKey(false); setError(""); };
+  const go = (next: Page) => { show(next); setSetupKey(false); setError(""); };
   const navButton = (p: NavPage) => (
     <button key={p.name} className={page === p.name ? "active" : ""} aria-current={page === p.name ? "page" : undefined} onClick={() => go(p.name)}>
       <p.icon size={17} />
@@ -389,9 +398,9 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
           {page === "Overview" && !leads.some(l => !l.is_demo) && <section className="card setup-welcome">
             <span className="eyebrow">START HERE</span><h2>Let’s connect your first source.</h2>
             <p>Your agent can help set up websites and call tracking. Follow the same steps yourself if you prefer.</p>
-            <button className="primary" onClick={() => setPage("Setup")}>Set up this workspace</button>
+            <button className="primary" onClick={() => show("Setup")}>Set up this workspace</button>
           </section>}
-          {page === "Setup" && <Setup hosted={!!hosted} api={api} onBusinessProfile={() => { setPage("Tracking numbers"); setBusinessProfile(true); if (!boot?.hosted || connection?.connected || signalwire?.connected) setModal("number"); }} onNavigate={setPage} onKey={() => { setSetupKey(true); setPage("API keys"); }} />}
+          {page === "Setup" && <Setup hosted={!!hosted} api={api} onBusinessProfile={() => { show("Tracking numbers"); setBusinessProfile(true); if (!boot?.hosted || connection?.connected || signalwire?.connected) setModal("number"); }} onNavigate={p => show(p)} onKey={() => { setSetupKey(true); show("API keys"); }} />}
           {page === "Overview" && (
             <>
               <div className="section-heading">
@@ -507,7 +516,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
                 {page === "Overview" && (
                   <button
                     className="text-button"
-                    onClick={() => setPage("Lead inbox")}
+                    onClick={() => show("Lead inbox")}
                   >
                     View inbox <ArrowRight size={15} />
                   </button>
@@ -630,7 +639,7 @@ export default function App({ hosted }: { hosted?: HostedShell }) {
             </>
           )}
           {page === "Sites" && <Sites api={api} />}
-          {page === "Conversions" && <Conversions api={api} />}
+          {page === "Conversions" && <Conversions api={api} tab={route.tab} onTab={t => show("Conversions", t === "overview" ? null : t)} />}
           {page === "API keys" && <ApiKeys api={api} setup={setupKey} />}
           {page === "Webhooks" && <Webhooks api={api} />}
           {page === "Logs" && <Logs api={api} onOpenLead={async (id) => {
