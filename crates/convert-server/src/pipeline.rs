@@ -53,6 +53,7 @@ fn shared_routes() -> Router<Shared> {
         .route("/conversion-events", get(list).post(record))
         .merge(super::google_review::routes())
         .merge(microsoft::shared_routes())
+        .merge(meta::shared_routes())
 }
 async fn actor(
     access: &hosted::Access,
@@ -124,6 +125,10 @@ async fn delivery_value(a: &App, store: &Store) -> Result<Value, ApiError> {
         let microsoft = &value["setup"]["microsoft"];
         if microsoft["account_id"].is_string() && microsoft["mapped_actions"].as_i64() > Some(0) {
             warning.push_str(" The same applies to Microsoft Advertising: turn off any other offline conversion upload to the mapped Microsoft goals. Microsoft conversions can be retracted when an event is canceled.");
+        }
+        let meta = &value["setup"]["meta"];
+        if meta["connected"] == true && meta["mapped_actions"].as_i64() > Some(0) {
+            warning.push_str(" For Meta, turn off any other integration (such as a CRM or form tool's Meta connection) sending the same events to the dataset. Meta cannot withdraw a sent event.");
         }
         value["warning"] = json!(warning);
     }
@@ -248,6 +253,9 @@ async fn record(
     if a.microsoft.config.is_some() {
         access.store.plan_microsoft(Some(id)).await?;
     }
+    if a.vault.is_some() {
+        access.store.plan_meta(Some(id)).await?;
+    }
     Ok(Json(access.store.pipeline_event(id).await?))
 }
 async fn list(
@@ -346,6 +354,7 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
     f["google_review"] = review.unwrap_or(Value::Null);
     // Additive: Microsoft readiness never changes Google's ready, next_steps or summary.
     f["microsoft"] = microsoft::setup_status(a, store).await?;
+    f["meta"] = meta::setup_status(a, store).await?;
     f["google_connected"] = json!(connected);
     f["connection_revision"] = json!(connection.revision);
     f["ready"] = json!(ready);

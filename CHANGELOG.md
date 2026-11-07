@@ -1,3 +1,31 @@
+## Unreleased — Meta Conversions API
+
+- Meta (Facebook and Instagram ads) is a third destination for pipeline conversions,
+  through the Conversions API. Engine migration 0029 adds `meta_connections`,
+  `meta_event_plans`, `meta_deliveries`, `conversion_actions.meta_event_name` and
+  `meta_mapped_at`, and `website_sessions.client_user_agent` and `client_ip`.
+- `PUT/DELETE /api/v1/connections/meta` (`conversions:send`) saves or removes the dataset
+  (Pixel) ID and an Events Manager access token, after reading the dataset with it. The
+  token is sealed and never returned. CLI: `visiconvert connect meta --dataset <id>
+  --token-env <VAR>` (or `--token-stdin`). No MCP tool accepts the token.
+- New MCP tools: `set_meta_action_event` (`PUT /api/v1/conversion-actions/{key}/meta-event`,
+  `conversions:write`), `check_meta_destination` (`POST /api/v1/conversion-setup/meta-check`,
+  `conversions:write`, optional `test_event_code`) and `set_meta_settings`
+  (`PUT /api/v1/conversion-setup/meta-settings`, `conversions:send`: `match`
+  meta_clicks/all_leads, `ldu` off/geolocate).
+- Pipeline events report `delivery.meta`; the conversion setup has a `meta` section; the
+  activity log and `conversion.delivered`/`conversion.failed` webhooks cover Meta
+  deliveries (`provider: "meta"`).
+- Events are hashed when planned (phone, email, lead ID) and sent one per request with
+  `event_id` `vc-<event id>`. Meta cannot restate or withdraw an event, so changes after
+  sending are final, and events older than 7 days are not sent.
+- The tracker sends the Meta Pixel's `_fbp` and `_fbc` cookies with a visit. The engine
+  keeps the visitor's user agent, and the IP address from `VISICONVERT_CLIENT_IP_HEADER`,
+  only for workspaces with a Meta connection, for 30 days.
+- Lead matching for pipeline events also considers Meta clicks for actions mapped to Meta
+  (after Google and Microsoft clicks), and any lead when Meta's match setting is
+  all_leads.
+
 ## Unreleased — Pause or exclude Microsoft goals
 
 - New MCP tool `set_microsoft_goal` and `PUT /api/v1/conversion-setup/microsoft-goal`

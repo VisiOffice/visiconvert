@@ -10,6 +10,7 @@ mod hosted;
 mod inquiries;
 mod managed;
 mod managed_usage;
+mod meta;
 mod microsoft;
 mod pipeline;
 mod public_api;
@@ -64,6 +65,7 @@ struct App {
     google: Option<google::Config>,
     google_client: convert_adapters::google_api::Client,
     microsoft: microsoft::Microsoft,
+    meta: meta::Meta,
 }
 type Shared = Arc<App>;
 
@@ -161,6 +163,9 @@ async fn main() -> anyhow::Result<()> {
             config: microsoft_config,
             client: convert_adapters::microsoft_api::Client::new()?,
         },
+        meta: meta::Meta {
+            client: convert_adapters::meta_api::Client::new()?,
+        },
     });
     if matches!(cli.command, Some(Command::ReconcileNumberPurchases)) {
         managed::reconcile_purchases(&app).await?;
@@ -174,7 +179,7 @@ async fn main() -> anyhow::Result<()> {
     if app.vault.is_some() {
         managed::spawn_release_loop(app.clone());
     }
-    if app.google.is_some() || app.microsoft.config.is_some() {
+    if app.google.is_some() || app.microsoft.config.is_some() || app.vault.is_some() {
         delivery::spawn(app.clone());
     }
     // Private destinations are an explicit self-hosted choice; hosted mode never allows them.
@@ -659,6 +664,7 @@ mod tests {
             google: None,
             google_client: convert_adapters::google_api::Client::new().unwrap(),
             microsoft: Default::default(),
+            meta: Default::default(),
             public_url: "https://convert.example.com".into(),
             twilio_account: configured.then(|| format!("AC{}", "1".repeat(32))),
             twilio_token: configured.then(|| "test-token".into()),
@@ -819,6 +825,8 @@ mod webhook_tests;
 
 #[cfg(test)]
 mod activity_tests;
+#[cfg(test)]
+mod meta_tests;
 #[cfg(test)]
 mod microsoft_tests;
 #[cfg(test)]

@@ -64,6 +64,13 @@ const SOURCES: &[Source] = &[
         from: "microsoft_deliveries d LEFT JOIN conversion_actions a ON a.workspace_id=d.workspace_id AND a.key=d.snapshot->>'action_key' WHERE d.workspace_id=$1",
     },
     Source {
+        kinds: &["conversion"],
+        at: "d.created_at",
+        key: "'meta_delivery:'||d.id::text",
+        fields: "'source','meta_delivery','id',d.id,'delivery_kind',d.kind,'state',d.state,'attempts',d.attempts,'diagnostic',d.diagnostic,'action',d.snapshot->>'action_key','action_name',a.name,'external_id',d.snapshot->>'external_id','revision',d.event_revision,'value_minor',d.snapshot->'value_minor','event_name',d.request->'event'->>'event_name'",
+        from: "meta_deliveries d LEFT JOIN conversion_actions a ON a.workspace_id=d.workspace_id AND a.key=d.snapshot->>'action_key' WHERE d.workspace_id=$1",
+    },
+    Source {
         kinds: &["webhook"],
         at: "d.created_at",
         key: "'webhook_delivery:'||d.id::text",
@@ -237,10 +244,11 @@ fn item(at: DateTime<Utc>, f: &Value) -> Value {
                 json!({"action":f["action"],"external_id":f["external_id"],"revision":f["revision"],"value_minor":f["value_minor"],"matched_by":f["matched_by"],"sendable":f["sendable"],"reason":f["blocked_reason"]}),
             )
         }
-        "google_delivery" | "microsoft_delivery" => {
+        "google_delivery" | "microsoft_delivery" | "meta_delivery" => {
             let state = text(f, "state").unwrap_or_default();
             let what = match (source, f["delivery_kind"].as_str()) {
                 ("google_delivery", _) => "Google Ads upload",
+                ("meta_delivery", _) => "Meta Conversions API event",
                 (_, Some("restate")) => "Microsoft Ads restatement",
                 (_, Some("retract")) => "Microsoft Ads retraction",
                 _ => "Microsoft Ads upload",
@@ -250,7 +258,7 @@ fn item(at: DateTime<Utc>, f: &Value) -> Value {
                 format!("{what} · {}", event_label(f)),
                 state.clone(),
                 delivery_outcome(&state),
-                json!({"destination":if source == "google_delivery" {"google"} else {"microsoft"},"action":f["action"],"external_id":f["external_id"],"revision":f["revision"],"value_minor":f["value_minor"],"goal_name":f["goal_name"],"attempts":f["attempts"],"diagnostic":f["diagnostic"]}),
+                json!({"destination":match source {"google_delivery" => "google", "meta_delivery" => "meta", _ => "microsoft"},"action":f["action"],"external_id":f["external_id"],"revision":f["revision"],"value_minor":f["value_minor"],"goal_name":f["goal_name"],"event_name":f["event_name"],"attempts":f["attempts"],"diagnostic":f["diagnostic"]}),
             )
         }
         "webhook_delivery" => {

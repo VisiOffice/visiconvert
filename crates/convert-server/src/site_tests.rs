@@ -86,6 +86,7 @@ async fn website_capture_isolated_atomic_and_consent_gated() {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     });
     let website = "https://business.example";
     let input = json!({"name":"Business","origin":website,"allowed_fields":["name","email"],"enabled":true,"version":0});
@@ -496,6 +497,7 @@ async fn dni_routes_require_owner_origin_and_consent() {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     });
     let origin = "https://dni.example";
     let created = call(

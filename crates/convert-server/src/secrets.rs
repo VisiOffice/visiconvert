@@ -125,6 +125,16 @@ impl Vault {
             encrypted,
         )
     }
+    /// Meta Conversions API tokens use their own context, like Microsoft's.
+    pub fn seal_meta(&self, workspace: Uuid, purpose: &str, token: &str) -> Result<String, ()> {
+        self.seal_context(&format!("visiconvert:meta:v1:{workspace}:{purpose}"), token)
+    }
+    pub fn open_meta(&self, workspace: Uuid, purpose: &str, encrypted: &str) -> Result<String, ()> {
+        self.open_context(
+            &format!("visiconvert:meta:v1:{workspace}:{purpose}"),
+            encrypted,
+        )
+    }
     pub fn open_google(
         &self,
         workspace: Uuid,

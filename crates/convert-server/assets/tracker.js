@@ -34,6 +34,15 @@
       return result;
     } finally { controllers.delete(controller); }
   }
+  function cookie(name) {
+    try {
+      for (const part of document.cookie.split(";")) {
+        const at = part.indexOf("=");
+        if (at > 0 && part.slice(0, at).trim() === name) return decodeURIComponent(part.slice(at + 1).trim());
+      }
+    } catch { /* cookies unavailable */ }
+    return "";
+  }
   function context() {
     const url = new URL(location.href);
     const campaign = new URLSearchParams();
@@ -41,7 +50,13 @@
     url.search = campaign.toString(); url.hash = ""; url.username = ""; url.password = "";
     let referrer = "";
     try { referrer = new URL(document.referrer).origin; } catch { /* no referrer */ }
-    return { id: crypto.randomUUID(), consent: "granted", landing_url: url.href, referrer };
+    const payload = { id: crypto.randomUUID(), consent: "granted", landing_url: url.href, referrer };
+    // Meta Pixel's first-party browser and click cookies, used to match Meta ad conversions.
+    for (const [key, name] of [["fbp", "_fbp"], ["fbc", "_fbc"]]) {
+      const value = cookie(name);
+      if (value && /^fb\.\d+\.\d+\.[A-Za-z0-9_-]+$/.test(value) && value.length <= 600) payload[key] = value;
+    }
+    return payload;
   }
   async function session(epoch) {
     requireConsent(epoch);

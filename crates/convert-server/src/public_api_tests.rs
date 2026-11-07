@@ -68,6 +68,7 @@ fn app(store: Store, cloud: Option<hosted::Config>) -> Shared {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     })
 }
 fn input(scopes: Value) -> Value {

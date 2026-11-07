@@ -9,6 +9,7 @@ pub mod google;
 pub mod hosted;
 pub mod inquiries;
 pub mod managed;
+pub mod meta;
 pub mod microsoft;
 pub mod pipeline;
 pub mod public_api;

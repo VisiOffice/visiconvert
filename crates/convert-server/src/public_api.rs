@@ -215,6 +215,8 @@ async fn auth(State(app): State<Shared>, mut request: Request, next: Next) -> Re
         || path == "/api/v1/conversion-setup/google-goal"
         || path == "/api/v1/conversion-setup/microsoft-destination"
         || path == "/api/v1/conversion-setup/microsoft-goal"
+        || path == "/api/v1/conversion-setup/meta-settings"
+        || path == "/api/v1/connections/meta"
     {
         "conversions:send"
     } else if path.starts_with("/api/v1/conversion-") {

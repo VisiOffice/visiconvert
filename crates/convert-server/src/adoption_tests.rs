@@ -63,6 +63,7 @@ async fn adoption_is_atomic_retryable_scoped_and_never_backbills() {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     });
     // Match the production encryption context, without sending secrets through adoption.
     let token = app

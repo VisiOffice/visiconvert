@@ -136,6 +136,23 @@ pub fn spawn(a: Shared) {
                     }
                 }
             }
+            if a.vault.is_some() {
+                if meta::plan(&a).await.is_err() {
+                    tracing::error!("Meta conversion planning failed; due events are retried");
+                }
+                for _ in 0..20 {
+                    match meta::run_one(&a).await {
+                        Ok(true) => (),
+                        Ok(false) => break,
+                        Err(_) => {
+                            tracing::error!(
+                                "Meta delivery database pass failed; durable attempts will be recovered"
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
         }
     });
 }

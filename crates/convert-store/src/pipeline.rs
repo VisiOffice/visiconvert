@@ -4,6 +4,7 @@
 use crate::{
     Error, Result, Store,
     conversions::{self, Consent, Decision},
+    meta::HAS_META,
 };
 use chrono::{DateTime, Duration, SubsecRound, Utc};
 use convert_domain::ValidationError;
@@ -200,10 +201,13 @@ pub(crate) fn sql(s: String) -> sqlx::AssertSqlSafe<String> {
     sqlx::AssertSqlSafe(s)
 }
 const EVENT: &str = "SELECT e.*,d.id AS delivery_id,d.state AS delivery_state,d.diagnostic,d.request_id,(d.snapshot->>'revision')::int AS delivery_revision,
- mp.revision AS ms_plan_revision,mp.state AS ms_plan_state,mp.reason AS ms_reason,md.id AS ms_delivery_id,md.state AS ms_delivery_state,md.kind AS ms_kind,md.diagnostic AS ms_diagnostic,md.tracking_id AS ms_tracking_id,md.event_revision AS ms_delivery_revision
+ mp.revision AS ms_plan_revision,mp.state AS ms_plan_state,mp.reason AS ms_reason,md.id AS ms_delivery_id,md.state AS ms_delivery_state,md.kind AS ms_kind,md.diagnostic AS ms_diagnostic,md.tracking_id AS ms_tracking_id,md.event_revision AS ms_delivery_revision,
+ tp.revision AS mt_plan_revision,tp.state AS mt_plan_state,tp.reason AS mt_reason,td.id AS mt_delivery_id,td.state AS mt_delivery_state,td.diagnostic AS mt_diagnostic,td.tracking_id AS mt_tracking_id,td.event_revision AS mt_delivery_revision
  FROM pipeline_events e LEFT JOIN LATERAL (SELECT d.* FROM conversion_deliveries d WHERE d.workspace_id=e.workspace_id AND d.outbox_id=e.outbox_id AND d.snapshot->>'event_id'=e.id::text ORDER BY d.created_at DESC LIMIT 1) d ON true
  LEFT JOIN microsoft_event_plans mp ON mp.workspace_id=e.workspace_id AND mp.event_id=e.id
- LEFT JOIN LATERAL (SELECT m.* FROM microsoft_deliveries m WHERE m.workspace_id=e.workspace_id AND m.event_id=e.id ORDER BY m.created_at DESC LIMIT 1) md ON true WHERE e.workspace_id=$1";
+ LEFT JOIN LATERAL (SELECT m.* FROM microsoft_deliveries m WHERE m.workspace_id=e.workspace_id AND m.event_id=e.id ORDER BY m.created_at DESC LIMIT 1) md ON true
+ LEFT JOIN meta_event_plans tp ON tp.workspace_id=e.workspace_id AND tp.event_id=e.id
+ LEFT JOIN LATERAL (SELECT t.* FROM meta_deliveries t WHERE t.workspace_id=e.workspace_id AND t.event_id=e.id ORDER BY t.created_at DESC LIMIT 1) td ON true WHERE e.workspace_id=$1";
 
 fn event_json(r: &sqlx::postgres::PgRow) -> Value {
     let status: String = r.get("status");
@@ -235,7 +239,7 @@ fn event_json(r: &sqlx::postgres::PgRow) -> Value {
         "revision":revision,"status":status,"created_at":r.get::<DateTime<Utc>,_>("created_at"),"updated_at":r.get::<DateTime<Utc>,_>("updated_at"),
         "delivery":{"google":google,"reason":reason,"delivery_id":r.get::<Option<Uuid>,_>("delivery_id"),"delivery_state":raw,
             "delivery_revision":r.get::<Option<i32>,_>("delivery_revision"),"request_id":r.get::<Option<String>,_>("request_id"),
-            "microsoft":crate::microsoft::event_status(r, revision)}})
+            "microsoft":crate::microsoft::event_status(r, revision),"meta":crate::meta::event_status(r, revision)}})
 }
 pub(crate) async fn record(
     conn: &mut PgConnection,
@@ -255,14 +259,46 @@ pub(crate) async fn record(
     .await?;
     Ok(())
 }
-/// The lead with a Google click, else (for an action mapped to a Microsoft goal) the lead
-/// with a Microsoft click, so a lead Google would match is never displaced.
+/// Which ad platforms an action is mapped to, deciding which clicks can match its leads.
+struct Mapped {
+    microsoft: bool,
+    meta: bool,
+    /// Meta's match setting is all_leads: any lead matches, click or not.
+    meta_all: bool,
+}
+impl Mapped {
+    fn from_row(r: &sqlx::postgres::PgRow) -> Self {
+        Self {
+            microsoft: r.get("microsoft"),
+            meta: r.get("meta"),
+            meta_all: r.get("meta_all"),
+        }
+    }
+    /// Click conditions in priority order: Google, then Microsoft, then Meta, then (for
+    /// Meta's all_leads setting) any lead, so a lead an earlier platform would match is
+    /// never displaced.
+    fn clicks(&self) -> Vec<&'static str> {
+        let mut v = vec![HAS_CLICK];
+        if self.microsoft {
+            v.push(HAS_MSCLKID);
+        }
+        if self.meta {
+            v.push(HAS_META);
+        }
+        if self.meta_all {
+            v.push("true");
+        }
+        v
+    }
+}
+/// The lead matching the event's phone, email or ID, preferring leads with a click from a
+/// platform the action is mapped to (see `Mapped::clicks`).
 async fn find_lead(
     conn: &mut PgConnection,
     workspace: Uuid,
     matcher: &Matcher,
     attribution: &str,
-    microsoft: bool,
+    mapped: &Mapped,
 ) -> Result<Option<Uuid>> {
     let (condition, value) = match matcher {
         Matcher::Lead(id) => {
@@ -287,10 +323,7 @@ async fn find_lead(
     } else {
         "ASC"
     };
-    for click in [HAS_CLICK, HAS_MSCLKID] {
-        if click == HAS_MSCLKID && !microsoft {
-            break;
-        }
+    for click in mapped.clicks() {
         let found = sqlx::query_scalar(sql(format!("SELECT l.id FROM leads l {CLICK} WHERE l.workspace_id=$1 AND NOT l.is_demo AND {click} AND {condition} ORDER BY COALESCE(ws.visit_at,ds.visit_at) {order},l.created_at {order},l.id LIMIT 1")))
             .bind(workspace).bind(value).fetch_optional(&mut *conn).await?;
         if found.is_some() {
@@ -367,6 +400,7 @@ async fn apply_pipeline_policy(
         sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND plan_state='blocked'")
             .bind(workspace).execute(&mut *conn).await?;
         crate::microsoft::wake_plans(conn, workspace, None).await?;
+        crate::meta::wake_plans(conn, workspace, None).await?;
     }
     let mut payload = json!({"auto_send":auto_send,"consent_policy":policy,"attested":attested,"version":version});
     if reattest {
@@ -432,6 +466,7 @@ impl Store {
         sqlx::query("UPDATE pipeline_events SET plan_after=now() WHERE workspace_id=$1 AND action_key=$2 AND plan_state='blocked'")
             .bind(self.workspace).bind(&input.key).execute(&mut *tx).await?;
         crate::microsoft::wake_plans(&mut tx, self.workspace, Some(&input.key)).await?;
+        crate::meta::wake_plans(&mut tx, self.workspace, Some(&input.key)).await?;
         record(
             &mut tx,
             self.workspace,
@@ -582,9 +617,12 @@ impl Store {
         let (matcher, attribution, status) = input.parse()?;
         let mut tx = self.pool.begin().await?;
         self.lock_inquiry_writes(&mut tx).await?;
-        let action = sqlx::query("SELECT trigger,default_value_minor,microsoft_goal_name IS NOT NULL AS microsoft FROM conversion_actions WHERE workspace_id=$1 AND key=$2")
+        let action = sqlx::query("SELECT trigger,default_value_minor,microsoft_goal_name IS NOT NULL AS microsoft,meta_event_name IS NOT NULL AS meta,
+            meta_event_name IS NOT NULL AND EXISTS(SELECT 1 FROM meta_connections c WHERE c.workspace_id=a.workspace_id AND c.match_mode='all_leads') AS meta_all
+            FROM conversion_actions a WHERE workspace_id=$1 AND key=$2")
             .bind(self.workspace).bind(&input.action).fetch_optional(&mut *tx).await?
             .ok_or(ValidationError("Unknown action. Create it in Conversions first."))?;
+        let mapped = Mapped::from_row(&action);
         if action.get::<String, _>("trigger") != "events" {
             return Err(ValidationError(
                 "VisiConvert records this action itself when an attributed lead arrives",
@@ -600,14 +638,7 @@ impl Store {
                 return Err(Error::NotFound);
             }
             let m = matcher.as_ref().ok_or(Error::NotFound)?;
-            let lead = find_lead(
-                &mut tx,
-                self.workspace,
-                m,
-                attribution,
-                action.get("microsoft"),
-            )
-            .await?;
+            let lead = find_lead(&mut tx, self.workspace, m, attribution, &mapped).await?;
             let sendable: bool = sqlx::query_scalar("SELECT COALESCE((SELECT enabled AND auto_send FROM conversion_delivery_settings WHERE workspace_id=$1),false)")
                 .bind(self.workspace).fetch_one(&mut *tx).await?;
             let id = Uuid::new_v4();
@@ -628,14 +659,7 @@ impl Store {
             || (e.get::<String, _>("matched_by") == "none" && status == "active");
         let (mut lead, mut by): (Option<Uuid>, String) = (e.get("lead_id"), e.get("matched_by"));
         if rematch && let Some(m) = &matcher {
-            lead = find_lead(
-                &mut tx,
-                self.workspace,
-                m,
-                attribution,
-                action.get("microsoft"),
-            )
-            .await?;
+            lead = find_lead(&mut tx, self.workspace, m, attribution, &mapped).await?;
             by = if lead.is_some() {
                 matched_by(m).into()
             } else {
@@ -742,7 +766,8 @@ impl Store {
             {CLICK}
             LEFT JOIN conversion_delivery_settings s ON s.workspace_id=a.workspace_id
             WHERE a.workspace_id=$1 AND a.enabled AND a.trigger='new_lead'
-             AND ({HAS_CLICK} OR (a.microsoft_goal_name IS NOT NULL AND l.created_at>=a.microsoft_mapped_at AND {HAS_MSCLKID}))
+             AND ({HAS_CLICK} OR (a.microsoft_goal_name IS NOT NULL AND l.created_at>=a.microsoft_mapped_at AND {HAS_MSCLKID})
+              OR (a.meta_event_name IS NOT NULL AND l.created_at>=a.meta_mapped_at AND ({HAS_META} OR EXISTS(SELECT 1 FROM meta_connections mc WHERE mc.workspace_id=a.workspace_id AND mc.match_mode='all_leads'))))
              AND NOT EXISTS(SELECT 1 FROM pipeline_events e WHERE e.workspace_id=a.workspace_id AND e.action_key=a.key AND e.external_id=l.id::text)
             ORDER BY l.created_at LIMIT 200 ON CONFLICT DO NOTHING RETURNING id,action_key,external_id,value_minor)
             INSERT INTO conversion_events(workspace_id,kind,actor,payload) SELECT $1,'pipeline_event_recorded','system',jsonb_build_object('id',id,'action',action_key,'external_id',external_id,'revision',1,'matched',true,'value_minor',value_minor) FROM added")))
