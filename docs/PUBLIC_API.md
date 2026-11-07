@@ -184,7 +184,8 @@ Microsoft Advertising uses the same scopes. `read`: `GET /api/v1/connections/mic
 `conversions:write`: map an action to a goal (`PUT /api/v1/conversion-actions/{key}/microsoft-goal`),
 create a goal for it (`POST` on the same path) and run the read-only check
 (`POST /api/v1/conversion-setup/microsoft-check`). `conversions:send`: save the ad account
-(`PUT /api/v1/conversion-setup/microsoft-destination`). The `microsoft` section of
+(`PUT /api/v1/conversion-setup/microsoft-destination`) and pause, reactivate or exclude a
+goal from bidding (`PUT /api/v1/conversion-setup/microsoft-goal`). The `microsoft` section of
 `conversion-setup` lists the steps left; no key can connect Microsoft. See
 [Microsoft connection](MICROSOFT_CONNECTION.md).
 

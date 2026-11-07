@@ -1,3 +1,15 @@
+## Unreleased — Pause or exclude Microsoft goals
+
+- New MCP tool `set_microsoft_goal` and `PUT /api/v1/conversion-setup/microsoft-goal`
+  (`conversions:send`): pause or reactivate a conversion goal in the saved Microsoft
+  Advertising account, or include or exclude it from bidding, with
+  `{goal_id, status?, exclude_from_bidding?}`. Only those fields are sent; goals are
+  never deleted, renamed or revalued. Goals an action is mapped to cannot be paused.
+  Each change is recorded as a `microsoft_goal_changed` conversion event.
+- **Review other goals** on Conversions → Microsoft Ads shows **Pause goal** and
+  **Exclude from bidding** next to each flagged goal, and the review summary points
+  agents at the new tool instead of the Microsoft Advertising website.
+
 ## Unreleased — Clearer Microsoft goal picker
 
 - On **Conversions → Microsoft Ads**, each action has a labeled **Microsoft goal** picker:

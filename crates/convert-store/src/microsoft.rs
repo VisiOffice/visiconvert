@@ -340,6 +340,13 @@ impl Store {
     /// most 90 days back, only with a goal) moves that start earlier so events and
     /// Microsoft-click leads since then are sent too, for clicks no other uploader saw.
     /// Shares the action's version.
+    /// A Microsoft conversion goal paused, reactivated, or included in or excluded from
+    /// bidding through VisiConvert.
+    pub async fn log_microsoft_goal_change(&self, actor: &str, payload: &Value) -> Result<()> {
+        sqlx::query("INSERT INTO conversion_events(workspace_id,kind,actor,payload) VALUES($1,'microsoft_goal_changed',$2,$3)")
+            .bind(self.workspace).bind(actor).bind(payload).execute(&self.pool).await?;
+        Ok(())
+    }
     pub async fn set_microsoft_action_goal(
         &self,
         key: &str,

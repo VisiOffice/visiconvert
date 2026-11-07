@@ -28,6 +28,7 @@ struct Goal {
     kind: &'static str,
     count: &'static str,
     category: &'static str,
+    exclude: bool,
 }
 pub(super) struct Mock {
     challenge: Mutex<String>,
@@ -53,6 +54,7 @@ impl Default for Mock {
             kind,
             count,
             category,
+            exclude: false,
         };
         Self {
             challenge: Mutex::default(),
@@ -224,7 +226,7 @@ async fn mock(
                 .unwrap()
                 .iter()
                 .filter(|g| types.split(' ').any(|t| t == g.kind))
-                .map(|g| format!("<ConversionGoal i:type=\"{}Goal\"><ConversionWindowInMinutes>129600</ConversionWindowInMinutes><CountType>{}</CountType><ExcludeFromBidding>false</ExcludeFromBidding><GoalCategory>{}</GoalCategory><Id>{}</Id><Name>{}</Name><Revenue><Type>VariableValue</Type></Revenue><Scope>Account</Scope><Status>{}</Status><Type>{}</Type></ConversionGoal>", g.kind, g.count, g.category, g.id, g.name, g.status, g.kind))
+                .map(|g| format!("<ConversionGoal i:type=\"{}Goal\"><ConversionWindowInMinutes>129600</ConversionWindowInMinutes><CountType>{}</CountType><ExcludeFromBidding>{}</ExcludeFromBidding><GoalCategory>{}</GoalCategory><Id>{}</Id><Name>{}</Name><Revenue><Type>VariableValue</Type></Revenue><Scope>Account</Scope><Status>{}</Status><Type>{}</Type></ConversionGoal>", g.kind, g.count, g.exclude, g.category, g.id, g.name, g.status, g.kind))
                 .collect();
             envelope(
                 ns,
@@ -252,6 +254,7 @@ async fn mock(
                     "All"
                 },
                 category: "SubmitLeadForm",
+                exclude: false,
             });
             if m.lose_add_response.swap(false, Ordering::SeqCst) {
                 return (StatusCode::BAD_GATEWAY, "upstream reset").into_response();
@@ -260,6 +263,33 @@ async fn mock(
                 ns,
                 &format!(
                     "<AddConversionGoalsResponse xmlns=\"{ns}\" xmlns:i=\"http://www.w3.org/2001/XMLSchema-instance\"><ConversionGoalIds xmlns:a=\"http://schemas.microsoft.com/2003/10/Serialization/Arrays\"><a:long>{id}</a:long></ConversionGoalIds><PartialErrors i:nil=\"true\"/></AddConversionGoalsResponse>"
+                ),
+            )
+        }
+        "UpdateConversionGoals" => {
+            let id = between(&xml, "<Id>", "</Id>").unwrap();
+            let mut goals = m.goals.lock().unwrap();
+            let g = goals.iter_mut().find(|g| g.id == id).unwrap();
+            assert!(
+                xml.contains(&format!("<ConversionGoal i:type=\"{}Goal\">", g.kind)),
+                "{xml}"
+            );
+            for never in ["<Name>", "<Revenue>", "<Scope>", "<CountType>", "Deleted"] {
+                assert!(!xml.contains(never), "{xml}");
+            }
+            match between(&xml, "<Status>", "</Status>") {
+                Some("Paused") => g.status = "Paused",
+                Some("Active") => g.status = "Active",
+                Some(other) => panic!("{other}"),
+                None => {}
+            }
+            if let Some(e) = between(&xml, "<ExcludeFromBidding>", "</ExcludeFromBidding>") {
+                g.exclude = e == "true";
+            }
+            envelope(
+                ns,
+                &format!(
+                    "<UpdateConversionGoalsResponse xmlns=\"{ns}\"><PartialErrors i:nil=\"true\" xmlns:i=\"http://www.w3.org/2001/XMLSchema-instance\"/></UpdateConversionGoalsResponse>"
                 ),
             )
         }
@@ -910,6 +940,91 @@ async fn microsoft_goals_create_recover_map_check_and_review() {
     );
     assert_eq!(flags("Orders"), json!([]));
     assert_eq!(flags("Old import"), json!([]));
+    assert!(
+        v["summary"]
+            .as_str()
+            .unwrap()
+            .contains("set_microsoft_goal")
+    );
+    // Pausing or excluding a goal is an owner switch: conversions:send.
+    let goal = |body: Value, k: String| {
+        let a = a.clone();
+        async move {
+            api(
+                a,
+                "PUT",
+                "/api/v1/conversion-setup/microsoft-goal",
+                &k,
+                body,
+            )
+            .await
+        }
+    };
+    let (s, v) = goal(json!({"goal_id":"12","status":"Paused"}), write.clone()).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+    let send = key(&a, &["read", "conversions:send"]).await;
+    let (s, v) = goal(json!({"goal_id":"12","status":"Paused"}), send.clone()).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["goal"]["status"], "Paused");
+    assert_eq!(v["before"]["status"], "Active");
+    assert_eq!(v["changed"], true);
+    let (s, v) = goal(
+        json!({"goal_id":"14","exclude_from_bidding":true}),
+        send.clone(),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["goal"]["exclude_from_bidding"], true);
+    assert_eq!(v["goal"]["status"], "Active");
+    // Repeating is a no-op that does not call Microsoft or log again.
+    let (_, v) = goal(
+        json!({"goal_id":"14","exclude_from_bidding":true}),
+        send.clone(),
+    )
+    .await;
+    assert_eq!(v["changed"], false);
+    let logged: i64 = sqlx::query_scalar("SELECT count(*) FROM conversion_events WHERE workspace_id=$1 AND kind='microsoft_goal_changed'")
+        .bind(a.store.workspace).fetch_one(&a.store.pool).await.unwrap();
+    assert_eq!(logged, 2);
+    // A goal VisiConvert sends to cannot be paused, but can be excluded from bidding.
+    let (s, v) = goal(json!({"goal_id":"11","status":"Paused"}), send.clone()).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("order"), "{v}");
+    assert_eq!(
+        m.goals
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|g| g.id == "11")
+            .unwrap()
+            .status,
+        "Active"
+    );
+    for (body, want) in [
+        (
+            json!({"goal_id":"999","status":"Paused"}),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            json!({"goal_id":"12","status":"Deleted"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (json!({"goal_id":"12"}), StatusCode::BAD_REQUEST),
+        (
+            json!({"goal_id":"12","name":"x"}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ] {
+        let (s, v) = goal(body.clone(), send.clone()).await;
+        assert_eq!(s, want, "{body} {v}");
+    }
+    // Reactivating works, and the paused goal is no longer flagged meanwhile.
+    let (s, v) = goal(json!({"goal_id":"12","status":"Active"}), send.clone()).await;
+    assert_eq!(
+        (s, &v["goal"]["status"]),
+        (StatusCode::OK, &json!("Active")),
+        "{v}"
+    );
     task.abort();
     w.task.abort();
 }

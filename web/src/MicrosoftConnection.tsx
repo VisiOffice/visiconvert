@@ -8,7 +8,8 @@ type Goal = { id: string; name: string; status: string; kind: string; category: 
 type Action = { key: string; name: string; enabled: boolean; counting: string; version: number; microsoft_goal_name?: string | null };
 type Setup = { ready: boolean; summary: string; next_steps: { actor: string; step: string; advisory?: boolean }[] };
 type Overview = { actions: Action[]; setup: { microsoft?: Setup } };
-type Review = { summary: string; warnings: { id: string; name: string; flags: string[] }[]; flags: Record<string, string> };
+type ReviewGoal = { id: string; name: string; type: string; status: string; exclude_from_bidding: boolean; used_by: string[] };
+type Review = { summary: string; goals: ReviewGoal[]; warnings: { id: string; name: string; flags: string[] }[]; flags: Record<string, string> };
 
 /// Microsoft Advertising as a second destination for the same pipeline actions. `revision`
 /// is the shared delivery settings version; `onChange` refreshes the rest of the page.
@@ -126,7 +127,16 @@ export function MicrosoftConnection({ api, revision, onChange }: { api: Client; 
         </div>
       </div>}
       {validation && <div className={validation.valid ? "notice" : "error"}><strong>{validation.valid ? "Microsoft destination checks passed" : "Microsoft destination needs attention"}</strong><p>{validation.message}</p>{validation.mapped?.filter(m => !m.eligible).map(m => <p key={m.action}><code>{m.action}</code>: goal “{m.goal_name}” {m.found ? "is not an active offline conversion goal" : "was not found in this account"}.</p>)}{status.checked_at && <small>Checked {new Date(status.checked_at).toLocaleString()}</small>}</div>}
-      {review && <div className={review.warnings.length ? "error" : "notice"}><strong>Other goals in this account</strong><p>{review.summary}</p>{review.warnings.length > 0 && <ul>{review.warnings.map(w => <li key={w.id}>{w.name}: {w.flags.map(f => review.flags[f] ?? f).join(" ")}</li>)}</ul>}</div>}
+      {review && <div className={review.warnings.length ? "error" : "notice"} aria-label="Other Microsoft goals"><strong>Other goals in this account</strong><p>{review.summary}</p>{review.warnings.length > 0 && <ul className="goal-warnings">{review.warnings.map(w => {
+        const g = review.goals.find(x => x.id === w.id);
+        const set = (body: { status?: string; exclude_from_bidding?: boolean }, done: string) => void run(async () => { await api("/conversion-setup/microsoft-goal", { goal_id: w.id, ...body }, "PUT"); setReview(await api<Review>("/conversion-setup/microsoft-review")); setNotice(done); });
+        return <li key={w.id}><span>{w.name} ({w.id}): {w.flags.map(f => review.flags[f] ?? f).join(" ")}</span>
+          {g && <span className="site-actions">
+            {!g.used_by.length && g.status === "Active" && <button className="secondary" disabled={busy} onClick={() => set({ status: "Paused" }, `Paused “${w.name}” in Microsoft Advertising. It records no new conversions.`)}>Pause goal</button>}
+            {!g.exclude_from_bidding && <button className="secondary" disabled={busy} onClick={() => set({ exclude_from_bidding: true }, `“${w.name}” no longer counts in Conversions or automated bidding.`)}>Exclude from bidding</button>}
+          </span>}
+        </li>;
+      })}</ul>}</div>}
     </>}
     {setup && <div className={setup.ready ? "notice" : "muted"} aria-label="Microsoft setup checklist"><strong>{setup.ready ? "Microsoft ready" : "Microsoft: still to do"}</strong>{setup.ready && <p>{setup.summary}</p>}{setup.next_steps.length > 0 && <ul>{setup.next_steps.map(s => <li key={s.step}>{s.advisory ? "Note: " : ""}{s.step}</li>)}</ul>}</div>}
   </section>;
