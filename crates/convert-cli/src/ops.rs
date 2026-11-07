@@ -98,6 +98,27 @@ pub async fn connect_twilio(client: &Client, account_sid: &str, auth_token: &str
     Ok(client.connection().await?)
 }
 
+/// Save the Meta dataset (Pixel) ID and Conversions API access token at the current
+/// revision. VisiConvert reads the dataset with the token before saving it.
+pub async fn connect_meta(client: &Client, dataset_id: &str, access_token: &str) -> Result<Value> {
+    let dataset_id = dataset_id.trim();
+    if dataset_id.is_empty()
+        || dataset_id.len() > 20
+        || !dataset_id.bytes().all(|b| b.is_ascii_digit())
+    {
+        bail!("The dataset (Pixel) ID is the number shown in Events Manager");
+    }
+    let current = client.meta_connection().await?;
+    let revision = current["revision"].as_i64().unwrap_or(0);
+    let saved = client
+        .save_meta_connection(&json!({"revision":revision,"dataset_id":dataset_id,"access_token":access_token.trim()}))
+        .await?;
+    Ok(
+        json!({"revision":saved["revision"],"dataset":saved["dataset"],"token_fingerprint":saved["token_fingerprint"],
+        "next_steps":saved["setup"]["meta"]["next_steps"]}),
+    )
+}
+
 /// Numbers in the connected Twilio account that are not tracked yet.
 pub async fn available_numbers(client: &Client) -> Result<Value> {
     available_numbers_for(client, PhoneProvider::Twilio).await

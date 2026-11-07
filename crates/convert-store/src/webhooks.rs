@@ -505,13 +505,26 @@ impl Store {
                     Some(v) => v,
                     // Microsoft Advertising deliveries: same shape, provider microsoft and
                     // Microsoft's TrackingId as request_id.
-                    None => sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'outbox_id',NULL,'outbox_version',d.event_revision,'provider','microsoft','kind',d.kind,'state',d.state,'request_id',d.tracking_id,'diagnostic',d.diagnostic,'attempts',d.attempts,'updated_at',d.updated_at,
+                    None => {
+                        let microsoft: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'outbox_id',NULL,'outbox_version',d.event_revision,'provider','microsoft','kind',d.kind,'state',d.state,'request_id',d.tracking_id,'diagnostic',d.diagnostic,'attempts',d.attempts,'updated_at',d.updated_at,
                         'pipeline_event',jsonb_build_object('id',d.snapshot->'event_id','action',d.snapshot->'action_key','external_id',d.snapshot->'external_id','revision',d.snapshot->'revision','value_minor',d.snapshot->'value_minor')) FROM microsoft_deliveries d WHERE d.workspace_id=$1 AND d.id=$2")
                         .bind(self.workspace)
                         .bind(id)
                         .fetch_optional(&self.pool)
-                        .await?
-                        .unwrap_or(Value::Null),
+                        .await?;
+                        match microsoft {
+                            Some(v) => v,
+                            // Meta Conversions API deliveries: provider meta and Meta's
+                            // fbtrace_id as request_id.
+                            None => sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'outbox_id',NULL,'outbox_version',d.event_revision,'provider','meta','kind',d.kind,'state',d.state,'request_id',d.tracking_id,'diagnostic',d.diagnostic,'attempts',d.attempts,'updated_at',d.updated_at,
+                                'pipeline_event',jsonb_build_object('id',d.snapshot->'event_id','action',d.snapshot->'action_key','external_id',d.snapshot->'external_id','revision',d.snapshot->'revision','value_minor',d.snapshot->'value_minor')) FROM meta_deliveries d WHERE d.workspace_id=$1 AND d.id=$2")
+                                .bind(self.workspace)
+                                .bind(id)
+                                .fetch_optional(&self.pool)
+                                .await?
+                                .unwrap_or(Value::Null),
+                        }
+                    }
                 }
             }
             _ => json!({"message":"Test event from VisiConvert. No action is needed.","endpoint_id":claim.endpoint_id}),

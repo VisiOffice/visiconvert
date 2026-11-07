@@ -351,6 +351,40 @@ impl Client {
         )
         .await
     }
+    pub async fn meta_connection(&self) -> Result<Value, Error> {
+        self.send(self.http.get(self.url("/api/connections/meta")))
+            .await
+    }
+    /// Saves the dataset and access token. The token travels only in this request body.
+    pub async fn save_meta_connection(&self, input: &Value) -> Result<Value, Error> {
+        self.send(self.http.put(self.url("/api/connections/meta")).json(input))
+            .await
+    }
+    pub async fn set_meta_settings(&self, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .put(self.url("/api/conversion-setup/meta-settings"))
+                .json(input),
+        )
+        .await
+    }
+    pub async fn check_meta_destination(&self, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .post(self.url("/api/conversion-setup/meta-check"))
+                .json(input),
+        )
+        .await
+    }
+    pub async fn set_meta_action_event(&self, key: &str, input: &Value) -> Result<Value, Error> {
+        let key = urlencoding(key);
+        self.send(
+            self.http
+                .put(self.url(&format!("/api/conversion-actions/{key}/meta-event")))
+                .json(input),
+        )
+        .await
+    }
 
     pub async fn health(&self) -> Result<Value, Error> {
         self.send(self.http.get(self.url("/health"))).await

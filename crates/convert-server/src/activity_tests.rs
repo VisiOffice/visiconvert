@@ -34,6 +34,7 @@ fn app(store: Store) -> Shared {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     })
 }
 async fn get(app: Shared, path: &str, key: &str) -> (StatusCode, Value, String) {

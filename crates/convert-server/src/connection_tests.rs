@@ -205,6 +205,7 @@ async fn shared_connections_verify_credentials_ownership_and_isolate_callbacks()
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     });
     let standalone = Arc::new(App {
         cloud: None,
@@ -643,6 +644,7 @@ async fn manual_browser_fixture() {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     });
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(

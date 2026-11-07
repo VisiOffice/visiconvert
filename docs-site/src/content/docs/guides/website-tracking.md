@@ -49,6 +49,7 @@ Do not send passwords, payment details or free-text messages.
 - Landing page path (without query string), UTM tags, and `gclid`, `gbraid`, `wbraid`, `msclkid` or `fbclid` if present.
 - The referring site's origin only.
 - Explicit `utm_source` takes priority. Without it, Google or Microsoft click IDs supply a source; `fbclid` identifies Facebook without assuming paid traffic.
+- For workspaces connected to [Meta](/guides/meta-ads-connection/): the Meta Pixel's `_fbp` and `_fbc` cookies when present, and the visitor's user agent and IP address, kept for 30 days to match Meta ad conversions.
 - Conflicting click IDs stay **Unknown / conflicting click IDs**. Conflicting UTMs and click IDs are highlighted in the lead’s evidence, with the original inputs preserved.
 - Otherwise recognized search/social referrers supply a source; other referring sites retain their origin. Missing evidence stays **Direct / unknown**.
 

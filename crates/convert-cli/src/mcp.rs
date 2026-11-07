@@ -494,6 +494,45 @@ const TOOLS: &[Tool] = &[
         },
     },
     Tool {
+        name: "set_meta_action_event",
+        description: "Map a VisiConvert pipeline action to a Meta event name, or clear it with event_name null. Use a Meta standard event (Lead for new leads, Schedule for booked appointments, Purchase for won jobs, which needs a value) or a custom name. Requires conversions:write. Uses the shared delivery settings; the dataset and access token are saved separately by the owner (Conversions, or the CLI's connect meta command), never through this server. A new or changed mapping applies to events recorded from now on, so another integration sending the same events cannot be double counted. To also send events from the last 7 days (Meta's limit), pass include_since, only after the owner confirms the date and that no other integration sent those events to Meta.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["key","version","event_name"],"properties":{
+                "key":{"type":"string","description":"Action key from list_conversion_actions"},
+                "version":{"type":"integer","minimum":1,"description":"Current action version from list_conversion_actions"},
+                "event_name":{"type":["string","null"],"pattern":"^[A-Za-z][A-Za-z0-9_]{0,39}$","description":"Meta event name such as Lead, Schedule or Purchase; null clears the mapping"},
+                "include_since":{"type":"string","format":"date-time","description":"Owner-confirmed start, at most 7 days ago"}
+            }})
+        },
+    },
+    Tool {
+        name: "check_meta_destination",
+        description: "Run the Meta destination check: reads the saved dataset with the saved access token and records the result so sending can start. With test_event_code (from Events Manager's Test events tab) it also sends one test Lead event there; test events never count as conversions. Requires conversions:write. Use meta.revision from get_conversion_setup; on conflict re-read it. VisiConvert repeats the read-only check automatically.",
+        changes: true,
+        idempotent: false,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["revision"],"properties":{
+                "revision":{"type":"integer","minimum":1,"description":"meta.revision from get_conversion_setup"},
+                "test_event_code":{"type":"string","pattern":"^[A-Za-z0-9_]{1,64}$","description":"Code from Events Manager's Test events tab"}
+            }})
+        },
+    },
+    Tool {
+        name: "set_meta_settings",
+        description: "Choose which leads Meta receives and whether Limited Data Use applies. match meta_clicks (default) sends only leads whose website visit had a Meta ad click (fbclid, or a Meta campaign tag with the Pixel's browser ID); all_leads sends every eligible lead, including calls and leads without a visit, for Meta to match by hashed phone and email. ldu geolocate marks events for Meta's Limited Data Use so Meta applies US state privacy laws by location; off sends none. Requires conversions:send, which only the workspace owner can grant. Before calling, tell the owner what changes (all_leads shares hashed contact details of every lead with Meta) and get their explicit yes in this conversation. Use meta.settings_version from get_conversion_setup.",
+        changes: true,
+        idempotent: true,
+        schema: || {
+            json!({"type":"object","additionalProperties":false,"required":["settings_version","match","ldu"],"properties":{
+                "settings_version":{"type":"integer","minimum":0,"description":"meta.settings_version from get_conversion_setup (0 before the first save)"},
+                "match":{"type":"string","enum":["meta_clicks","all_leads"]},
+                "ldu":{"type":"string","enum":["off","geolocate"]}
+            }})
+        },
+    },
+    Tool {
         name: "record_conversion_event",
         description: "Post one pipeline event (for example a sent quote or an order) for an exact lead or a phone/email match. Requires conversions:write. Reposting the same external_id with the same fields is a no-op; a changed value creates a revision. The result includes the Google delivery state and any blocked reason.",
         changes: true,
@@ -547,7 +586,7 @@ const SETUP_PROMPT: &str = "Help me set up this VisiConvert workspace.
 4. Install the public tracker script from list_sites with data-site set to the site's ID and referrerpolicy=no-referrer. Never embed the workspace key. After visiconvert:ready, wire setConsent(true/false) to the site's actual consent decision. Call trackForm only after backend success with a stable submissionId and allowed fields. Tracking failures must not block forms. Do not count page views, widget opens or submit clicks as leads.
 5. If calls are needed, inspect list_signalwire_numbers or list_twilio_numbers. Propose owned numbers and destinations, preserve existing answering routes, and obtain approval before add_tracking_number. Never buy numbers or change carrier routing without explicit approval. These tools cannot perform either operation; give the owner provider-specific callback URLs and manual instructions.
 6. For DNI, call get_site_pool. A site has one pool per published number it shows; each page swaps whichever published numbers it displays. Confirm the published website number (fallback_phone), the forwarding destination (destination_phone), dedicated pool numbers and explicit data-visiconvert-phone markup matching the published number before save_site_pool. Pass pool_id to edit a pool, or new_pool true with version 0 to add one. Supply the current version; on conflict re-read and review rather than blindly retrying. Static campaign numbers do not need a DNI pool. For Google Business Profile use one dedicated static number per listing, source Google Business Profile and campaign naming the location. Keep it outside all pools. After verifying forwarding, the owner can set it as the listing primary phone and retain the business number as an additional phone. This does not edit Google or prove organic traffic; ads may use that number too.
-7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google needs the owner in Conversions. With conversions:send, set_google_destination saves the advertising account and the inferred-call choice once the owner confirms the account name and ID and whether calls matched to visits by timing on DNI numbers are sent. Once actions are mapped, run check_google_destination once. Run review_google_conversion_setup and walk the owner through each flagged action; with conversions:send and the owner's explicit yes, set_google_action_goal can make it secondary. Google-hosted actions such as clicks to call cannot be made secondary; their bidding follows the account-level goal (category and origin), and set_google_goal_biddable turns that goal off for bidding across the account, for every action in it, so name every action in the goal to the owner and get their explicit yes first. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left. For Microsoft Advertising (when available), the owner connects it in Conversions; then use list_microsoft_accounts, set_microsoft_destination (conversions:send, after the owner confirms the account), map each action to an existing offline goal with set_microsoft_action_goal or create one with create_microsoft_goal, run check_microsoft_destination once and review_microsoft_conversion_setup, and with conversions:send and the owner's explicit yes pause each flagged goal or exclude it from bidding with set_microsoft_goal; the microsoft section of get_conversion_setup lists what is left. Delivery, automatic sending and the consent policy are shared with Google.
+7. Request real acceptance checks: a consented campaign visit, backend-confirmed form when applicable, and a call that actually rings the business line. Use get_setup_status and the inbox to inspect received activity, source and attribution evidence. Show incomplete steps separately for each site and number; historical activity alone does not prove the integration still works. For Google Ads conversions, call get_conversion_setup. With conversions:write, create pipeline actions for the steps the owner names and map each to an existing eligible action from list_google_conversion_actions; create a new Google action only if the owner asks. Connecting Google needs the owner in Conversions. With conversions:send, set_google_destination saves the advertising account and the inferred-call choice once the owner confirms the account name and ID and whether calls matched to visits by timing on DNI numbers are sent. Once actions are mapped, run check_google_destination once. Run review_google_conversion_setup and walk the owner through each flagged action; with conversions:send and the owner's explicit yes, set_google_action_goal can make it secondary. Google-hosted actions such as clicks to call cannot be made secondary; their bidding follows the account-level goal (category and origin), and set_google_goal_biddable turns that goal off for bidding across the account, for every action in it, so name every action in the goal to the owner and get their explicit yes first. With conversions:send, set_conversion_delivery can turn on Google delivery and automatic sending and set the consent policy, but only after the owner explicitly confirms each change in this chat: state the attestation (no advertising to people in the EEA, UK or Switzerland) and have the owner confirm it, and confirm every other uploader for the same Google actions is off, since conversions sent to Google cannot be retracted. Without conversions:send, tell the owner which switches are left. For Microsoft Advertising (when available), the owner connects it in Conversions; then use list_microsoft_accounts, set_microsoft_destination (conversions:send, after the owner confirms the account), map each action to an existing offline goal with set_microsoft_action_goal or create one with create_microsoft_goal, run check_microsoft_destination once and review_microsoft_conversion_setup, and with conversions:send and the owner's explicit yes pause each flagged goal or exclude it from bidding with set_microsoft_goal; the microsoft section of get_conversion_setup lists what is left. Delivery, automatic sending and the consent policy are shared with Google. For Meta (Facebook and Instagram ads), the owner saves the dataset (Pixel) ID and a Conversions API access token in Conversions, or runs the CLI's connect meta command with the token in an environment variable; never ask for the token in chat, and no tool accepts it. Then map each action to a Meta event with set_meta_action_event (Lead, Schedule, Purchase), run check_meta_destination with a test_event_code from Events Manager's Test events tab and have the owner confirm the test event arrived, and with conversions:send and the owner's explicit yes choose set_meta_settings (which leads are sent, Limited Data Use); the meta section of get_conversion_setup lists what is left. Meta cannot withdraw a sent event and accepts events from the last 7 days only.
 8. Summarize configuration, observed evidence and remaining manual steps. Suggest revoking the temporary setup key or replacing it with read-only access when finished.";
 
 /// The reference page for the docs site, from the same table `tools/list` serves.
@@ -595,11 +634,14 @@ impl Server {
             | "check_google_destination"
             | "set_microsoft_action_goal"
             | "create_microsoft_goal"
-            | "check_microsoft_destination" => "conversions:write",
+            | "check_microsoft_destination"
+            | "set_meta_action_event"
+            | "check_meta_destination" => "conversions:write",
             "set_conversion_delivery"
             | "set_google_destination"
             | "set_microsoft_destination"
             | "set_microsoft_goal"
+            | "set_meta_settings"
             | "set_google_action_goal"
             | "set_google_goal_biddable" => "conversions:send",
             _ if tool.changes => "leads:write",
@@ -690,9 +732,9 @@ impl Server {
                     "inputSchema": (tool.schema)(),
                     "annotations": {
                         "readOnlyHint": !tool.changes,
-                        "destructiveHint": matches!(tool.name, "update_site" | "save_site_pool" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable" | "set_microsoft_destination" | "set_microsoft_action_goal" | "set_microsoft_goal"),
+                        "destructiveHint": matches!(tool.name, "update_site" | "save_site_pool" | "configure_site_pool" | "update_conversion_action" | "set_conversion_delivery" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable" | "set_microsoft_destination" | "set_microsoft_action_goal" | "set_microsoft_goal" | "set_meta_action_event" | "set_meta_settings"),
                         "idempotentHint": tool.idempotent,
-                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable" | "set_microsoft_destination" | "create_microsoft_goal" | "check_microsoft_destination" | "set_microsoft_goal")
+                        "openWorldHint": matches!(tool.name, "create_google_conversion_action" | "set_conversion_delivery" | "check_google_destination" | "set_google_destination" | "set_google_action_goal" | "set_google_goal_biddable" | "set_microsoft_destination" | "create_microsoft_goal" | "check_microsoft_destination" | "set_microsoft_goal" | "check_meta_destination" | "set_meta_settings")
                     }
                 })
             })
@@ -966,6 +1008,19 @@ async fn dispatch(client: &Client, name: &str, args: &Value) -> Result<Value> {
         "check_microsoft_destination" => client.check_microsoft_destination(args).await?,
         "review_microsoft_conversion_setup" => client.microsoft_review().await?,
         "set_microsoft_goal" => client.set_microsoft_goal(args).await?,
+        "check_meta_destination" => client.check_meta_destination(args).await?,
+        "set_meta_settings" => client.set_meta_settings(args).await?,
+        "set_meta_action_event" => {
+            let mut input = args
+                .as_object()
+                .cloned()
+                .ok_or_else(|| anyhow!("Expected an object"))?;
+            input.remove("key");
+            input.entry("event_name").or_insert(Value::Null);
+            client
+                .set_meta_action_event(&required(args, "key")?, &Value::Object(input))
+                .await?
+        }
         "set_microsoft_action_goal" | "create_microsoft_goal" => {
             let mut input = args
                 .as_object()
@@ -1057,6 +1112,8 @@ mod scoped_tests {
                     "set_microsoft_action_goal",
                     "create_microsoft_goal",
                     "check_microsoft_destination",
+                    "set_meta_action_event",
+                    "check_meta_destination",
                 ],
             ),
             (
@@ -1068,6 +1125,7 @@ mod scoped_tests {
                     "set_google_goal_biddable",
                     "set_microsoft_destination",
                     "set_microsoft_goal",
+                    "set_meta_settings",
                 ],
             ),
         ] {
@@ -1253,5 +1311,25 @@ mod scoped_tests {
         assert!(TOOLS.iter().all(|t| !t.name.contains("connect_google")
             && !t.name.contains("oauth")
             && !t.name.contains("advertising_account")));
+        // No tool can carry the Meta access token.
+        for tool in TOOLS.iter() {
+            let schema = (tool.schema)().to_string();
+            assert!(
+                !schema.contains("access_token") && !schema.contains("\"token"),
+                "{}",
+                tool.name
+            );
+        }
+        let meta = tools
+            .iter()
+            .find(|t| t["name"] == "set_meta_settings")
+            .unwrap();
+        assert_eq!(meta["annotations"]["destructiveHint"], true);
+        assert!(
+            meta["description"]
+                .as_str()
+                .unwrap()
+                .contains("explicit yes")
+        );
     }
 }

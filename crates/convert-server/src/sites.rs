@@ -203,6 +203,44 @@ struct SessionInput {
     consent: String,
     landing_url: String,
     referrer: String,
+    /// Meta Pixel's first-party `_fbp` and `_fbc` cookies, when present.
+    #[serde(default)]
+    fbp: Option<String>,
+    #[serde(default)]
+    fbc: Option<String>,
+}
+/// The visitor's user agent, and their IP address from the header the deployment's proxy
+/// sets (VISICONVERT_CLIENT_IP_HEADER, such as x-forwarded-for; the last entry is the one
+/// the proxy added). Without that setting no IP address is kept.
+fn browser(headers: &HeaderMap) -> convert_store::sites::Browser {
+    static HEADER: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let header = HEADER.get_or_init(|| {
+        std::env::var("VISICONVERT_CLIENT_IP_HEADER")
+            .ok()
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+    });
+    convert_store::sites::Browser {
+        user_agent: headers
+            .get("user-agent")
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| !v.is_empty() && !v.chars().any(char::is_control))
+            .map(|v| v.chars().take(1000).collect()),
+        ip: header.as_deref().and_then(|h| client_ip(headers, h)),
+    }
+}
+fn client_ip(headers: &HeaderMap, header: &str) -> Option<std::net::IpAddr> {
+    headers
+        .get_all(header)
+        .iter()
+        .next_back()?
+        .to_str()
+        .ok()?
+        .rsplit(',')
+        .next()?
+        .trim()
+        .parse()
+        .ok()
 }
 fn session_evidence(input: &SessionInput, origin: &str) -> Result<Value, ApiError> {
     if input.consent != "granted" {
@@ -250,6 +288,15 @@ fn session_evidence(input: &SessionInput, origin: &str) -> Result<Value, ApiErro
             value[key] = json!(v);
         }
     }
+    // Malformed Pixel cookies are dropped rather than failing the visit.
+    for (key, cookie) in [("fbp", &input.fbp), ("fbc", &input.fbc)] {
+        if let Some(v) = cookie
+            .as_deref()
+            .filter(|v| convert_domain::meta::cookie_value(v))
+        {
+            value[key] = json!(v);
+        }
+    }
     landing.set_query(None);
     landing.set_fragment(None);
     value["landing_url"] = json!(landing.as_str());
@@ -291,7 +338,13 @@ async fn session(
 ) -> Api<Value> {
     let evidence = session_evidence(&input, origin(&headers))?;
     a.store
-        .capture_session(id, origin(&headers), input.id, &evidence)
+        .capture_visit(
+            id,
+            origin(&headers),
+            input.id,
+            &evidence,
+            &browser(&headers),
+        )
         .await?;
     Ok(Json(json!({"accepted":true})))
 }
@@ -350,7 +403,7 @@ mod tests {
     use super::*;
     #[test]
     fn context_strips_private_query_and_referrer_path() {
-        let input = SessionInput { id: Uuid::nil(), consent:"granted".into(), landing_url:"https://example.com/quote?email=private%40example.com&utm_source=google&gclid=abc#secret".into(), referrer:"https://search.example/private?secret=yes".into() };
+        let input = SessionInput { id: Uuid::nil(), consent:"granted".into(), landing_url:"https://example.com/quote?email=private%40example.com&utm_source=google&gclid=abc#secret".into(), referrer:"https://search.example/private?secret=yes".into(), fbp:None, fbc:None };
         let value = session_evidence(&input, "https://example.com")
             .ok()
             .unwrap();
@@ -370,6 +423,8 @@ mod tests {
                 "https://example.com/?utm_source=Newsletter&utm_medium=email&gclid=opaque-click"
                     .into(),
             referrer: String::new(),
+            fbp: None,
+            fbc: None,
         };
         let v = session_evidence(&input, "https://example.com")
             .ok()
@@ -394,6 +449,33 @@ mod tests {
                 .unwrap()["referrer_origin"]
                 .is_null()
         );
+    }
+
+    #[test]
+    fn meta_cookies_and_client_ip() {
+        let input = SessionInput {
+            id: Uuid::nil(),
+            consent: "granted".into(),
+            landing_url: "https://example.com/?fbclid=IwAR1".into(),
+            referrer: String::new(),
+            fbp: Some("fb.1.1596403881668.1116446470".into()),
+            fbc: Some("not a cookie".into()),
+        };
+        let v = session_evidence(&input, "https://example.com")
+            .ok()
+            .unwrap();
+        assert_eq!(v["fbclid"], "IwAR1");
+        assert_eq!(v["fbp"], "fb.1.1596403881668.1116446470");
+        assert!(v.get("fbc").is_none());
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "10.0.0.1, 203.0.113.9".parse().unwrap());
+        assert_eq!(
+            client_ip(&headers, "x-forwarded-for"),
+            Some("203.0.113.9".parse().unwrap())
+        );
+        headers.insert("x-forwarded-for", "spoofed".parse().unwrap());
+        assert_eq!(client_ip(&headers, "x-forwarded-for"), None);
+        assert_eq!(client_ip(&headers, "x-real-ip"), None);
     }
 
     #[test]

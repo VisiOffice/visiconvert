@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub mod attribution;
+pub mod meta;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]

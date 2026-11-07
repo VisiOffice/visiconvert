@@ -109,7 +109,7 @@ pub(super) async fn world(policy: &str, auto_send: bool) -> World {
         task,
     }
 }
-async fn action(
+pub(super) async fn action(
     a: &Shared,
     key: &str,
     trigger: &str,

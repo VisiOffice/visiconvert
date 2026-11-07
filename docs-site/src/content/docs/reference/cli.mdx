@@ -57,6 +57,20 @@ visiconvert connect twilio --account-sid <ACCOUNT_SID> [OPTIONS]
 | `--account-sid <ACCOUNT_SID>` | Yes | Twilio Account SID, starting with AC. |
 | `--token-stdin` | No | Read the auth token from stdin instead of prompting. |
 
+## `visiconvert connect meta`
+
+Save the Meta dataset (Pixel) ID and a Conversions API access token. Needs the workspace owner or a key with conversions:send. The token is read from an environment variable or stdin, never from arguments.
+
+```sh
+visiconvert connect meta --dataset <DATASET> [OPTIONS]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `--dataset <DATASET>` | Yes | Dataset (Pixel) ID from Events Manager. |
+| `--token-env <TOKEN_ENV>` | No | Environment variable holding the access token, e.g. META_CAPI_TOKEN. |
+| `--token-stdin` | No | Read the access token from stdin instead of prompting. |
+
 ## `visiconvert numbers list`
 
 Tracking numbers in this workspace.

@@ -49,6 +49,7 @@ async fn cloud_handoff_enforces_membership_browser_binding_expiry_and_single_use
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
         cloud: Some(hosted::Config {
             service_key: service.clone(),
             cloud_origin: "http://127.0.0.1:3200".into(),
@@ -480,6 +481,7 @@ async fn credential_revocation_is_monotonic_isolated_and_serializes_exchange_and
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
         cloud: Some(hosted::Config {
             service_key: service.clone(),
             cloud_origin: "http://127.0.0.1:3200".into(),
@@ -633,6 +635,7 @@ async fn unified_handoff_requires_app_origin_cookie_owner_and_single_use() {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
         cloud: Some(hosted::Config {
             service_key: service.clone(),
             cloud_origin: "https://cloud.example".into(),

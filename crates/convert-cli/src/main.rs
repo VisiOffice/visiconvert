@@ -81,6 +81,20 @@ enum Connect {
         #[arg(long)]
         token_stdin: bool,
     },
+    /// Save the Meta dataset (Pixel) ID and a Conversions API access token. Needs the
+    /// workspace owner or a key with conversions:send. The token is read from an
+    /// environment variable or stdin, never from arguments.
+    Meta {
+        /// Dataset (Pixel) ID from Events Manager
+        #[arg(long)]
+        dataset: String,
+        /// Environment variable holding the access token, e.g. META_CAPI_TOKEN
+        #[arg(long, conflicts_with = "token_stdin")]
+        token_env: Option<String>,
+        /// Read the access token from stdin instead of prompting
+        #[arg(long)]
+        token_stdin: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -314,6 +328,29 @@ async fn run(cli: Cli) -> Result<()> {
                     connection["account_sid"].as_str().unwrap_or("?"),
                     connection["voice_url"].as_str().unwrap_or("?"),
                     connection["status_url"].as_str().unwrap_or("?")
+                )
+            })
+        }
+        Command::Connect(Connect::Meta {
+            dataset,
+            token_env,
+            token_stdin,
+        }) => {
+            let token = match token_env {
+                Some(var) => std::env::var(&var)
+                    .ok()
+                    .map(|v| v.trim().to_owned())
+                    .filter(|v| !v.is_empty())
+                    .with_context(|| format!("{var} is not set or empty"))?,
+                None => secret("Meta Conversions API access token", token_stdin)?,
+            };
+            let saved = ops::connect_meta(&connect()?, &dataset, &token).await?;
+            output(json, &saved, || {
+                format!(
+                    "Meta connected: dataset {} ({}), token {}.\nNext: map an action (set_meta_action_event) and send a test event (check_meta_destination).",
+                    saved["dataset"]["id"].as_str().unwrap_or("?"),
+                    saved["dataset"]["name"].as_str().unwrap_or(""),
+                    saved["token_fingerprint"].as_str().unwrap_or("?")
                 )
             })
         }

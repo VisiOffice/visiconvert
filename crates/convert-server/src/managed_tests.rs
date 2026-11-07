@@ -256,6 +256,7 @@ async fn managed_numbers_purchase_hold_and_release() {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     });
     let workspace = Uuid::new_v4();
     let session = bearer(&store, workspace).await;
@@ -952,6 +953,7 @@ async fn managed_budget_and_verified_quantities() {
         google: None,
         google_client: convert_adapters::google_api::Client::new().unwrap(),
         microsoft: Default::default(),
+        meta: Default::default(),
     });
     let workspace = Uuid::new_v4();
     let session = bearer(&store, workspace).await;

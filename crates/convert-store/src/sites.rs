@@ -25,6 +25,12 @@ pub struct SiteInput {
     pub enabled: bool,
     pub version: i32,
 }
+/// Browser details from the collection request, for Meta matching.
+#[derive(Default)]
+pub struct Browser {
+    pub user_agent: Option<String>,
+    pub ip: Option<std::net::IpAddr>,
+}
 impl Store {
     pub async fn sites(&self) -> Result<Vec<Site>> {
         Ok(
@@ -90,6 +96,20 @@ impl Store {
         id: Uuid,
         evidence: &Value,
     ) -> Result<()> {
+        self.capture_visit(site, origin, id, evidence, &Browser::default())
+            .await
+    }
+    /// Capture a session with the visitor's browser details. Those are kept only when the
+    /// site's workspace has a Meta connection (Meta uses them to match website events),
+    /// and are cleared after 30 days.
+    pub async fn capture_visit(
+        &self,
+        site: Uuid,
+        origin: &str,
+        id: Uuid,
+        evidence: &Value,
+        browser: &Browser,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         collection_site(&mut tx, site, origin).await?;
         let previous: Option<Value> =
@@ -111,10 +131,14 @@ impl Store {
         // Unconverted sessions expire from storage after 30 days. Bound each cleanup batch.
         sqlx::query("DELETE FROM website_sessions WHERE (site_id,id) IN (SELECT s.site_id,s.id FROM website_sessions s WHERE s.site_id=$1 AND s.created_at < now()-interval '30 days' AND NOT EXISTS(SELECT 1 FROM website_submissions f WHERE f.site_id=s.site_id AND f.session_id=s.id) AND NOT EXISTS(SELECT 1 FROM dni_assignments a WHERE a.site_id=s.site_id AND a.session_id=s.id) LIMIT 100)")
             .bind(site).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO website_sessions(site_id,id,evidence) VALUES($1,$2,$3)")
+        sqlx::query("INSERT INTO website_sessions(site_id,id,evidence,client_user_agent,client_ip)
+            SELECT $1,$2,$3,CASE WHEN m.ok THEN $4 END,CASE WHEN m.ok THEN $5::inet END
+            FROM (SELECT EXISTS(SELECT 1 FROM sites t JOIN meta_connections c ON c.workspace_id=t.workspace_id WHERE t.id=$1 AND c.encrypted_token IS NOT NULL) AS ok) m")
             .bind(site)
             .bind(id)
             .bind(evidence)
+            .bind(browser.user_agent.as_deref())
+            .bind(browser.ip.map(|ip| ip.to_string()))
             .execute(&mut *tx)
             .await?;
         sqlx::query(
