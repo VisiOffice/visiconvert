@@ -140,6 +140,34 @@ async function verifyPipeline({page,api,lead,artifactDir}) {
   await page.getByRole('status').filter({hasText:'Automatic sending turned off.'}).waitFor();
   await verifyMicrosoftPicker({page,artifactDir});
 }
+// Review actions: pause an unmapped goal or exclude one from bidding; a goal VisiConvert
+// sends to offers no pause. Stubbed; nothing reaches Microsoft.
+async function verifyMicrosoftReview(page) {
+  const goals=[{id:'1',name:'Lead (Old CRM)',type:'OfflineConversion',status:'Active',exclude_from_bidding:false,used_by:[]},
+    {id:'3',name:'Website lead',type:'Event',status:'Active',exclude_from_bidding:false,used_by:[]},
+    {id:'4',name:'VisiConvert - lead',type:'OfflineConversion',status:'Paused',exclude_from_bidding:false,used_by:['lead']}];
+  const review=()=>({summary:'3 goal(s) need a look.',goals,warnings:goals.map(g=>({id:g.id,name:g.name,flags:['other_offline_goal']})),flags:{other_offline_goal:'Another uploader may send the same leads.'}});
+  const sent=[];
+  const handler=route=>{const r=route.request();if(r.method()==='PUT'){const b=r.postDataJSON();sent.push(b);Object.assign(goals.find(g=>g.id===b.goal_id),b.status?{status:b.status}:{},b.exclude_from_bidding!==undefined?{exclude_from_bidding:b.exclude_from_bidding}:{});return route.fulfill({json:{changed:true}});}return route.fulfill({json:review()});};
+  await page.route('**/api/conversion-setup/microsoft-{review,goal}',handler);
+  try {
+    await page.getByRole('button',{name:'Review other goals',exact:true}).click();
+    const box=page.getByLabel('Other Microsoft goals',{exact:true});
+    const item=name=>box.getByRole('listitem').filter({hasText:name});
+    await item('Lead (Old CRM)').getByRole('button',{name:'Pause goal',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Paused “Lead (Old CRM)”'}).waitFor();
+    assert.deepEqual(sent.shift(),{goal_id:'1',status:'Paused'});
+    assert.equal(await item('Lead (Old CRM)').getByRole('button',{name:'Pause goal',exact:true}).count(),0);
+    await item('Website lead').getByRole('button',{name:'Exclude from bidding',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'no longer counts in Conversions'}).waitFor();
+    assert.deepEqual(sent.shift(),{goal_id:'3',exclude_from_bidding:true});
+    assert.equal(await item('Website lead').getByRole('button').count(),1);
+    assert.equal(await item('VisiConvert - lead').getByRole('button',{name:'Pause goal',exact:true}).count(),0);
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  } finally {
+    await page.unroute('**/api/conversion-setup/microsoft-{review,goal}',handler);
+  }
+}
 // Microsoft goal picker against a stubbed connected account; nothing is submitted.
 async function verifyMicrosoftPicker({page,artifactDir}) {
   const status={configured:true,connected:true,reconnect_required:false,revision:1,redirect_uri:'',customer_id:'254773925',account_id:'189241031',account_name:'Browser Ads',destination_version:1,validation:null,checked_at:null};
@@ -169,6 +197,7 @@ async function verifyMicrosoftPicker({page,artifactDir}) {
     await row.getByRole('button',{name:'Cancel',exact:true}).click();
     assert.equal(await picker.inputValue(),'');
     assert.equal(await row.getByRole('button',{name:'Create goal',exact:true}).count(),0);
+    await verifyMicrosoftReview(page);
   } finally {
     await page.unroute('**/api/connections/microsoft**',handler);
   }

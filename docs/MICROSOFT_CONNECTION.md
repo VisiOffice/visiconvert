@@ -87,11 +87,31 @@ variable revenue. Creating one also:
   Eligible events wait, and the checklist shows when the goal is ready;
 - turns on Microsoft click ID auto-tagging for the account (Microsoft does this for
   every new goal);
-- counts the goal for bidding. Change that in Microsoft Advertising if it should only
-  report.
+- counts the goal for bidding. To make it report only, exclude it from bidding with
+  `set_microsoft_goal` (see below).
 
 If a creation is interrupted, a retry finds the goal by the recorded ID or by name
 instead of creating a second one.
+
+## Pausing or excluding other goals
+
+`review_microsoft_conversion_setup` flags goals that may count the same leads: an older
+offline goal another uploader fed, or a website goal in the same category. With
+`conversions:send` and the owner's yes, `set_microsoft_goal` changes one of them in the
+saved ad account (`UpdateConversionGoals`):
+
+- `status`: `Paused` stops the goal recording new conversions; `Active` resumes it.
+  Conversions already recorded stay in reports. A goal an action is mapped to cannot be
+  paused (it would reject VisiConvert's uploads); clear the mapping first.
+- `exclude_from_bidding`: `true` is Microsoft's "Include in conversions" unchecked: the
+  goal leaves the Conversions columns and automated bidding but stays in All conversions.
+  Mapped goals can be excluded.
+
+Only those two fields are sent; the goal is never deleted, renamed or revalued. The
+result is the goal as Microsoft reports it afterwards, and each change is recorded as a
+`microsoft_goal_changed` conversion event with the before and after values. On
+**Conversions → Microsoft Ads**, **Review other goals** shows **Pause goal** and **Exclude
+from bidding** next to each flagged goal.
 
 ## What is sent
 
@@ -159,6 +179,7 @@ confirm the date with the owner first.
 | `create_microsoft_goal` | `POST /conversion-actions/{key}/microsoft-goal` `{version, category?}` | `conversions:write` |
 | `check_microsoft_destination` | `POST /conversion-setup/microsoft-check` `{revision, destination_version}` | `conversions:write` |
 | `review_microsoft_conversion_setup` | `GET /conversion-setup/microsoft-review` | `read` |
+| `set_microsoft_goal` | `PUT /conversion-setup/microsoft-goal` `{goal_id, status?, exclude_from_bidding?}` | `conversions:send` |
 
 `revision` and `destination_version` come from the `microsoft` section of
 `GET /api/v1/conversion-setup` (`get_conversion_setup`), which also lists the Microsoft

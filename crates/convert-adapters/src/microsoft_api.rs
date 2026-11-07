@@ -116,6 +116,13 @@ pub struct Goal {
     /// Active offline conversion goals can receive uploads.
     pub eligible: bool,
 }
+/// User-settable goal fields VisiConvert may change; None leaves a field unchanged.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GoalChange<'a> {
+    /// Active or Paused.
+    pub status: Option<&'a str>,
+    pub exclude_from_bidding: Option<bool>,
+}
 /// What VisiConvert creates for one pipeline action.
 #[derive(Debug, Clone)]
 pub struct GoalSpec {
@@ -648,6 +655,75 @@ impl Client {
             _ => Err(Error::CreationUncertain),
         }
     }
+    /// Pause or reactivate one conversion goal, or include or exclude it from the
+    /// Conversions columns and automated bidding. Never renames, revalues or deletes.
+    pub async fn update_goal(
+        &self,
+        token: &str,
+        developer: &str,
+        customer: &str,
+        account: &str,
+        goal: &Goal,
+        change: GoalChange<'_>,
+    ) -> Result<(), Error> {
+        let GoalChange {
+            status,
+            exclude_from_bidding,
+        } = change;
+        let xsi = goal_xsi_type(&goal.kind).ok_or(Error::Response)?;
+        if !numeric_id(customer)
+            || !numeric_id(account)
+            || !numeric_id(&goal.id)
+            || status.is_some_and(|s| !matches!(s, "Active" | "Paused"))
+        {
+            return Err(Error::Access);
+        }
+        let body = update_goal_body(&goal.id, xsi, status, exclude_from_bidding);
+        let (r, _) = self
+            .call(
+                &self.campaign,
+                "UpdateConversionGoals",
+                Self::envelope(
+                    CAMPAIGN_NS,
+                    &Self::campaign_headers(token, developer, customer, account),
+                    &body,
+                ),
+            )
+            .await?;
+        let errors = errors(&r, &["BatchError"]);
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(setup_error(&errors))
+        }
+    }
+}
+/// The xsi:type for a goal's ConversionGoalType, for updates.
+pub fn goal_xsi_type(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "OfflineConversion" => "OfflineConversionGoal",
+        "Event" => "EventGoal",
+        "Url" => "UrlGoal",
+        "Duration" => "DurationGoal",
+        "PagesViewedPerVisit" => "PagesViewedPerVisitGoal",
+        "AppInstall" => "AppInstallGoal",
+        "InStoreTransaction" => "InStoreTransactionGoal",
+        _ => return None,
+    })
+}
+/// Only the user-settable status and the "Include in conversions" (bidding) switch;
+/// omitted elements are left unchanged by Microsoft.
+fn update_goal_body(id: &str, xsi: &str, status: Option<&str>, exclude: Option<bool>) -> String {
+    // Element order follows the ConversionGoal WSDL sequence.
+    let exclude = exclude
+        .map(|e| format!("<ExcludeFromBidding>{e}</ExcludeFromBidding>"))
+        .unwrap_or_default();
+    let status = status
+        .map(|s| format!("<Status>{s}</Status>"))
+        .unwrap_or_default();
+    format!(
+        "<UpdateConversionGoalsRequest xmlns=\"{CAMPAIGN_NS}\"><ConversionGoals><ConversionGoal i:type=\"{xsi}\">{exclude}<Id>{id}</Id>{status}</ConversionGoal></ConversionGoals></UpdateConversionGoalsRequest>"
+    )
 }
 fn add_goal_body(spec: &GoalSpec) -> String {
     // Element order follows the ConversionGoal WSDL sequence; omitted elements are optional.
@@ -1109,5 +1185,19 @@ mod tests {
         assert!(GoalSpec::pipeline("x", "every", Some("Lead")).is_none());
         let body = add_goal_body(&spec);
         assert!(body.contains("<ConversionGoal i:type=\"OfflineConversionGoal\"><ConversionWindowInMinutes>129600</ConversionWindowInMinutes><CountType>Unique</CountType><GoalCategory>SubmitLeadForm</GoalCategory><Name>VisiConvert - quote</Name><Revenue><Type>VariableValue</Type></Revenue><Scope>Account</Scope><Status>Active</Status></ConversionGoal>"));
+        assert_eq!(
+            update_goal_body(
+                "160491448",
+                "OfflineConversionGoal",
+                Some("Paused"),
+                Some(true)
+            ),
+            format!(
+                "<UpdateConversionGoalsRequest xmlns=\"{CAMPAIGN_NS}\"><ConversionGoals><ConversionGoal i:type=\"OfflineConversionGoal\"><ExcludeFromBidding>true</ExcludeFromBidding><Id>160491448</Id><Status>Paused</Status></ConversionGoal></ConversionGoals></UpdateConversionGoalsRequest>"
+            )
+        );
+        assert!(!update_goal_body("1", "EventGoal", None, Some(false)).contains("<Status>"));
+        assert_eq!(goal_xsi_type("Event"), Some("EventGoal"));
+        assert_eq!(goal_xsi_type("Unknown"), None);
     }
 }

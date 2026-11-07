@@ -185,6 +185,10 @@ pub fn shared_routes() -> Router<Shared> {
         .route("/conversion-setup/microsoft-check", post(check_route))
         .route("/conversion-setup/microsoft-review", get(review_route))
         .route(
+            "/conversion-setup/microsoft-goal",
+            axum::routing::put(goal_settings_route),
+        )
+        .route(
             "/conversion-actions/{key}/microsoft-goal",
             post(create_goal_route).put(map_goal_route),
         )
@@ -900,7 +904,7 @@ async fn review_route(
         "No other active goal in this account looks like it counts the same leads.".to_string()
     } else {
         format!(
-            "{} goal(s) need a look: another offline goal may be fed by a different uploader, or a website goal may count the same outcome. Pause them or exclude them from bidding in Microsoft Advertising after the owner confirms.",
+            "{} goal(s) need a look: another offline goal may be fed by a different uploader, or a website goal may count the same outcome. After the owner confirms each one, pause it or exclude it from bidding with set_microsoft_goal (conversions:send).",
             warnings.len()
         )
     };
@@ -911,6 +915,122 @@ async fn review_route(
             "mapped_goal_not_accepting":"A mapped goal is paused, deleted or not an offline conversion goal.",
             "count_type_differs":"The goal's count type differs from the action's counting rule (Unique for once_per_click, All for every).",
             "short_window":"The goal's conversion window is shorter than 90 days; later events are not sent."}}),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GoalSettings {
+    goal_id: String,
+    /// Active or Paused. Deleting is not offered: it cannot be undone.
+    status: Option<String>,
+    /// true excludes the goal from the Conversions columns and automated bidding.
+    exclude_from_bidding: Option<bool>,
+}
+/// conversions:send. Pause or reactivate a conversion goal in the saved ad account, or
+/// include or exclude it from bidding. Goals VisiConvert sends to cannot be paused.
+async fn goal_settings_route(
+    State(a): State<Shared>,
+    Extension(access): Extension<hosted::Access>,
+    key: Option<Extension<KeyAccess>>,
+    Json(input): Json<GoalSettings>,
+) -> Api<Value> {
+    conversions::owner(&access).await?;
+    if !microsoft_api::numeric_id(&input.goal_id) {
+        return Err(bad(
+            "goal_id must be a goal id from review_microsoft_conversion_setup.",
+        ));
+    }
+    if input
+        .status
+        .as_deref()
+        .is_some_and(|s| !matches!(s, "Active" | "Paused"))
+    {
+        return Err(bad("status must be Active or Paused."));
+    }
+    if input.status.is_none() && input.exclude_from_bidding.is_none() {
+        return Err(bad("Pass status, exclude_from_bidding, or both."));
+    }
+    let actor = actor(&access, &key).await?;
+    let (c, token) = token(&a, &access).await?;
+    let (Some(customer), Some(account)) = (c.customer_id.clone(), c.account_id.clone()) else {
+        return Err(bad(
+            "Choose the Microsoft Advertising account first (set_microsoft_destination).",
+        ));
+    };
+    let dev = developer(&a)?;
+    let client = &a.microsoft.client;
+    let find = |goals: Vec<microsoft_api::Goal>| goals.into_iter().find(|g| g.id == input.goal_id);
+    let goal = find(client.goals(&token, dev, &customer, &account, true).await?).ok_or(
+        ApiError(
+            StatusCode::NOT_FOUND,
+            "No conversion goal with this ID in the saved ad account. Use an id from review_microsoft_conversion_setup.".into(),
+        ),
+    )?;
+    if !matches!(goal.status.as_str(), "Active" | "Paused") {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            format!("This goal is {} and cannot be changed.", goal.status),
+        ));
+    }
+    let used: Vec<String> = access
+        .store
+        .conversion_actions()
+        .await?
+        .into_iter()
+        .filter(|v| v["microsoft_goal_name"] == goal.name.as_str())
+        .filter_map(|v| v["key"].as_str().map(str::to_string))
+        .collect();
+    let status = input.status.as_deref().filter(|s| *s != goal.status);
+    if status == Some("Paused") && !used.is_empty() {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            format!(
+                "VisiConvert sends {} to this goal, and a paused goal rejects uploads. Clear the mapping with set_microsoft_action_goal first.",
+                used.join(", ")
+            ),
+        ));
+    }
+    let exclude = input
+        .exclude_from_bidding
+        .filter(|e| *e != goal.exclude_from_bidding);
+    let changed = status.is_some() || exclude.is_some();
+    let after = if changed {
+        client
+            .update_goal(
+                &token,
+                dev,
+                &customer,
+                &account,
+                &goal,
+                microsoft_api::GoalChange {
+                    status,
+                    exclude_from_bidding: exclude,
+                },
+            )
+            .await?;
+        let after = find(client.goals(&token, dev, &customer, &account, true).await?)
+            .ok_or(microsoft_api::Error::Response)?;
+        access
+            .store
+            .log_microsoft_goal_change(
+                &actor,
+                &json!({"account_id":account,"goal_id":goal.id,"name":goal.name,"type":goal.kind,
+                    "status_before":goal.status,"status":after.status,
+                    "exclude_from_bidding_before":goal.exclude_from_bidding,"exclude_from_bidding":after.exclude_from_bidding}),
+            )
+            .await?;
+        after
+    } else {
+        goal.clone()
+    };
+    Ok(Json(
+        json!({"goal":{"id":after.id,"name":after.name,"type":after.kind,"status":after.status,
+            "category":after.category,"exclude_from_bidding":after.exclude_from_bidding,"used_by":used},
+        "before":{"status":goal.status,"exclude_from_bidding":goal.exclude_from_bidding},
+        "changed":changed,
+        "notes":["Pausing stops the goal recording new conversions; conversions already recorded stay in reports.",
+            "Excluding a goal from bidding removes it from the Conversions columns and automated bidding; All conversions still include it."]}),
     ))
 }
 

@@ -321,6 +321,14 @@ impl Client {
         )
         .await
     }
+    pub async fn set_microsoft_goal(&self, input: &Value) -> Result<Value, Error> {
+        self.send(
+            self.http
+                .put(self.url("/api/conversion-setup/microsoft-goal"))
+                .json(input),
+        )
+        .await
+    }
     pub async fn create_microsoft_goal(&self, key: &str, input: &Value) -> Result<Value, Error> {
         let key = urlencoding(key);
         self.send(

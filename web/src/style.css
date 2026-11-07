@@ -1388,6 +1388,9 @@ footer button {
 .goal-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .goal-row-head .state-pill { margin-left: auto; }
 .goal-row .form-field { margin: 0; }
+.goal-warnings li { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; margin: 6px 0; }
+.goal-warnings li > span:first-child { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.goal-warnings .site-actions { margin: 0; }
 .goal-row .muted { margin: 0; font-size: 12px; }
 .goal-row .site-actions { margin: 0; }
 select.goal-select { text-transform: none; }
