@@ -34,8 +34,8 @@ Permissions:
 | `numbers:write` | Register an existing voice number in the connected Twilio or SignalWire account |
 | `numbers:purchase` | Search, buy, and release SignalWire numbers (`/numbers/search`, `/numbers/purchase`, `/numbers/{id}/release`, `/numbers/{id}/restore`). Billable: each number is charged monthly until released. Owners grant it under **Billable permission** in API Keys; the expiration defaults to 24 hours. |
 | `setup:write` | Create/update website settings and DNI pools (engine migration 0012) |
-| `conversions:write` | Define and map pipeline conversion actions (`PUT /conversion-actions/{key}`, `POST /conversion-actions/{key}/google-action`) and post pipeline conversion events (`POST /conversion-events`) that VisiConvert matches and sends to Google Ads (engine migration 0023). It also maps and creates Microsoft goals and runs the Microsoft check (migration 0027) |
-| `conversions:send` | Choose the advertising account and whether inferred calls are sent (`PUT /conversion-setup/destination`), and turn Google delivery and automatic sending on or off and set the consent policy (`PUT /conversion-delivery`), on the owner's behalf. Attestations are recorded for the owner who created the key. It also makes a Google Ads conversion action primary or secondary (`PUT /conversion-setup/google-actions/{id}/goal`), and turns an account-level conversion goal on or off for bidding (`PUT /conversion-setup/google-goal`), which changes what Smart Bidding optimizes for across the account. Conversions sent to Google cannot be retracted. It also saves the Microsoft Advertising account (`PUT /conversion-setup/microsoft-destination`). Owners grant it under **Sending permission** in API Keys; the expiration defaults to 24 hours (engine migration 0024). |
+| `conversions:write` | Define and map pipeline conversion actions (`PUT /conversion-actions/{key}`, `POST /conversion-actions/{key}/google-action`) and post pipeline conversion events (`POST /conversion-events`) that VisiConvert matches and sends to Google Ads (engine migration 0023). It also maps and creates Microsoft goals and runs the Microsoft check (migration 0027). It also maps actions to Meta events and runs the Meta check, with an optional test event (migration 0029) |
+| `conversions:send` | Choose the advertising account and whether inferred calls are sent (`PUT /conversion-setup/destination`), and turn Google delivery and automatic sending on or off and set the consent policy (`PUT /conversion-delivery`), on the owner's behalf. Attestations are recorded for the owner who created the key. It also makes a Google Ads conversion action primary or secondary (`PUT /conversion-setup/google-actions/{id}/goal`), and turns an account-level conversion goal on or off for bidding (`PUT /conversion-setup/google-goal`), which changes what Smart Bidding optimizes for across the account. Conversions sent to Google cannot be retracted. It also saves the Microsoft Advertising account (`PUT /conversion-setup/microsoft-destination`), saves or removes the Meta dataset and access token (`PUT`/`DELETE /connections/meta`), and chooses which leads are sent to Meta and Limited Data Use (`PUT /conversion-setup/meta-settings`). Owners grant it under **Sending permission** in API Keys; the expiration defaults to 24 hours (engine migration 0024). |
 
 Keys cannot manage keys, billing, provider credentials, inquiry grouping,
 reviewed conversion preparation, or the Google connection. Google delivery, automatic sending and the consent policy need `conversions:send`. Use the workspace UI for the rest. Read-only
@@ -217,6 +217,18 @@ create a goal for it (`POST` on the same path) and run the read-only check
 goal from bidding (`PUT /api/v1/conversion-setup/microsoft-goal`). The `microsoft` section of
 `conversion-setup` lists the steps left; no key can connect Microsoft. See
 [Microsoft connection](/guides/microsoft-ads-connection/).
+
+Meta (Facebook and Instagram ads) is connected with an access token, not a login, so a key
+can connect it. `conversions:send`: save the dataset ID and Conversions API token
+(`PUT /api/v1/connections/meta` with `{revision, dataset_id, access_token}`; VisiConvert reads
+the dataset with the token first and refuses one Meta rejects), disconnect
+(`DELETE /api/v1/connections/meta` with `{revision}`), and choose which leads are sent and
+Limited Data Use (`PUT /api/v1/conversion-setup/meta-settings` with
+`{settings_version, match, ldu}`). `conversions:write`: map an action to a Meta event
+(`PUT /api/v1/conversion-actions/{key}/meta-event` with `{version, event_name}`) and run the
+check (`POST /api/v1/conversion-setup/meta-check`, optionally with `test_event_code` to send
+one test event). The token is never returned; the `meta` section of `conversion-setup` shows
+its fingerprint and the steps left. See [Meta connection](/guides/meta-ads-connection/).
 
 ## Webhooks
 

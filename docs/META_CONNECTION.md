@@ -17,10 +17,16 @@ delivery switch and automatic sending are both on.
 ## What you need
 
 - A Meta dataset (Pixel) in Events Manager, ideally the one your website's Pixel already
-  uses, so Meta can deduplicate and match.
+  uses, so Meta can deduplicate and match. A website Pixel is optional: without one,
+  VisiConvert still matches ad clicks by the `fbclid` the tracker records.
+- **Admin or developer access to the business portfolio that owns the dataset.** Meta
+  refuses to create a token otherwise ("You must be an admin or developer for this
+  business portfolio"). If an agency or former contractor owns the dataset, ask them to add
+  you under Business settings → Users → People, or to share the dataset with a portfolio
+  you own. Failing that, create a dataset in your own portfolio; it starts without history.
 - A **Conversions API access token** for that dataset: Events Manager → the dataset →
-  **Settings** → **Conversions API** → **Generate access token**. No Meta app review or
-  business verification is needed for this token.
+  **Settings** → **Conversions API** → **Generate access token**. Choose **Set up with Dataset Quality API** when Meta offers it.
+  No Meta app, app review or business verification is needed, for you or for VisiConvert.
 
 The token is sealed with the installation's encryption key (`VISICONVERT_ENCRYPTION_KEY`)
 and never shown again; VisiConvert shows only its first 12 SHA-256 hex characters so you can
@@ -135,6 +141,11 @@ If a CRM, form tool or website plugin already sends the same events to this data
 through the Conversions API, turn it off for those events, or Meta counts them twice.
 The browser Pixel's own `Lead` event is fine when it uses the same `event_id`; otherwise
 map VisiConvert to a different event name or turn the Pixel event off.
+
+Tag managers count as senders. Cloudflare Zaraz's Facebook Pixel tool, for one, sends its
+events to Meta from the server through the Conversions API. Let a tag manager or the Pixel
+send `PageView` (and `ViewContent` for retargeting audiences), and leave `Lead`, `Schedule`
+and `Purchase` to VisiConvert.
 
 ## Status and webhooks
 
