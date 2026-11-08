@@ -4,6 +4,7 @@ import { GoogleConnection, type Discovery } from "./GoogleConnection";
 import { ReviewedGoogleActions } from "./ReviewedGoogleActions";
 import { PipelineConversions, type Setup } from "./PipelineConversions";
 import { MicrosoftConnection } from "./MicrosoftConnection";
+import { MetaConnection } from "./MetaConnection";
 
 export type Settings = { customer_id: string; qualified_action_id: string; booking_action_id: string; allow_inferred_calls: boolean; version: number };
 type Decision = "unknown" | "granted" | "denied";
@@ -14,9 +15,9 @@ type Job = { id: string; kind: string; entity_key: string; state: string; versio
 type Delivery = { id: string; outbox_id: string; outbox_version: number; state: string; review_required: boolean; request_id: string | null; diagnostic: string | null; warnings: boolean; attempts: number; polls: number };
 type Preview = { delivery_settings: { enabled: boolean; version: number }; deliveries: Delivery[]; settings: Settings; candidates: Candidate[]; jobs: Job[]; limit: number; history: { id: number; kind: string; actor: string; created_at: string }[] };
 const identity = (c: { kind: string; entity_key: string }) => `${c.kind}:${c.entity_key}`;
-export type Tab = "overview" | "actions" | "google" | "microsoft" | "events" | "advanced";
+export type Tab = "overview" | "actions" | "google" | "microsoft" | "meta" | "events" | "advanced";
 export type Panel = (t: Tab) => { id: string; role: "tabpanel"; "aria-labelledby": string; hidden: boolean; className: string };
-const TABS: [Tab, string][] = [["overview", "Overview"], ["actions", "Actions"], ["google", "Google Ads"], ["microsoft", "Microsoft Ads"], ["events", "Events"], ["advanced", "Advanced"]];
+const TABS: [Tab, string][] = [["overview", "Overview"], ["actions", "Actions"], ["google", "Google Ads"], ["microsoft", "Microsoft Ads"], ["meta", "Meta Ads"], ["events", "Events"], ["advanced", "Advanced"]];
 const date = (s: string | null) => s ? new Date(s).toLocaleString() : "Not recorded";
 export function Conversions({ api, tab: routeTab, onTab }: { api: Client; tab: string | null; onTab: (t: Tab) => void }) {
   const [data, setData] = useState<Preview | null>(null);
@@ -45,6 +46,7 @@ export function Conversions({ api, tab: routeTab, onTab }: { api: Client; tab: s
     if (!setup) return null;
     if (t === "google") return <i className={`tab-dot ${setup.ready ? "ok" : "todo"}`} aria-hidden="true" />;
     if (t === "microsoft") { const m = setup.microsoft; return m?.configured ? <i className={`tab-dot ${m.ready ? "ok" : m.connected ? "todo" : "off"}`} aria-hidden="true" /> : null; }
+    if (t === "meta") { const m = setup.meta; return m && m.configured !== false ? <i className={`tab-dot ${m.ready ? "ok" : m.connected ? "todo" : "off"}`} aria-hidden="true" /> : null; }
     return null;
   };
   function choose(t: Tab) { setTab(t); setNotice(""); }
@@ -67,6 +69,9 @@ export function Conversions({ api, tab: routeTab, onTab }: { api: Client; tab: s
       </div>
       <div {...panel("microsoft")}>
         <MicrosoftConnection api={api} revision={data.delivery_settings.version} onChange={async () => { setMicrosoftKey(k => k + 1); await refresh(); }} />
+      </div>
+      <div {...panel("meta")}>
+        <MetaConnection api={api} revision={data.delivery_settings.version} onChange={async () => { setMicrosoftKey(k => k + 1); await refresh(); }} />
       </div>
       <div {...panel("advanced")}>
       {notice && <p className="notice" role="status">{notice}</p>}

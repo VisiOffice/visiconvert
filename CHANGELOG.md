@@ -1,5 +1,9 @@
 ## Unreleased — Meta Conversions API
 
+- Conversions → Meta Ads: the owner saves the dataset and token, maps actions to Meta events,
+  sends a test event and chooses what is shared, without an API key or the CLI. The Overview,
+  Actions and Events tabs show Meta too.
+- The API keys page leads with the key list; the create form opens on demand, with presets.
 - Meta (Facebook and Instagram ads) is a third destination for pipeline conversions,
   through the Conversions API. Engine migration 0029 adds `meta_connections`,
   `meta_event_plans`, `meta_deliveries`, `conversion_actions.meta_event_name` and

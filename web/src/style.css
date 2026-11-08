@@ -1590,3 +1590,10 @@ select.goal-select { text-transform: none; }
   .key-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "scopes" "meta" "actions" "confirm"; }
   .key-row > .site-actions { justify-content: flex-start; }
 }
+/* Meta Ads */
+.meta-steps { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 12px; line-height: 1.5; }
+.meta-check { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+.meta-check .form-field { flex: 1 1 220px; margin: 0; }
+.meta-saved .site-diagnostics { margin-bottom: 10px; }
+.meta-connection .site-toggle input { flex: none; }
+.meta-checklist { margin-top: 16px; }

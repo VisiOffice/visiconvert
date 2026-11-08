@@ -11,7 +11,7 @@ export async function verifyConversions({page,api,artifactDir}) {
   await page.getByRole('button',{name:'Conversions',exact:true}).click();
   // Tabs open on the overview; nothing steers a new workspace to the fixed reviewed actions.
   const tabs=await page.getByRole('tablist',{name:'Conversion settings'}).getByRole('tab').allInnerTexts();
-  assert.deepEqual(tabs.map(t=>t.replace(/in use$/i,'').replace(/\s+/g,' ').trim()),['Overview','Actions','Google Ads','Microsoft Ads','Events','Advanced']);
+  assert.deepEqual(tabs.map(t=>t.replace(/in use$/i,'').replace(/\s+/g,' ').trim()),['Overview','Actions','Google Ads','Microsoft Ads','Meta Ads','Events','Advanced']);
   assert.equal(await page.getByRole('tab',{selected:true}).innerText(),'Overview');
   await page.getByRole('article',{name:'Google Ads status',exact:true}).waitFor();
   await openTab(page,'Events');
@@ -139,6 +139,71 @@ async function verifyPipeline({page,api,lead,artifactDir}) {
   await auto.getByRole('button',{name:'Turn off automatic sending',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Automatic sending turned off.'}).waitFor();
   await verifyMicrosoftPicker({page,artifactDir});
+  await verifyMetaTab({page,artifactDir});
+}
+// Meta tab against stubbed endpoints; nothing reaches Meta. The token must leave the page only
+// in the save request, and never come back.
+async function verifyMetaTab({page,artifactDir}) {
+  const TOKEN='EAAtest'+'x'.repeat(40);
+  const status={revision:0,connected:false,dataset_id:null,dataset_name:null,token_fingerprint:null,token_saved_at:null,match:'meta_clicks',ldu:'off',settings_version:0,validation:null,checked_at:null,check_current:false};
+  const sent=[];
+  const handler=route=>{
+    const r=route.request();const u=new URL(r.url()).pathname;const b=r.method()==='GET'?null:r.postDataJSON();
+    if(u.endsWith('/connections/meta')){
+      if(r.method()==='PUT'){sent.push(['connect',b]);Object.assign(status,{revision:1,connected:true,dataset_id:b.dataset_id,dataset_name:'Browser Pixel',token_fingerprint:'abc123def456',token_saved_at:new Date().toISOString()});return route.fulfill({json:{revision:1,dataset:{id:b.dataset_id,name:'Browser Pixel'},token_fingerprint:'abc123def456'}});}
+      return route.fulfill({json:status});
+    }
+    if(u.endsWith('/meta-check')){sent.push(['check',b]);const report={valid:true,dataset:{id:status.dataset_id},test_event:{sent:true,trace_id:'trace-1',test_event_code:b.test_event_code},message:'Meta accepted a test Lead event.'};Object.assign(status,{validation:report,checked_at:new Date().toISOString(),check_current:true});return route.fulfill({json:report});}
+    if(u.endsWith('/meta-settings')){sent.push(['settings',b]);Object.assign(status,{match:b.match,ldu:b.ldu,settings_version:1});return route.fulfill({json:{settings_version:1}});}
+    sent.push(['event',b]);return route.fulfill({json:{}});
+  };
+  await page.route('**/api/connections/meta',handler);await page.route('**/api/conversion-setup/meta-*',handler);await page.route('**/api/conversion-actions/*/meta-event',handler);
+  // This stage of the suite runs without an encryption key, which the real checklist reports.
+  const pipeline=async route=>{const response=await route.fetch();const json=await response.json();if(json.setup?.meta)json.setup.meta.configured=true;return route.fulfill({response,json});};
+  await page.route('**/api/conversions/pipeline',pipeline);
+  try {
+    await openTab(page,'Meta Ads');
+    await page.getByRole('button',{name:'Refresh Meta connection',exact:true}).click();
+    const token=page.getByLabel('Conversions API access token',{exact:true});
+    await token.waitFor();
+    assert.equal(await token.getAttribute('type'),'password');
+    await page.getByText(/admin or developer of the business portfolio/).waitFor();
+    await page.screenshot({path:path.join(artifactDir,'conversions-meta-connect.png'),fullPage:true});
+    await page.getByLabel('Dataset (Pixel) ID',{exact:true}).fill('6870255032989723');
+    await token.fill(TOKEN);
+    await page.getByRole('button',{name:'Connect Meta',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Meta connected to dataset'}).waitFor();
+    assert.deepEqual(sent.shift(),['connect',{revision:0,dataset_id:'6870255032989723',access_token:TOKEN}]);
+    assert.equal(await token.count(),0,'The token field closes after saving');
+    assert(!(await page.content()).includes(TOKEN),'The token is gone from the page');
+    await page.getByText('abc123def456').waitFor();
+    const row=page.getByRole('article',{name:'Meta event for order',exact:true});
+    const picker=row.getByLabel('Meta event',{exact:true});
+    await picker.selectOption('__custom__');
+    const custom=row.getByLabel('Custom event name',{exact:true});
+    await custom.fill('9bad');
+    assert(await row.getByRole('button',{name:'Use this event',exact:true}).isDisabled(),'Invalid custom names cannot be saved');
+    await picker.selectOption('Lead');
+    await row.getByRole('button',{name:'Use this event',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'is sent to Meta as Lead'}).waitFor();
+    const [kind,event]=sent.shift();assert.equal(kind,'event');assert.equal(event.event_name,'Lead');assert(Number.isInteger(event.version));
+    await page.getByLabel('Test event code (optional)',{exact:true}).fill('TEST123');
+    await page.getByRole('button',{name:'Send test event',exact:true}).click();
+    await page.getByText('Meta accepted the test event',{exact:true}).waitFor();
+    assert.deepEqual(sent.shift(),['check',{revision:1,test_event_code:'TEST123'}]);
+    assert.equal(await page.getByRole('button',{name:'Save sharing settings',exact:true}).count(),0,'Sharing settings save only after a change');
+    await page.getByLabel(/^Every eligible lead/).check();
+    await page.getByRole('button',{name:'Save sharing settings',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Every eligible lead is now sent'}).waitFor();
+    assert.deepEqual(sent.shift(),['settings',{settings_version:0,match:'all_leads',ldu:'off'}]);
+    await page.screenshot({path:path.join(artifactDir,'conversions-meta.png'),fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Meta tab fits a phone screen');
+    await page.screenshot({path:path.join(artifactDir,'conversions-meta-mobile.png'),fullPage:true});
+    await page.setViewportSize({width:1440,height:1000});
+  } finally {
+    await page.unroute('**/api/connections/meta',handler);await page.unroute('**/api/conversion-setup/meta-*',handler);await page.unroute('**/api/conversion-actions/*/meta-event',handler);await page.unroute('**/api/conversions/pipeline',pipeline);
+  }
 }
 // Review actions: pause an unmapped goal or exclude one from bidding; a goal VisiConvert
 // sends to offers no pause. Stubbed; nothing reaches Microsoft.
