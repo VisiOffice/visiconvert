@@ -4,7 +4,8 @@ import path from 'node:path';
 export async function verifyApiKeys({page,api,origin,artifactDir,root}) {
   const request=async(key,route,body)=>fetch(`${origin}/api/v1${route}`,{method:body?'POST':'GET',headers:{Authorization:`Bearer ${key}`,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
   await page.getByRole('button',{name:'API keys',exact:true}).click();
-  await page.getByLabel('Key name',{exact:true}).fill('Browser reader');
+  const newKey=async()=>{const b=page.getByRole('button',{name:'New key',exact:true});await page.getByRole('heading',{name:'Workspace keys'}).waitFor();if(await b.isVisible())await b.click();};
+  await newKey();await page.getByLabel('Key name',{exact:true}).fill('Browser reader');
   await page.getByRole('button',{name:'Create API key',exact:true}).click();
   const secret=await page.getByLabel('New API key',{exact:true}).inputValue();
   assert(secret.startsWith('vc_key_'));
@@ -32,7 +33,7 @@ export async function verifyApiKeys({page,api,origin,artifactDir,root}) {
   const active=page.getByRole('article',{name:'API key Browser reader',exact:true}).filter({has:page.getByText('Active',{exact:true})});
   await active.getByRole('button',{name:'Revoke key',exact:true}).click();await page.getByRole('button',{name:'Confirm revoke',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Key revoked.'}).waitFor();assert.equal((await request(replacement,'/workspace')).status,401);
-  await page.getByLabel('Key name',{exact:true}).fill('Browser writer');
+  await newKey();await page.getByLabel('Key name',{exact:true}).fill('Browser writer');
   await page.getByLabel('Create interactions and review inquiries',{exact:true}).check();
   await page.getByLabel('Record, revise, and cancel bookings',{exact:true}).check();
   await page.getByRole('button',{name:'Create API key',exact:true}).click();
@@ -45,9 +46,9 @@ export async function verifyApiKeys({page,api,origin,artifactDir,root}) {
   const list=cli(['leads','list','--source','API verification','--json']);assert.equal(list.status,0,list.stderr);assert(JSON.parse(list.stdout).some(l=>l.id===lead));
   const booking=(await (await request(writer,'/bookings')).json()).data.find(b=>b.external_id==='PUBLIC-CLI-BOOKING');assert.equal(booking.amount_minor,12345);
   await page.getByRole('button',{name:'I saved the key',exact:true}).click();
-  await page.getByLabel('Key name',{exact:true}).fill('Number buyer');
+  await newKey();await page.getByLabel('Key name',{exact:true}).fill('Number buyer');
   await page.getByLabel('Search, buy, and release phone numbers (billable)',{exact:true}).check();
-  assert.notEqual(await page.getByLabel('Expires at (UTC, optional)',{exact:true}).inputValue(),'','Billable keys default to an expiration');
+  assert.equal(await page.getByLabel('Expires',{exact:true}).inputValue(),'24h','Billable keys default to an expiration');
   await page.getByRole('button',{name:'Create API key',exact:true}).click();
   const buyer=await page.getByLabel('New API key',{exact:true}).inputValue();
   const buyerInfo=await (await request(buyer,'/workspace')).json();assert(buyerInfo.scopes.includes('numbers:purchase'));
@@ -56,10 +57,10 @@ export async function verifyApiKeys({page,api,origin,artifactDir,root}) {
   await buyerCard.getByRole('button',{name:'Revoke key',exact:true}).click();await page.getByRole('button',{name:'Confirm revoke',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Key revoked.'}).waitFor();
   // Sending permission: separate checkbox, notice, 24-hour default; only it reaches the switches.
-  await page.getByLabel('Key name',{exact:true}).fill('Conversion sender');
-  await page.getByLabel('Turn Google delivery and automatic sending on or off and set the consent policy',{exact:true}).check();
+  await newKey();await page.getByLabel('Key name',{exact:true}).fill('Conversion sender');
+  await page.getByLabel('Send conversions: connect Meta, choose ad accounts, and turn delivery on or off',{exact:true}).check();
   await page.getByText(/attest the advertising consent policy on your behalf.*cannot be retracted/).waitFor();
-  assert.notEqual(await page.getByLabel('Expires at (UTC, optional)',{exact:true}).inputValue(),'','Sending keys default to an expiration');
+  assert.equal(await page.getByLabel('Expires',{exact:true}).inputValue(),'24h','Sending keys default to an expiration');
   await page.getByRole('button',{name:'Create API key',exact:true}).click();
   const sender=await page.getByLabel('New API key',{exact:true}).inputValue();
   assert((await (await request(sender,'/workspace')).json()).scopes.includes('conversions:send'));
