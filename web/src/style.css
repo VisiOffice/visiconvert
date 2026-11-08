@@ -1564,3 +1564,29 @@ select.goal-select { text-transform: none; }
   .logs-footer { padding: 12px 15px; }
   .logs-error { margin: 12px 15px; }
 }
+/* API keys */
+.key-list { display: grid; }
+.key-row { display: grid; grid-template-columns: minmax(180px, 1.2fr) minmax(0, 2fr) auto; grid-template-areas: "main scopes actions" "meta meta actions" "confirm confirm confirm"; gap: 6px 16px; align-items: center; padding: 12px 0; border-top: 1px solid #e2e8dc; min-width: 0; }
+.key-row:first-child { border-top: 0; }
+.key-main { grid-area: main; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.key-main strong { overflow-wrap: anywhere; }
+.key-main code { font-size: 10px; color: #86917c; }
+.key-scopes { grid-area: scopes; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.key-scopes .chip { padding: 3px 6px; font-size: 9px; }
+.chip.chip-risk { border-color: #f0d5b0; background: #fbf1e0; color: #a07a3f; }
+.key-meta { grid-area: meta; color: #86917c; }
+.key-row > .site-actions { grid-area: actions; justify-content: flex-end; gap: 8px; }
+.key-confirm { grid-area: confirm; }
+.key-inactive { margin-top: 12px; }
+.key-inactive summary { font-size: 11px; color: #86917c; }
+.key-presets { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px; }
+.key-presets .chip { cursor: pointer; }
+.key-presets .chip:hover { border-color: #c3c9ba; color: #263b35; }
+.key-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.key-group { border: 1px solid #e2e8dc; border-radius: 6px; padding: 10px 14px 14px; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.key-group legend { font-weight: 600; font-size: 12px; padding: 0 4px; }
+.key-group-risk { border-color: #f0d5b0; }
+@media (max-width: 720px) {
+  .key-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "scopes" "meta" "actions" "confirm"; }
+  .key-row > .site-actions { justify-content: flex-start; }
+}

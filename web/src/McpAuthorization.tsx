@@ -9,8 +9,8 @@ const descriptions: Record<string, string> = {
   "numbers:write": "Register phone numbers you already own",
   "leads:write": "Create leads and change qualification and notes",
   "bookings:write": "Record or cancel bookings and their values",
-  "conversions:write": "Define Google conversion actions and post pipeline events (cannot turn on sending)",
-  "conversions:send": "Turn Google delivery and automatic sending on or off and set the consent policy",
+  "conversions:write": "Define conversion actions, post pipeline events, and map them to Google, Microsoft and Meta (cannot turn on sending)",
+  "conversions:send": "Send conversions: connect Meta, choose ad accounts, turn delivery on or off, and set the consent policy",
 };
 // Granted only by the owner, listed apart from ordinary write access, never preselected.
 const defaultSending = ["conversions:send"];
