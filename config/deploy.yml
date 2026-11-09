@@ -1,0 +1,79 @@
+# Kamal deploy for the hosted engine and web app at workspaces.visiconvert.com. The runbook is
+# docs/kamal.md in the private Cloud repository. Self-hosters use compose.yaml instead.
+#
+# Set VISICONVERT_KAMAL_HOST to the server's address. proxy.run must match Cloud's deploy.yml,
+# because both apps share one kamal-proxy.
+service: visiconvert-engine
+image: regatlas-llc/visiconvert-engine
+
+servers:
+  web:
+    hosts:
+      - <%= ENV.fetch("VISICONVERT_KAMAL_HOST") %>
+    # Migrate, then serve, so a failed migration fails the deploy before traffic moves.
+    cmd: -c "convert-server migrate && exec convert-server serve"
+    options:
+      entrypoint: /bin/sh
+      read-only: true
+      tmpfs: /tmp
+      cap-drop: ALL
+      security-opt: no-new-privileges:true
+      memory: 512m
+      cpus: 1
+      pids-limit: 128
+
+deploy_timeout: 120
+
+proxy:
+  host: workspaces.visiconvert.com
+  ssl: false
+  forward_headers: true
+  app_port: 3100
+  response_timeout: 120
+  # Remote MCP streams responses.
+  buffering:
+    responses: false
+  healthcheck:
+    path: /health
+  run:
+    http_port: 43180
+    https_port: 43543
+    bind_ips:
+      - 127.0.0.1
+
+registry:
+  server: ghcr.io
+  username: robertdoneill
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+  target: app
+
+env:
+  clear:
+    PUBLIC_URL: https://workspaces.visiconvert.com
+    LISTEN_ADDR: 0.0.0.0:3100
+    VISICONVERT_CLOUD_ORIGIN: https://cloud.visiconvert.com
+    VISICONVERT_APP_ORIGIN: https://cloud.visiconvert.com
+  secret:
+    - DATABASE_URL
+    - VISICONVERT_API_KEY
+    - VISICONVERT_CLOUD_SERVICE_KEY
+    - VISICONVERT_ENCRYPTION_KEY
+    - VISICONVERT_GOOGLE_CLIENT_ID
+    - VISICONVERT_GOOGLE_CLIENT_SECRET
+    - VISICONVERT_MICROSOFT_CLIENT_ID
+    - VISICONVERT_MICROSOFT_CLIENT_SECRET
+    - VISICONVERT_MICROSOFT_DEVELOPER_TOKEN
+
+logging:
+  options:
+    max-size: 10m
+    max-file: 3
+
+retain_containers: 3
+
+aliases:
+  logs: app logs -f
