@@ -4,7 +4,7 @@ import path from 'node:path';
 export async function verifyApiKeys({page,api,origin,artifactDir,root}) {
   const request=async(key,route,body)=>fetch(`${origin}/api/v1${route}`,{method:body?'POST':'GET',headers:{Authorization:`Bearer ${key}`,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
   await page.getByRole('button',{name:'API keys',exact:true}).click();
-  const newKey=async()=>{const b=page.getByRole('button',{name:'New key',exact:true});await page.getByRole('heading',{name:'Workspace keys'}).waitFor();if(await b.isVisible())await b.click();};
+  const newKey=async()=>{const b=page.getByRole('button',{name:'New key',exact:true});await page.getByRole('heading',{name:'Workspace keys'}).waitFor();await page.getByText('Loading keys…',{exact:true}).waitFor({state:'hidden'});if(await b.isVisible())await b.click();};
   await newKey();await page.getByLabel('Key name',{exact:true}).fill('Browser reader');
   await page.getByRole('button',{name:'Create API key',exact:true}).click();
   const secret=await page.getByLabel('New API key',{exact:true}).inputValue();

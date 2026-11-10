@@ -240,7 +240,8 @@ async fn pipeline_reposts_restatements_and_once_per_click() {
     assert_eq!(event["currency"], "USD");
     assert_eq!(event["adIdentifiers"]["gclid"], "click-a");
     assert_eq!(sent["destinations"][0]["productDestinationId"], "456");
-    for private in ["order_8812", "602", "PRIVATE"] {
+    // Raw phone digits, not the area code alone: hashed identifiers are hex and can contain "602".
+    for private in ["order_8812", "5550105", "555-0105", "PRIVATE"] {
         assert!(!sent.to_string().contains(private), "{private}");
     }
     due(a).await;

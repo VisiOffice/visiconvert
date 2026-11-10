@@ -74,7 +74,7 @@ export function ApiKeys({ api, setup = false }: { api: Client; setup?: boolean }
     {secret && <section className="card site-panel"><h2>Save your new API key</h2><p>This secret cannot be retrieved again. Store it in your password or secret manager, never in agent chat. Leaving this page clears it from the screen.</p><textarea aria-label="New API key" className="site-code" readOnly value={secret} rows={3} /><div className="site-actions"><button className="secondary" onClick={() => void navigator.clipboard?.writeText(secret)}>Copy</button><button className="secondary" onClick={() => { setSecret(""); setNotice(""); }}>I saved the key</button></div></section>}
 
     <section className="card site-panel">
-      <div className="section-heading"><h2>Workspace keys</h2><div className="site-actions"><button className="secondary" disabled={busy} onClick={() => void refresh().catch(e => setError(e.message))}>Refresh keys</button>{!open && <button className="primary" disabled={!!secret} onClick={() => setOpen(true)}>New key</button>}</div></div>
+      <div className="section-heading"><h2>Workspace keys</h2><div className="site-actions"><button className="secondary" disabled={busy} onClick={() => void refresh().catch(e => setError(e.message))}>Refresh keys</button>{data && !open && <button className="primary" disabled={!!secret} onClick={() => setOpen(true)}>New key</button>}</div></div>
       {!data ? <p>Loading keys…</p> : !active.length ? <p className="muted">No active keys.</p> : <div className="key-list">{active.map(row)}</div>}
       {inactive.length > 0 && <details className="key-inactive"><summary>Revoked and expired ({inactive.length})</summary><div className="key-list">{inactive.map(row)}</div></details>}
     </section>
