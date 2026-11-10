@@ -73,7 +73,7 @@ const pageMeta: Record<Page, { group: string; eyebrow?: string; title?: string; 
   "Lead inbox": { group: "Workspace", text: "Review inquiries, qualify opportunities, and record bookings." },
   "Tracking numbers": { group: "Workspace", text: "Give each campaign a number. Keep your existing phone system." },
   Sites: { group: "Workspace", text: "Connect website visits and successful forms to their source." },
-  Conversions: { group: "Advertising", text: "Send pipeline conversions to Google Ads and Microsoft Advertising, and review what was sent." },
+  Conversions: { group: "Advertising", text: "Send pipeline conversions to Google, Microsoft and Meta ads, and review what was sent." },
   Connections: { group: "Advertising", text: "Connect Twilio or SignalWire and preview how a landing page is attributed." },
   "API keys": { group: "Developers", text: "Give scripts, the CLI and agents scoped access to this workspace." },
   Webhooks: { group: "Developers", text: "Send signed events to your CRM and automations." },

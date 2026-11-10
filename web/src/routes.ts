@@ -17,7 +17,7 @@ const slugs: Record<Page, string> = {
 };
 const pages = Object.fromEntries(Object.entries(slugs).map(([page, slug]) => [slug, page])) as Record<string, Page>;
 /// Tabs a page accepts in its URL; anything else opens the page's first tab.
-const tabs: Partial<Record<Page, string[]>> = { Conversions: ["actions", "google", "microsoft", "events", "advanced"] };
+const tabs: Partial<Record<Page, string[]>> = { Conversions: ["actions", "google", "microsoft", "meta", "events", "advanced"] };
 
 const hostedBase = /^\/app\/[0-9a-fA-F-]{36}/;
 export function base(pathname = window.location.pathname) { return pathname.match(hostedBase)?.[0] ?? ""; }
