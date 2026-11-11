@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Capture the migrated state and confirm containers and public health.
+set -euo pipefail
+ssh "root@${KAMAL_HOSTS%%,*}" 'python3 /opt/visiconvert-cloud/ops/ops.py backup && python3 /opt/visiconvert-cloud/ops/ops.py monitor'

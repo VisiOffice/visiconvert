@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Back up to B2 and prove the backup restores before anything changes.
+set -euo pipefail
+ssh "root@${KAMAL_HOSTS%%,*}" 'python3 /opt/visiconvert-cloud/ops/ops.py backup && python3 /opt/visiconvert-cloud/ops/ops.py restore'

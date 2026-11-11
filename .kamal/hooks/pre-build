@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Only ship merged code. The image build itself runs the Rust test suite.
+set -euo pipefail
+git fetch -q origin main
+git merge-base --is-ancestor HEAD origin/main || { echo "HEAD is not on origin/main; merge it first."; exit 1; }
