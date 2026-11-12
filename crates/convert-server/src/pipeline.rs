@@ -289,6 +289,8 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
             "Configure Google OAuth for this installation (see the Google connection guide)."
                 .into(),
         ));
+    } else if connection.encrypted_token.is_some() && connection.auth_failed_at.is_some() {
+        steps.push(("owner", "Google authorization expired or was revoked, so nothing is sent to Google. The owner must reconnect Google in Conversions; held conversions send after that.".into()));
     } else if !connected {
         steps.push(("owner", "Owner must connect Google in Conversions. Keys and agents cannot start a Google connection.".into()));
     } else if !f["customer_id"].is_string() {
@@ -356,6 +358,9 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
     f["microsoft"] = microsoft::setup_status(a, store).await?;
     f["meta"] = meta::setup_status(a, store).await?;
     f["google_connected"] = json!(connected);
+    f["google_reconnect_required"] =
+        json!(connection.encrypted_token.is_some() && !connected && a.google.is_some());
+    f["google_auth_failed_at"] = json!(connection.auth_failed_at);
     f["connection_revision"] = json!(connection.revision);
     f["ready"] = json!(ready);
     f["next_steps"] = json!(

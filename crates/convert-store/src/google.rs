@@ -13,6 +13,8 @@ pub struct Connection {
     pub connected_at: Option<DateTime<Utc>>,
     pub validation: Option<Value>,
     pub checked_at: Option<DateTime<Utc>>,
+    /// The provider rejected the refresh token for this revision; the owner must reconnect.
+    pub auth_failed_at: Option<DateTime<Utc>>,
 }
 pub struct Attempt {
     pub workspace: Uuid,
@@ -45,6 +47,20 @@ impl Store {
         tx.commit().await?;
         Ok(())
     }
+    /// Record (or clear) that the provider rejected this revision's refresh token. A
+    /// reconnect bumps the revision, so a late failure never flags the new connection.
+    pub async fn set_google_auth_failed(&self, revision: i64, failed: bool) -> Result<()> {
+        sqlx::query(if failed {
+            "UPDATE google_connections SET auth_failed_at=now() WHERE workspace_id=$1 AND revision=$2 AND auth_failed_at IS NULL"
+        } else {
+            "UPDATE google_connections SET auth_failed_at=NULL WHERE workspace_id=$1 AND revision=$2 AND auth_failed_at IS NOT NULL"
+        })
+        .bind(self.workspace)
+        .bind(revision)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
     pub async fn google_connection(&self) -> Result<Connection> {
         let row = sqlx::query("SELECT * FROM google_connections WHERE workspace_id=$1")
             .bind(self.workspace)
@@ -58,6 +74,7 @@ impl Store {
                 connected_at: r.get("connected_at"),
                 validation: r.get("validation"),
                 checked_at: r.get("checked_at"),
+                auth_failed_at: r.get("auth_failed_at"),
             },
             None => Connection {
                 revision: 0,
@@ -66,6 +83,7 @@ impl Store {
                 connected_at: None,
                 validation: None,
                 checked_at: None,
+                auth_failed_at: None,
             },
         })
     }
@@ -133,7 +151,7 @@ impl Store {
             }
         }
         self.lock_inquiry_writes(&mut tx).await?;
-        let changed=sqlx::query("UPDATE google_connections SET revision=revision+1,encrypted_token=$3,client_fingerprint=$4,connected_at=now(),validation=NULL,validated_settings_version=NULL,checked_at=NULL,pending_state_hash=NULL WHERE workspace_id=$1 AND revision=$2 AND pending_state_hash=$5")
+        let changed=sqlx::query("UPDATE google_connections SET revision=revision+1,encrypted_token=$3,client_fingerprint=$4,connected_at=now(),auth_failed_at=NULL,validation=NULL,validated_settings_version=NULL,checked_at=NULL,pending_state_hash=NULL WHERE workspace_id=$1 AND revision=$2 AND pending_state_hash=$5")
             .bind(self.workspace).bind(a.expected_revision).bind(encrypted).bind(&a.client_fingerprint).bind(&a.state_hash).execute(&mut *tx).await?;
         if changed.rows_affected() != 1 {
             return Err(Error::Conflict);
@@ -145,7 +163,7 @@ impl Store {
     pub async fn disconnect_google(&self, revision: i64, actor: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         self.lock_inquiry_writes(&mut tx).await?;
-        let changed=sqlx::query("UPDATE google_connections SET revision=revision+1,encrypted_token=NULL,client_fingerprint=NULL,connected_at=NULL,validation=NULL,validated_settings_version=NULL,checked_at=NULL,pending_state_hash=NULL WHERE workspace_id=$1 AND revision=$2")
+        let changed=sqlx::query("UPDATE google_connections SET revision=revision+1,encrypted_token=NULL,client_fingerprint=NULL,connected_at=NULL,auth_failed_at=NULL,validation=NULL,validated_settings_version=NULL,checked_at=NULL,pending_state_hash=NULL WHERE workspace_id=$1 AND revision=$2")
             .bind(self.workspace).bind(revision).execute(&mut *tx).await?;
         if changed.rows_affected() != 1 {
             return Err(Error::Conflict);

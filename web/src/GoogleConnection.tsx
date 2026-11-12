@@ -3,7 +3,7 @@ import type { Client } from "./api";
 import type { Settings } from "./Conversions";
 
 type Check = { valid: boolean; message: string; settings_version: number; login_customer_id?: string; account?: { name: string }; actions?: { name: string; primary: boolean }[] };
-type Status = { configured: boolean; connected: boolean; reconnect_required: boolean; revision: number; redirect_uri: string; validation: Check | null; checked_at: string | null };
+type Status = { configured: boolean; connected: boolean; reconnect_required: boolean; auth_failed_at?: string | null; revision: number; redirect_uri: string; validation: Check | null; checked_at: string | null };
 type Account = { id: string; name: string; manager: boolean; status: string };
 export type GoogleAction = { id: string; name: string; eligible: boolean; kind: string; status: string; primary: boolean; owner: string };
 type Accounts = { logins: string[]; accounts: Account[]; has_more: boolean };
@@ -118,7 +118,7 @@ export function GoogleConnection({ api, settings, onChange, onDiscovery }: { api
       <p>Google connection is not configured on this installation. Your administrator must add the Google OAuth application credentials and enable the Google Ads and Data Manager APIs.</p>
       <details><summary>Administrator setup</summary><p>Use a Web application OAuth client with this exact authorized redirect URI:</p><code className="google-callback">{status.redirect_uri}</code><p>Set <code>VISICONVERT_GOOGLE_CLIENT_ID</code> and <code>VISICONVERT_GOOGLE_CLIENT_SECRET</code> in the server’s private configuration, with its existing encryption key. See the Google connection guide in the installation documentation.</p></details>
     </> : <>
-      <p><strong>{status.connected ? "Google sign-in complete" : status.reconnect_required ? "Reconnect Google after the application configuration change" : "Google not connected"}</strong></p>
+      <p><strong>{status.connected ? "Google sign-in complete" : status.reconnect_required ? (status.auth_failed_at ? `Google sign-in expired or was revoked on ${new Date(status.auth_failed_at).toLocaleString()}. Reconnect Google; nothing is sent to Google until then` : "Reconnect Google after the application configuration change") : "Google not connected"}</strong></p>
       <div className="google-actions"><button className="primary" disabled={busy || pending} onClick={connect}>{status.connected ? "Use a different Google login" : "Sign in with Google"}</button>
         {(status.connected || status.revision > 0 || pending) && <button className="secondary" disabled={busy} onClick={() => void run(async () => { await api("/connections/google", { revision: status.revision }, "DELETE"); cleanup.current(); setActions(null); setAccounts([]); setLogins([]); setLogin(""); setNotice("Google disconnected locally. You can also remove VisiConvert access in your Google Account permissions."); })}>Disconnect Google</button>}
         {status.connected && <button className="secondary" disabled={busy} onClick={() => void run(browse)}>Refresh Google Ads accounts</button>}</div>

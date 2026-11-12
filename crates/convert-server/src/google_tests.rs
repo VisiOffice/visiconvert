@@ -1012,6 +1012,69 @@ async fn google_discovery_validation_staleness_and_provider_errors() {
             .iter()
             .all(|s| !s.contains("ingest") && !s.contains("mutate"))
     );
+    // The rejected refresh is remembered: the connection asks for a reconnect instead of
+    // reporting connected, and the setup checklist tells the owner to reconnect.
+    let (_, c) = api(
+        a.clone(),
+        "GET",
+        "/api/connections/google",
+        key,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(c["connected"], false);
+    assert_eq!(c["reconnect_required"], true);
+    assert!(c["auth_failed_at"].is_string());
+    let (_, setup) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        key,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(setup["google_connected"], false);
+    assert_eq!(setup["google_reconnect_required"], true);
+    assert_eq!(setup["next_steps"][0]["actor"], "owner");
+    assert!(
+        setup["next_steps"][0]["step"]
+            .as_str()
+            .unwrap()
+            .contains("reconnect Google")
+    );
+    // The next successful refresh clears it.
+    p.deny.store(false, Ordering::SeqCst);
+    assert!(crate::google::worker_token(&a, &a.store).await.is_ok());
+    let (_, c) = api(
+        a.clone(),
+        "GET",
+        "/api/connections/google",
+        key,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(c["connected"], true);
+    assert_eq!(c["reconnect_required"], false);
+    assert!(c["auth_failed_at"].is_null());
+    // A reconnect starts clean even when the old revision failed.
+    p.deny.store(true, Ordering::SeqCst);
+    assert!(crate::google::worker_token(&a, &a.store).await.is_err());
+    let revision = a.store.google_connection().await.unwrap().revision;
+    let (state, cookie) = begin(a.clone(), &p, key, revision).await;
+    p.deny.store(false, Ordering::SeqCst);
+    assert!(
+        callback(a.clone(), &state, &cookie, "ok")
+            .await
+            .ends_with("connected")
+    );
+    assert!(
+        a.store
+            .google_connection()
+            .await
+            .unwrap()
+            .auth_failed_at
+            .is_none()
+    );
     task.abort();
 }
 

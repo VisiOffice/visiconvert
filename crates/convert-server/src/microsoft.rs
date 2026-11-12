@@ -194,8 +194,10 @@ pub fn shared_routes() -> Router<Shared> {
         )
 }
 /// Connected with the OAuth client this installation is configured with now.
+/// A refresh token the provider has rejected does not count as connected.
 pub(crate) fn connected(a: &App, c: &Connection) -> bool {
     c.encrypted_token.is_some()
+        && c.auth_failed_at.is_none()
         && a.vault.is_some()
         && a.microsoft
             .config
@@ -208,7 +210,7 @@ async fn show(State(a): State<Shared>, Extension(access): Extension<hosted::Acce
     let configured = a.microsoft.config.is_some() && a.vault.is_some();
     let matching = connected(&a, &c);
     Ok(Json(json!({"configured":configured,"connected":matching,
-        "reconnect_required":c.encrypted_token.is_some() && !matching,"revision":c.revision,"connected_at":c.connected_at,
+        "reconnect_required":c.encrypted_token.is_some() && !matching,"auth_failed_at":c.auth_failed_at,"revision":c.revision,"connected_at":c.connected_at,
         "redirect_uri":format!("{}{CALLBACK}",hosted::browser_origin(&a)),
         "customer_id":c.customer_id,"account_id":c.account_id,"account_name":c.account_name,"destination_version":c.destination_version,
         "validation":if matching {c.validation.clone()} else {None},"checked_at":if matching {c.checked_at} else {None},
@@ -408,11 +410,23 @@ pub(crate) async fn worker_token(a: &App, store: &Store) -> Result<(Connection, 
     let refresh = vault
         .open_microsoft(store.workspace, "refresh", encrypted)
         .map_err(|_| connections::vault_error())?;
-    let t = a
+    let t = match a
         .microsoft
         .client
         .refresh(&g.client_id, &g.client_secret, &refresh)
-        .await?;
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            if e == microsoft_api::Error::Credentials {
+                store.set_microsoft_auth_failed(c.revision, true).await?;
+            }
+            return Err(e.into());
+        }
+    };
+    if c.auth_failed_at.is_some() {
+        store.set_microsoft_auth_failed(c.revision, false).await?;
+    }
     if let Some(next) = t.refresh_token
         && next != refresh
     {
@@ -1047,6 +1061,8 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
     let mut steps: Vec<(&str, String)> = Vec::new();
     if !configured {
         steps.push(("administrator", "Microsoft Advertising is not available on this installation; the administrator must configure it (see the Microsoft connection guide).".into()));
+    } else if c.encrypted_token.is_some() && c.auth_failed_at.is_some() {
+        steps.push(("owner", "Microsoft Advertising authorization expired or was revoked, so nothing is sent to Microsoft. The owner must reconnect Microsoft Advertising in Conversions; held conversions send after that.".into()));
     } else if !is_connected {
         steps.push(("owner", "Owner must connect Microsoft Advertising in Conversions. Keys and agents cannot start a Microsoft connection.".into()));
     } else if c.account_id.is_none() {
@@ -1089,6 +1105,7 @@ pub(crate) async fn setup_status(a: &App, store: &Store) -> Result<Value, ApiErr
     f["configured"] = json!(configured);
     f["connected"] = json!(is_connected);
     f["reconnect_required"] = json!(c.encrypted_token.is_some() && !is_connected);
+    f["auth_failed_at"] = json!(c.auth_failed_at);
     f["connection_revision"] = json!(c.revision);
     f["destination_version"] = json!(c.destination_version);
     f["customer_id"] = json!(c.customer_id);

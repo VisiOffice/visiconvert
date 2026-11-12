@@ -721,7 +721,30 @@ async fn microsoft_oauth_rotation_discovery_destination_and_scopes() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
     assert!(v["error"].as_str().unwrap().contains("Reconnect"));
+    // ...and is remembered until a refresh succeeds again.
+    let (_, setup) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        &read,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(setup["microsoft"]["connected"], false);
+    assert_eq!(setup["microsoft"]["reconnect_required"], true);
+    assert!(setup["microsoft"]["auth_failed_at"].is_string());
     m.deny.store(false, Ordering::SeqCst);
+    assert!(crate::microsoft::worker_token(&a, &a.store).await.is_ok());
+    let (_, setup) = api(
+        a.clone(),
+        "GET",
+        "/api/v1/conversion-setup",
+        &read,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(setup["microsoft"]["connected"], true);
+    assert!(setup["microsoft"]["auth_failed_at"].is_null());
     // Disconnect keeps the chosen account but removes the credential.
     let (s, _) = api(
         a.clone(),
