@@ -14,7 +14,23 @@ def reviewed_nonapplicable(finding):
     # https://github.com/RustCrypto/utils/security/advisories/GHSA-qwgh-2vcv-g2f7
     # Reviewed 2026-10-27. Scope this correction to the exact locked version;
     # other versions/advisories must still fail the audit.
-    return finding == ("crates.io", "block-buffer", "0.10.4", "GHSA-qwgh-2vcv-g2f7")
+    if finding == ("crates.io", "block-buffer", "0.10.4", "GHSA-qwgh-2vcv-g2f7"):
+        return True
+    # SQLite bug in the bundled C library (fixed in libsqlite3-sys 0.39.0). It is in
+    # Cargo.lock only because sqlx 0.9.0 lists its SQLite driver as an optional
+    # dependency and pins libsqlite3-sys below 0.39; with sqlx's `sqlite` feature off
+    # it is never compiled (`cargo tree -i libsqlite3-sys` prints nothing). Reviewed
+    # 2026-11-12. Holds only while no manifest enables SQLite; drop it when sqlx
+    # allows libsqlite3-sys >= 0.39.
+    if finding == ("crates.io", "libsqlite3-sys", "0.37.0", "RUSTSEC-2026-0459"):
+        return not sqlite_enabled()
+    return False
+
+
+def sqlite_enabled():
+    root = Path(__file__).resolve().parent.parent
+    manifests = [root / "Cargo.toml", *root.glob("crates/*/Cargo.toml")]
+    return any("sqlite" in manifest.read_text().lower() for manifest in manifests)
 
 
 def packages(path):
