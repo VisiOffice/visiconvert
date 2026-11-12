@@ -1,3 +1,15 @@
+## Unreleased — Show an expired Google or Microsoft sign-in
+
+- When Google or Microsoft rejects the saved refresh token (revoked, or expired, as Google
+  does after 7 days for an OAuth app in Testing), the engine records it. Until the owner
+  reconnects or a later refresh succeeds, the connection reports `connected: false`,
+  `reconnect_required: true` and `auth_failed_at`; the conversion setup reports
+  `google_connected: false`, `google_reconnect_required` and `google_auth_failed_at` (and
+  `microsoft.auth_failed_at`), and its first next step tells the owner to reconnect.
+  Previously the connection still looked connected and uploads waited silently on the
+  destination check. Engine migration 0030 adds `auth_failed_at` to `google_connections`
+  and `microsoft_connections`.
+
 ## Unreleased — Meta Conversions API
 
 - Conversions → Meta Ads: the owner saves the dataset and token, maps actions to Meta events,

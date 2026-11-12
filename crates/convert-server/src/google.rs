@@ -132,8 +132,10 @@ pub fn routes() -> Router<Shared> {
         ))
 }
 /// Connected with the OAuth client this installation is configured with now.
+/// A refresh token the provider has rejected does not count as connected.
 pub(crate) fn connected(a: &App, c: &Connection) -> bool {
     c.encrypted_token.is_some()
+        && c.auth_failed_at.is_none()
         && a.vault.is_some()
         && a.google
             .as_ref()
@@ -147,9 +149,10 @@ async fn show(State(a): State<Shared>, Extension(access): Extension<hosted::Acce
         .google
         .as_ref()
         .is_some_and(|g| c.client_fingerprint.as_deref() == Some(g.fingerprint().as_str()));
+    let expired = c.auth_failed_at.is_some();
     Ok(Json(
-        json!({"configured":configured,"connected":c.encrypted_token.is_some() && matching,
-        "reconnect_required":c.encrypted_token.is_some() && !matching,"revision":c.revision,"connected_at":c.connected_at,
+        json!({"configured":configured,"connected":c.encrypted_token.is_some() && matching && !expired,
+        "reconnect_required":c.encrypted_token.is_some() && (!matching || expired),"auth_failed_at":c.auth_failed_at,"revision":c.revision,"connected_at":c.connected_at,
         "redirect_uri":format!("{}{CALLBACK}",hosted::browser_origin(&a)),"validation":if matching {c.validation}else{None},"checked_at":if matching {c.checked_at}else{None},"uploads_enabled":access.store.delivery_settings().await?["enabled"]}),
     ))
 }
@@ -353,10 +356,24 @@ pub(crate) async fn worker_token(a: &App, store: &Store) -> Result<(Connection, 
     let refresh = vault
         .open_google(store.workspace, "refresh", encrypted)
         .map_err(|_| connections::vault_error())?;
-    let t = a
+    let t = match a
         .google_client
         .refresh(&g.client_id, &g.client_secret, &refresh)
-        .await?;
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            // Revoked or expired (7 days for an OAuth app in Testing): record it so the
+            // connection reports reconnect_required instead of looking connected.
+            if matches!(e, google_api::Error::Credentials) {
+                store.set_google_auth_failed(c.revision, true).await?;
+            }
+            return Err(e.into());
+        }
+    };
+    if c.auth_failed_at.is_some() {
+        store.set_google_auth_failed(c.revision, false).await?;
+    }
     // Google normally does not rotate refresh tokens on refresh. Preserve any
     // replacement atomically if it does, without resurrecting a disconnected link.
     if let Some(next) = t.refresh_token
