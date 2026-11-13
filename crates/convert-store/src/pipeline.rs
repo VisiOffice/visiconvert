@@ -315,8 +315,11 @@ async fn find_lead(
                 Err(Error::NotFound)
             };
         }
-        Matcher::Phone(p) => ("right(regexp_replace(l.contact,'[^0-9]','','g'),10)=$2", p),
-        Matcher::Email(e) => ("lower(btrim(l.contact))=$2", e),
+        Matcher::Phone(p) => (
+            "(l.match_phone=$2 OR right(regexp_replace(l.contact,'[^0-9]','','g'),10)=$2)",
+            p,
+        ),
+        Matcher::Email(e) => ("(l.match_email=$2 OR lower(btrim(l.contact))=$2)", e),
     };
     let order = if attribution == "latest_click" {
         "DESC"

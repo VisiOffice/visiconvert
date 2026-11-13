@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import { money, type Client } from "./api";
-import { Activity, Check, ChevronDown, Code2, FileText, Loader2, Phone, RefreshCw, ScrollText, type IconProps } from "./icons";
+import { Activity, Check, ChevronDown, Code2, FileText, Loader2, MessageSquare, Phone, RefreshCw, ScrollText, type IconProps } from "./icons";
 
-type Kind = "call" | "form" | "conversion" | "webhook" | "changes";
+type Kind = "call" | "form" | "chat" | "conversion" | "webhook" | "changes";
 type Outcome = "success" | "warning" | "failure" | "pending" | "neutral";
 export type ActivityItem = {
   id: string | number; source: string; kind: Kind; occurred_at: string; summary: string;
@@ -15,6 +15,7 @@ const kinds: { value: Kind | "all"; label: string; empty: string }[] = [
   { value: "all", label: "All", empty: "activity" },
   { value: "call", label: "Calls", empty: "calls" },
   { value: "form", label: "Forms", empty: "form submissions" },
+  { value: "chat", label: "Chats", empty: "web chats" },
   { value: "conversion", label: "Conversions", empty: "conversion events or deliveries" },
   { value: "webhook", label: "Webhooks", empty: "webhook deliveries" },
   { value: "changes", label: "Changes", empty: "settings, API key or webhook changes" },
@@ -27,6 +28,7 @@ const ranges = [
 const kindMeta: Record<Kind, { label: string; icon: ComponentType<IconProps> }> = {
   call: { label: "Call", icon: Phone },
   form: { label: "Form", icon: FileText },
+  chat: { label: "Chat", icon: MessageSquare },
   conversion: { label: "Conversion", icon: Check },
   webhook: { label: "Webhook", icon: Activity },
   changes: { label: "Changes", icon: Code2 },

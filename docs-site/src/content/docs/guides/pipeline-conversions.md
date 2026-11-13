@@ -163,8 +163,9 @@ Conversions shows the latest 100.
 ### Matching
 
 - `lead_id` matches that lead exactly. An unknown lead returns 404.
-- `match.phone` compares the last 10 digits of each call's caller number and each
-  form's contact. `match.email` compares a form contact, trimmed and case-insensitive.
+- `match.phone` compares the last 10 digits of each call's caller number, each form's
+  contact and each chat's phone. `match.email` compares a form contact or a chat's email,
+  trimmed and case-insensitive. Chat leads come from `POST /api/v1/chat-leads`.
   Only leads with an ad click from a platform the action is mapped to are considered:
   a Google click (gclid, gbraid or wbraid), a Microsoft click (msclkid) when the action
   has a Microsoft goal, or a Meta click when it has a Meta event (every lead when Meta

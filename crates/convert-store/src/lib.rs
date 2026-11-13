@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod adoption;
 pub mod api_keys;
+pub mod chat;
 pub mod connections;
 pub mod conversions;
 pub mod delivery;

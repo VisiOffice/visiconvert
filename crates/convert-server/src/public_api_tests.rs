@@ -734,6 +734,7 @@ fn openapi_covers_public_routes() {
         "/webhooks/{id}/rotate-secret",
         "/webhooks/{id}/test",
         "/webhook-deliveries/{id}/redeliver",
+        "/chat-leads",
     ] {
         assert!(spec["paths"][path]["post"].is_object(), "{path}");
     }

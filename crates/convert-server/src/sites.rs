@@ -249,7 +249,7 @@ fn session_evidence(input: &SessionInput, origin: &str) -> Result<Value, ApiErro
     if input.landing_url.len() > 3000 || input.referrer.len() > 1000 {
         return Err(invalid("Website context is too long"));
     }
-    let mut landing =
+    let landing =
         url::Url::parse(&input.landing_url).map_err(|_| invalid("Invalid landing URL"))?;
     if landing.origin().ascii_serialization() != origin
         || !landing.username().is_empty()
@@ -259,6 +259,24 @@ fn session_evidence(input: &SessionInput, origin: &str) -> Result<Value, ApiErro
             "Landing URL must belong to the configured website origin",
         ));
     }
+    landing_evidence(
+        landing,
+        &input.referrer,
+        origin,
+        input.fbp.as_deref(),
+        input.fbc.as_deref(),
+    )
+}
+/// Visit evidence from a landing URL, as the tracker records it: campaign parameters and
+/// click IDs from the query, the referrer's origin, and the classified source. The caller
+/// has already checked that the URL belongs to `origin`'s site.
+pub(crate) fn landing_evidence(
+    mut landing: url::Url,
+    referrer: &str,
+    origin: &str,
+    fbp: Option<&str>,
+    fbc: Option<&str>,
+) -> Result<Value, ApiError> {
     let mut value =
         json!({"model":"session-entry-v1","consent":"granted","confidence":"browser-reported"});
     for key in [
@@ -289,18 +307,15 @@ fn session_evidence(input: &SessionInput, origin: &str) -> Result<Value, ApiErro
         }
     }
     // Malformed Pixel cookies are dropped rather than failing the visit.
-    for (key, cookie) in [("fbp", &input.fbp), ("fbc", &input.fbc)] {
-        if let Some(v) = cookie
-            .as_deref()
-            .filter(|v| convert_domain::meta::cookie_value(v))
-        {
+    for (key, cookie) in [("fbp", fbp), ("fbc", fbc)] {
+        if let Some(v) = cookie.filter(|v| convert_domain::meta::cookie_value(v)) {
             value[key] = json!(v);
         }
     }
     landing.set_query(None);
     landing.set_fragment(None);
     value["landing_url"] = json!(landing.as_str());
-    let referrer = url::Url::parse(&input.referrer)
+    let referrer = url::Url::parse(referrer)
         .ok()
         .filter(|u| {
             matches!(u.scheme(), "https" | "http")

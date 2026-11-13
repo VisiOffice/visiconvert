@@ -232,7 +232,8 @@
             "type": "string",
             "enum": [
               "call",
-              "form"
+              "form",
+              "chat"
             ]
           },
           "source": {
@@ -2228,6 +2229,131 @@
           "next_cursor"
         ],
         "additionalProperties": false
+      },
+      "ChatLeadInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "external_id",
+          "started_at",
+          "landing_url"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,150}$",
+            "description": "Your stable ID for the chat, for example visicomms-chat:1234"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the visitor started the chat; within the last 90 days"
+          },
+          "landing_url": {
+            "type": "string",
+            "maxLength": 3000,
+            "description": "The page the visitor landed on, with its query string; must be on one of the workspace's enabled sites (www and the bare host count as one)"
+          },
+          "referrer": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "click": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "gclid": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "gbraid": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "wbraid": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "msclkid": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "fbclid": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "description": "Click IDs the landing URL lacks; a value that differs from the URL's is refused"
+          },
+          "utm": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "medium": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "campaign": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "term": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "content": {
+                "type": "string",
+                "maxLength": 200
+              }
+            }
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "phone": {
+            "type": "string",
+            "description": "10 to 15 digits; the last 10 are used for matching"
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 254
+          }
+        }
+      },
+      "ChatLead": {
+        "type": "object",
+        "required": [
+          "lead_id",
+          "created",
+          "click"
+        ],
+        "properties": {
+          "lead_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "False when the external_id was already recorded"
+          },
+          "click": {
+            "type": "boolean",
+            "description": "Whether the chat's visit carries an ad click ID"
+          },
+          "visit": {
+            "type": "string",
+            "enum": [
+              "matched",
+              "created"
+            ],
+            "description": "On creation: whether the tracker's recorded visit was found or one was built from landing_url"
+          }
+        }
       }
     }
   },
@@ -5040,6 +5166,148 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BookingInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat-leads": {
+      "post": {
+        "summary": "Record a web chat lead with the ad click from its landing page, or add the visitor's name, phone or email to one already recorded",
+        "operationId": "post_chat_leads",
+        "description": "Requires `leads:write` permission. The chat is linked to the website visit the tracker recorded with the same gclid, msclkid or fbclid, or to a visit built from `landing_url`, and then counts like a form lead for pipeline delivery and `new_lead` actions. Posting the same `external_id` again only adds or replaces `name`, `phone` and `email`; the click, site and time never change.",
+        "security": [
+          {
+            "workspaceKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatLead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing permission or disabled hosted access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The site was disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting version, revision or external ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 64 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON fields or types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "120 requests per key per minute exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Seconds to wait before retrying"
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Hosted access check unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatLeadInput"
               }
             }
           }

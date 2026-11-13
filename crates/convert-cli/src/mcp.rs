@@ -569,7 +569,7 @@ const TOOLS: &[Tool] = &[
         idempotent: true,
         schema: || {
             json!({"type":"object","additionalProperties":false,"properties":{
-                "kind":{"type":"string","enum":["call","form","conversion","webhook","changes"],"description":"Only this kind; omit for everything"},
+                "kind":{"type":"string","enum":["call","form","chat","conversion","webhook","changes"],"description":"Only this kind; omit for everything"},
                 "since":{"type":"string","description":"7d, 24h, 30m, or a date like 2026-10-01"},
                 "limit":{"type":"integer","minimum":1,"maximum":100,"default":50},
                 "cursor":{"type":"string","description":"next_cursor from the previous page, with the same kind and since"}
