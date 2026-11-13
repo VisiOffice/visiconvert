@@ -40,7 +40,7 @@ Set up in this order:
    | Field | Meaning |
    |---|---|
    | Key | Name your system uses, for example `lead`, `quote_sent`, `order`. Lowercase letters, digits and underscores, up to 40 |
-   | Trigger | **Posted by your system** (`events`), or **Each new attributed lead** (`new_lead`): VisiConvert records it when a lead with a Google click arrives |
+   | Trigger | **Posted by your system** (`events`), or **Each new attributed lead** (`new_lead`): VisiConvert records it when a lead arrives with a click from a platform the action is mapped to (Google, Microsoft or Meta) |
    | Counting | **Once per click** (one conversion per ad click, like a lead or first quote) or **Every event** (each event counts, like each order) |
    | Default value | Used for `new_lead` events and when an event has no value. Optional |
    | Google conversion action | Pick an existing eligible action from the account (preferred). Without one, events are recorded but not sent |
@@ -165,9 +165,12 @@ Conversions shows the latest 100.
 - `lead_id` matches that lead exactly. An unknown lead returns 404.
 - `match.phone` compares the last 10 digits of each call's caller number and each
   form's contact. `match.email` compares a form contact, trimmed and case-insensitive.
-  Only leads with a Google click are considered. `first_click` picks the lead with
-  the earliest visit (the acquisition click, so repeat orders credit the first ad);
-  `latest_click` picks the most recent.
+  Only leads with an ad click from a platform the action is mapped to are considered:
+  a Google click (gclid, gbraid or wbraid), a Microsoft click (msclkid) when the action
+  has a Microsoft goal, or a Meta click when it has a Meta event (every lead when Meta
+  matching is set to all leads). Leads with a Google click are tried first.
+  `first_click` picks the lead with the earliest visit (the acquisition click, so repeat
+  orders credit the first ad); `latest_click` picks the most recent.
 - No match is not an error: the event is stored with `matched_by: "none"` and blocked
   with *No attributed lead matched this event*. Posting it again retries the match.
 
