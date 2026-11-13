@@ -1731,6 +1731,133 @@
         "description": "Google Ads discovery for the connected login.",
         "additionalProperties": true
       },
+      "ChatLeadInput": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,150}$",
+            "description": "Your stable ID for the chat, for example visicomms-chat:1234."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the visitor started the chat; within the last 90 days."
+          },
+          "landing_url": {
+            "type": "string",
+            "maxLength": 3000,
+            "description": "The page the visitor landed on, with its query string. Must be on one of the workspace's enabled sites; www and the bare host count as one."
+          },
+          "referrer": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "click": {
+            "type": "object",
+            "properties": {
+              "gclid": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "gbraid": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "wbraid": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "msclkid": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "fbclid": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "required": [],
+            "additionalProperties": false,
+            "description": "Click IDs the landing URL lacks; a value that differs from the URL's is refused."
+          },
+          "utm": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "medium": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "campaign": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "term": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "content": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "phone": {
+            "type": "string",
+            "description": "10 to 15 digits; the last 10 are used for matching."
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 254
+          }
+        },
+        "required": [
+          "external_id",
+          "started_at",
+          "landing_url"
+        ],
+        "additionalProperties": false
+      },
+      "ChatLead": {
+        "type": "object",
+        "required": [
+          "lead_id",
+          "created",
+          "click"
+        ],
+        "properties": {
+          "lead_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "False when the external_id was already recorded."
+          },
+          "click": {
+            "type": "boolean",
+            "description": "Whether the chat's visit carries an ad click ID."
+          },
+          "visit": {
+            "type": "string",
+            "enum": [
+              "matched",
+              "created"
+            ],
+            "description": "On creation: the tracker's recorded visit was found, or one was built from landing_url."
+          }
+        }
+      },
       "ConversionEventInput": {
         "type": "object",
         "properties": {
@@ -1754,11 +1881,11 @@
             "properties": {
               "phone": {
                 "type": "string",
-                "description": "Matches the last 10 digits of a call or form contact."
+                "description": "Matches the last 10 digits of a call or form contact or a chat phone."
               },
               "email": {
                 "type": "string",
-                "description": "Matches a form contact, trimmed and case-insensitive."
+                "description": "Matches a form contact or a chat email, trimmed and case-insensitive."
               }
             },
             "required": [],
@@ -2229,131 +2356,6 @@
           "next_cursor"
         ],
         "additionalProperties": false
-      },
-      "ChatLeadInput": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "external_id",
-          "started_at",
-          "landing_url"
-        ],
-        "properties": {
-          "external_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_.:-]{1,150}$",
-            "description": "Your stable ID for the chat, for example visicomms-chat:1234"
-          },
-          "started_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the visitor started the chat; within the last 90 days"
-          },
-          "landing_url": {
-            "type": "string",
-            "maxLength": 3000,
-            "description": "The page the visitor landed on, with its query string; must be on one of the workspace's enabled sites (www and the bare host count as one)"
-          },
-          "referrer": {
-            "type": "string",
-            "maxLength": 1000
-          },
-          "click": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "gclid": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "gbraid": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "wbraid": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "msclkid": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "fbclid": {
-                "type": "string",
-                "maxLength": 200
-              }
-            },
-            "description": "Click IDs the landing URL lacks; a value that differs from the URL's is refused"
-          },
-          "utm": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "source": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "medium": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "campaign": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "term": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "content": {
-                "type": "string",
-                "maxLength": 200
-              }
-            }
-          },
-          "name": {
-            "type": "string",
-            "maxLength": 200
-          },
-          "phone": {
-            "type": "string",
-            "description": "10 to 15 digits; the last 10 are used for matching"
-          },
-          "email": {
-            "type": "string",
-            "maxLength": 254
-          }
-        }
-      },
-      "ChatLead": {
-        "type": "object",
-        "required": [
-          "lead_id",
-          "created",
-          "click"
-        ],
-        "properties": {
-          "lead_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "created": {
-            "type": "boolean",
-            "description": "False when the external_id was already recorded"
-          },
-          "click": {
-            "type": "boolean",
-            "description": "Whether the chat's visit carries an ad click ID"
-          },
-          "visit": {
-            "type": "string",
-            "enum": [
-              "matched",
-              "created"
-            ],
-            "description": "On creation: whether the tracker's recorded visit was found or one was built from landing_url"
-          }
-        }
       }
     }
   },
@@ -5224,7 +5226,7 @@
             }
           },
           "404": {
-            "description": "The site was disabled",
+            "description": "Not found in this workspace",
             "content": {
               "application/json": {
                 "schema": {
