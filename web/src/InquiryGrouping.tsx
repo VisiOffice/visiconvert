@@ -60,7 +60,7 @@ export function InquiryGrouping({ inquiry, api, disabled, changed }: { inquiry: 
       {interaction.booked_minor > 0 && <p className="small">{money(interaction.booked_minor)} booked on this interaction</p>}
       {interaction.notes && <details><summary>Original interaction notes</summary><p className="preserve-lines">{interaction.notes}</p></details>}
       {interaction.channel === "call" && <DniEvidence api={api} leadId={interaction.id} />}
-      {interaction.channel === "form" && <WebsiteEvidence api={api} leadId={interaction.id} />}
+      {(interaction.channel === "form" || interaction.channel === "chat") && <WebsiteEvidence api={api} leadId={interaction.id} />}
       {inquiry.interaction_count > 1 && <button className="text-button" disabled={blocked} onClick={() => { setSplit(interaction.id); setReason(""); setTarget(""); }}>Separate this interaction</button>}
     </article>)}
     {split ? <form onSubmit={separate} className="grouping-form">

@@ -1,3 +1,18 @@
+## Unreleased — Web chat leads
+
+- `POST /api/v1/chat-leads` (`leads:write`) records a web chat as a lead with the ad click
+  from its landing page. It links to the visit the tracker recorded with the same gclid,
+  msclkid or fbclid, or builds one from the landing URL when the tracker missed it, so chat
+  leads are sent to Google, Microsoft and Meta like form leads and fire `new_lead` actions
+  at the chat's start time. Posting the same `external_id` again adds the visitor's name,
+  phone or email. Meta receives chat conversions with `action_source: chat`.
+- Pipeline `match.phone` and `match.email` also match a chat's phone and email. Leads now
+  keep a normalized phone and email for matching apart from the display contact.
+- Chats appear as their own kind in Logs and `GET /api/v1/activity?kind=chat`, with a chat
+  icon in the leads list and the website evidence panel in the inquiry view.
+- Engine migration 0031 allows the `chat` channel and adds `leads.match_phone` and
+  `leads.match_email`.
+
 ## Unreleased — Show an expired Google or Microsoft sign-in
 
 - When Google or Microsoft rejects the saved refresh token (revoked, or expired, as Google

@@ -1,6 +1,7 @@
 mod activity;
 mod adoption;
 mod api_keys;
+mod chat;
 mod connections;
 mod conversions;
 mod delivery;
@@ -804,6 +805,8 @@ mod inquiry_tests;
 #[cfg(test)]
 mod conversion_tests;
 
+#[cfg(test)]
+mod chat_tests;
 #[cfg(test)]
 mod google_tests;
 #[cfg(test)]

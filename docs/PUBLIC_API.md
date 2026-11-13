@@ -104,7 +104,7 @@ inventory returns one provider page with `has_more`; it is not a complete export
 `GET /activity` (read) is one newest-first timeline: calls, forms, pipeline conversion
 events and their Google and Microsoft deliveries, webhook deliveries with their last HTTP
 status, and configuration changes made through the UI, API keys or agents with who made
-them. Filter with `kind` (call, form, conversion, webhook or changes; `api` is accepted as
+them. Filter with `kind` (call, form, chat, conversion, webhook or changes; `api` is accepted as
 an alias for changes) and `since`; page with
 `limit` and `cursor` like the lists above. Items are summaries built from fields other
 endpoints already return: no form payloads, webhook payloads, provider requests, click IDs
@@ -144,6 +144,36 @@ revenue to the primary interaction's source. They are all-time and include demo
 records; interaction listings include demo records as well. CLI list filtering
 hides demo records by default. Captured source is attribution evidence, not proof
 of ad causation. Google conversion delivery is not enabled by these API keys.
+
+## Chat leads
+
+`POST /api/v1/chat-leads` (permission `leads:write`) records a web chat as a lead with the
+ad click from its landing page, so it counts like a form lead for pipeline delivery and
+`new_lead` actions. A chat system posts each chat once it has a visitor message, and again
+whenever the visitor's name, phone or email becomes known.
+
+```json
+{"external_id": "visicomms-chat:1234",
+ "started_at": "2026-11-13T17:43:48Z",
+ "landing_url": "https://phoenixdumpsterrental.com/?gclid=Cj0K…",
+ "click": {"msclkid": "…"},
+ "utm": {"source": "bing"},
+ "name": "Nicole", "phone": "+16025550144", "email": "nicole@example.com"}
+```
+
+- `landing_url` must be on one of the workspace's enabled sites; `www.` and the bare host
+  count as one site. `click` and `utm` fill in values the URL lacks; a value that differs
+  from the URL's is refused.
+- The chat is linked to the visit the tracker recorded with the same `gclid`, `msclkid` or
+  `fbclid` around `started_at`. Without one (the tracker was blocked, or the visit has
+  expired), a visit is built from `landing_url` and kept with the lead.
+- `started_at` must be within the last 90 days; the lead's time is the chat's start.
+- Posting the same `external_id` again only adds or replaces `name`, `phone` and `email`.
+  The click, site and time never change.
+- `phone` (last 10 of 10–15 digits) and `email` (trimmed, lowercased) are kept for
+  pipeline matching, so a later quote or order posted with `match.phone` or
+  `match.email` finds the chat.
+- The response is `{"lead_id", "created", "click", "visit": "matched" | "created"}`.
 
 ## Hosted rollout
 

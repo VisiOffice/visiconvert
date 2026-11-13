@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Filter,
   Layers3,
+  MessageSquare,
   Link2,
   Loader2,
   LogOut,
@@ -746,6 +747,8 @@ function LeadTable({
                   <span className={`channel ${l.channel}`}>
                     {l.channel === "call" ? (
                       <Phone size={15} />
+                    ) : l.channel === "chat" ? (
+                      <MessageSquare size={15} />
                     ) : (
                       <Layers3 size={15} />
                     )}

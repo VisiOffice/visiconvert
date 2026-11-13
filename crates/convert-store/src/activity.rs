@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sqlx::Row;
 
-pub const KINDS: [&str; 5] = ["call", "form", "conversion", "webhook", "changes"];
+pub const KINDS: [&str; 6] = ["call", "form", "chat", "conversion", "webhook", "changes"];
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,7 +36,7 @@ const HOST: &str = r"substring({url} from '^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]
 
 const SOURCES: &[Source] = &[
     Source {
-        kinds: &["call", "form"],
+        kinds: &["call", "form", "chat"],
         at: "l.created_at",
         key: "'interaction:'||l.id::text",
         fields: "'source','interaction','id',l.id,'channel',l.channel,'inquiry_id',l.inquiry_id,'is_demo',l.is_demo,'name',l.name,'contact',l.contact,'marketing_source',l.source,'campaign',l.campaign,'tracking_number',l.tracking_number,'destination',l.destination,'call_status',l.call_status,'duration_seconds',l.duration_seconds,'provider',l.provider,'site',(SELECT s.name FROM website_submissions w JOIN sites s ON s.workspace_id=w.workspace_id AND s.id=w.site_id WHERE w.workspace_id=l.workspace_id AND w.lead_id=l.id LIMIT 1)",
@@ -212,9 +212,13 @@ fn item(at: DateTime<Utc>, f: &Value) -> Value {
                 )
             } else {
                 let site = text(f, "site").map_or(String::new(), |s| format!(" on {s}"));
+                let chat = f["channel"] == "chat";
                 (
-                    "form",
-                    format!("Form from {who} · {from}{site}"),
+                    if chat { "chat" } else { "form" },
+                    format!(
+                        "{} from {who} · {from}{site}",
+                        if chat { "Chat" } else { "Form" }
+                    ),
                     "received".into(),
                     "success",
                     json!({"contact":f["contact"],"campaign":f["campaign"],"site":f["site"]}),
@@ -362,9 +366,10 @@ impl Store {
             // `api` was the working name for configuration changes; keep accepting it.
             .map(|k| if k == "api" { "changes" } else { k });
         if kind.is_some_and(|k| !KINDS.contains(&k)) {
-            return Err(
-                ValidationError("Use kind call, form, conversion, webhook or changes").into(),
-            );
+            return Err(ValidationError(
+                "Use kind call, form, chat, conversion, webhook or changes",
+            )
+            .into());
         }
         let cursor = query.cursor.as_deref().map(parse_cursor).transpose()?;
         let branches: Vec<String> = SOURCES

@@ -732,6 +732,8 @@ fn eligible(
         "system_generated"
     } else if channel == "call" {
         "phone_call"
+    } else if channel == "chat" {
+        "chat"
     } else if r.get::<bool, _>("from_form") && ua.is_some() && landing.is_some() {
         "website"
     } else {

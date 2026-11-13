@@ -22,6 +22,7 @@ pub fn routes(app: Shared) -> Router<Shared> {
             get(interaction).patch(review_interaction),
         )
         .route("/interactions/{id}/outcomes", get(outcomes).put(booking))
+        .route("/chat-leads", axum::routing::post(chat::create))
         .route("/inquiries", get(inquiries))
         .route("/inquiries/{id}", get(inquiry).patch(review_inquiry))
         .route(
