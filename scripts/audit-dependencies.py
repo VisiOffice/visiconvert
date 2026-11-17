@@ -24,6 +24,22 @@ def reviewed_nonapplicable(finding):
     # allows libsqlite3-sys >= 0.39.
     if finding == ("crates.io", "libsqlite3-sys", "0.37.0", "RUSTSEC-2026-0459"):
         return not sqlite_enabled()
+    # Informational "unmaintained" notice covering every chrono version, not a
+    # vulnerability, and no maintained release exists to move to. chrono is used across
+    # 42 source files and by sqlx's Postgres types; replacing it with jiff or time is a
+    # planned migration, not an audit fix. Reviewed 2026-11-17. Scoped to the locked
+    # version so any real chrono vulnerability or a version change still fails.
+    # https://rustsec.org/advisories/RUSTSEC-2026-0543
+    if finding == ("crates.io", "chrono", "0.4.45", "RUSTSEC-2026-0543"):
+        return True
+    # ReDoS in picomatch's extglob handling, reached only through attacker-chosen glob
+    # patterns. picomatch is a dev-only dependency of vite/tinyglobby, run at build time
+    # on our own config globs, and is not in the shipped bundle. 4.0.7 is the newest
+    # release and no fix is published. Reviewed 2026-11-17; drop when a fixed version
+    # ships (`pnpm why picomatch` must stay devDependencies only).
+    # https://github.com/advisories/GHSA-fc5q-39xc-vjpf
+    if finding == ("npm", "picomatch", "4.0.7", "GHSA-fc5q-39xc-vjpf"):
+        return True
     return False
 
 
