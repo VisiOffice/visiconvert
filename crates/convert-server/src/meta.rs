@@ -32,7 +32,9 @@ impl From<meta_api::Error> for ApiError {
         Self(
             match e {
                 Token | Access => StatusCode::BAD_REQUEST,
-                _ => StatusCode::BAD_GATEWAY,
+                // Not 502: Cloudflare replaces an origin 502 with its own page, hiding this
+                // message from the owner.
+                _ => StatusCode::SERVICE_UNAVAILABLE,
             },
             e.to_string(),
         )
@@ -92,8 +94,8 @@ pub(crate) struct Connect {
     /// A Conversions API access token generated in that dataset's settings.
     access_token: String,
 }
-/// conversions:send. Save or replace the dataset and token after reading the dataset with
-/// the token. The token is sealed and never returned.
+/// conversions:send. Save or replace the dataset and token after Meta confirms the token can
+/// send to the dataset. The token is sealed and never returned.
 async fn connect(
     State(a): State<Shared>,
     Extension(access): Extension<hosted::Access>,
@@ -119,7 +121,7 @@ async fn connect(
     if current.revision != input.revision {
         return Err(convert_store::Error::Conflict.into());
     }
-    let dataset = a.meta.client.dataset(token, dataset_id).await?;
+    let dataset = a.meta.client.verify(token, dataset_id).await?;
     let sealed = vault
         .seal_meta(access.store.workspace, "token", token)
         .map_err(|_| connections::vault_error())?;
@@ -272,8 +274,8 @@ fn open_token(a: &App, store: &Store, encrypted: &str) -> Result<String, ApiErro
         .open_meta(store.workspace, "token", encrypted)
         .map_err(|_| connections::vault_error())
 }
-/// Read the dataset (and optionally send a test event). A rejected token or dataset is a
-/// failed check; Meta being unavailable is an error and records nothing.
+/// Check the token against the dataset (and optionally send a test event). A rejected token
+/// or dataset is a failed check; Meta being unavailable is an error and records nothing.
 pub(crate) async fn destination_report(
     a: &App,
     store: &Store,
@@ -284,7 +286,7 @@ pub(crate) async fn destination_report(
         return Err(bad("Save the Meta dataset and access token first."));
     };
     let token = open_token(a, store, encrypted)?;
-    let dataset = match a.meta.client.dataset(&token, dataset_id).await {
+    let dataset = match a.meta.client.verify(&token, dataset_id).await {
         Ok(d) => d,
         Err(e @ (meta_api::Error::Token | meta_api::Error::Access)) => {
             return Ok(

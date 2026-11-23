@@ -1,3 +1,18 @@
+## Unreleased — Meta connect accepts Events Manager tokens
+
+- Saving a Meta connection, and `check_meta_destination`, now verify the token by sending
+  Meta an empty event list to the dataset (`POST /{dataset}/events` with `data: []`).
+  Meta checks the token and its access to the dataset, then refuses the empty list, so no
+  event is created. The old check read the dataset (`GET /{dataset}`), which Conversions
+  API tokens generated in Events Manager are not allowed to do: Meta answered
+  "(#100) Missing Permission" and every save failed. The dataset name is still read when
+  the token allows it, and is otherwise left blank.
+- Meta "Missing Permission" now reports "This token cannot use that dataset" instead of
+  an unexpected response.
+- Meta being unavailable or replying unexpectedly is now HTTP 503, not 502. Cloudflare
+  replaces an origin 502 with its own error page, so the owner saw only
+  "Request failed (502)".
+
 ## Unreleased — Web chat leads
 
 - `POST /api/v1/chat-leads` (`leads:write`) records a web chat as a lead with the ad click

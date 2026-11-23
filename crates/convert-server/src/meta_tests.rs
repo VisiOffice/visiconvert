@@ -18,6 +18,9 @@ struct Mock {
     events: Mutex<Vec<Value>>,
     /// Reply for the next send: ok, garbage, rate, or error:<code>:<subcode>.
     mode: Mutex<String>,
+    /// Like a token generated under Conversions API in Events Manager: it can send events
+    /// but cannot read the dataset.
+    unreadable: Mutex<bool>,
 }
 async fn mock(
     State(m): State<Arc<Mock>>,
@@ -31,25 +34,35 @@ async fn mock(
         .unwrap_or("");
     // The token never travels in a URL.
     assert!(!uri.to_string().contains("EAA"), "{uri}");
-    let error = |code: i64, sub: i64| {
+    let meta_error = |message: &str, code: i64, sub: i64| {
         (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error":{"message":"PRIVATE_META_ERROR","type":"OAuthException","code":code,"error_subcode":sub,"fbtrace_id":"t"}})),
+            Json(json!({"error":{"message":message,"type":"OAuthException","code":code,"error_subcode":sub,"fbtrace_id":"t"}})),
         )
             .into_response()
     };
+    let error = |code: i64, sub: i64| meta_error("PRIVATE_META_ERROR", code, sub);
+    // Meta's own wording, which the client matches on.
+    let missing = || meta_error("(#100) Missing Permission", 100, 0);
     if auth != format!("Bearer {GOOD}") {
         return error(190, 0);
     }
     let path = uri.path();
     if path == format!("/v24.0/{DATASET}") {
+        if *m.unreadable.lock().unwrap() {
+            return missing();
+        }
         return Json(json!({"id":DATASET,"name":"Pipeline Pixel"})).into_response();
     }
-    if path == "/v24.0/999" {
-        return error(100, 33);
+    if path == "/v24.0/999/events" {
+        return missing();
     }
     if path == format!("/v24.0/{DATASET}/events") {
         let v: Value = serde_json::from_slice(&body).unwrap();
+        // The token check: an empty event list is refused after the token is accepted.
+        if v["data"] == json!([]) {
+            return meta_error("(#100) param data must be non-empty.", 100, 0);
+        }
         m.events.lock().unwrap().push(v);
         let mode = std::mem::replace(&mut *m.mode.lock().unwrap(), "ok".into());
         return match mode.as_str() {
@@ -242,6 +255,8 @@ async fn meta_connect_check_send_errors_and_settings() {
             .unwrap()
             .contains("cannot use that dataset")
     );
+    // An Events Manager token can send but not read the dataset: saved without its name.
+    *m.unreadable.lock().unwrap() = true;
     let (s, v) = api(
         a.clone(),
         "PUT",
@@ -252,7 +267,13 @@ async fn meta_connect_check_send_errors_and_settings() {
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["revision"], 1);
-    assert_eq!(v["dataset"]["name"], "Pipeline Pixel");
+    assert_eq!(v["dataset"]["id"], DATASET);
+    assert_eq!(v["dataset"]["name"], "");
+    assert!(
+        m.events.lock().unwrap().is_empty(),
+        "the token check sends no event"
+    );
+    *m.unreadable.lock().unwrap() = false;
     assert_eq!(v["token_fingerprint"].as_str().unwrap().len(), 12);
     let (s, _) = api(a.clone(), "PUT", "/api/v1/connections/meta", &send, body).await;
     assert_eq!(s, StatusCode::CONFLICT, "stale revision");
@@ -318,6 +339,10 @@ async fn meta_connect_check_send_errors_and_settings() {
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["valid"], true, "{v}");
+    assert_eq!(
+        v["dataset"]["name"], "Pipeline Pixel",
+        "named when the token can read it"
+    );
     assert_eq!(v["test_event"]["sent"], true);
     {
         let sent = m.events.lock().unwrap();

@@ -112,7 +112,7 @@ impl Store {
         })
     }
     /// Save or replace the dataset and token at `revision` (0 before the first save). The
-    /// caller has read the dataset with the token; that read is recorded as the check.
+    /// caller has checked the token against the dataset; that is recorded as the check.
     pub async fn save_meta_connection(
         &self,
         revision: i64,
