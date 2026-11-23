@@ -1,5 +1,5 @@
-//! Meta Conversions API: read a dataset (Pixel) and send server events to it, with the
-//! normalization and hashing Meta requires for customer information. Requests are built
+//! Meta Conversions API: check a token against a dataset (Pixel) and send server events to
+//! it, with the normalization and hashing Meta requires for customer information. Requests are built
 //! from whitelisted JSON; access tokens, upstream messages and customer data are never
 //! returned to callers or logged.
 //!
@@ -118,9 +118,42 @@ impl Client {
         }
         serde_json::from_slice(&bytes).ok()
     }
-    /// Read a dataset the token can use. The token travels in the Authorization header,
-    /// never in a URL.
-    pub async fn dataset(&self, token: &str, id: &str) -> Result<Dataset, Error> {
+    /// Check that the token can send events to the dataset, without sending one: Meta checks
+    /// the token and its access to the dataset before it rejects the empty event list.
+    /// Tokens generated under Conversions API in Events Manager can send events but usually
+    /// cannot read the dataset ("Missing Permission"), so the name is read only if allowed.
+    pub async fn verify(&self, token: &str, id: &str) -> Result<Dataset, Error> {
+        if !numeric_id(id) || !token_shape(token) {
+            return Err(Error::Access);
+        }
+        let mut response = self
+            .http
+            .post(format!("{}/{}/{id}/events", self.graph, self.version))
+            .bearer_auth(token)
+            .json(&json!({"data":[]}))
+            .send()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let status = response.status().as_u16();
+        let body = Self::body(&mut response).await.ok_or(Error::Response)?;
+        match body.get("error") {
+            Some(e) if empty_data_error(e) => {}
+            Some(e) => return Err(setup_error(e)),
+            None if status == 200 => {}
+            None => return Err(Error::Response),
+        }
+        let name = self
+            .dataset(token, id)
+            .await
+            .map(|d| d.name)
+            .unwrap_or_default();
+        Ok(Dataset {
+            id: id.into(),
+            name,
+        })
+    }
+    /// Read a dataset's name. The token travels in the Authorization header, never in a URL.
+    async fn dataset(&self, token: &str, id: &str) -> Result<Dataset, Error> {
         if !numeric_id(id) || !token_shape(token) {
             return Err(Error::Access);
         }
@@ -225,13 +258,21 @@ fn codes(e: &Value) -> (i64, i64, bool) {
         e["is_transient"].as_bool() == Some(true),
     )
 }
+fn message(e: &Value) -> &str {
+    e["message"].as_str().unwrap_or_default()
+}
+/// The reply to an empty event list from a token that may send to the dataset.
+fn empty_data_error(e: &Value) -> bool {
+    matches!(codes(e), (100, 0, false)) && message(e).contains("param data")
+}
 /// Graph API error codes: 190 invalid token, 102 session, 10/200-299 permissions,
-/// 100 with subcode 33 an object that does not exist or cannot be loaded, 1/2/4/17/32/
-/// 341/613 transient or rate limits.
+/// 100 with subcode 33 an object that does not exist or cannot be loaded, 100 "Missing
+/// Permission" a dataset the token cannot use, 1/2/4/17/32/341/613 transient or rate limits.
 fn setup_error(e: &Value) -> Error {
     match codes(e) {
         (190 | 102, _, _) => Error::Token,
         (10 | 200..=299, _, _) | (100, 33, _) => Error::Access,
+        (100, _, false) if message(e).contains("Missing Permission") => Error::Access,
         (1 | 2 | 4 | 17 | 32 | 341 | 613, _, _) | (_, _, true) => Error::Unavailable,
         _ => Error::Response,
     }
@@ -255,6 +296,13 @@ mod tests {
             Error::Access
         );
         assert_eq!(setup_error(&json!({"code":4})), Error::Unavailable);
+        // Replies Meta gave an Events Manager Conversions API token (2026-11-23).
+        let missing = json!({"message":"(#100) Missing Permission","code":100});
+        let empty = json!({"message":"(#100) param data must be non-empty.","code":100});
+        assert_eq!(setup_error(&missing), Error::Access);
+        assert!(empty_data_error(&empty));
+        assert!(!empty_data_error(&missing));
+        assert_eq!(setup_error(&json!({"code":100})), Error::Response);
         assert_eq!(
             delivery_error(&json!({"code":190})),
             DeliveryError::Authorization

@@ -36,7 +36,9 @@ way.
 ## Connect
 
 **In the app:** Conversions → Meta Ads, paste the dataset ID and token, and save.
-VisiConvert reads the dataset with the token first and refuses a token Meta rejects.
+VisiConvert first checks with Meta that the token can send events to the dataset, without
+sending one, and refuses a token Meta rejects. A token generated under Conversions API in
+Events Manager usually cannot read the dataset itself, so its name may stay blank.
 
 **From the CLI** with a key that has `conversions:send`, reading the token from an
 environment variable so it never appears in a command line or chat:
@@ -69,10 +71,11 @@ days, pass `include_since`, but only when nothing else sent those events to Meta
 ## Check, and send a test event
 
 `check_meta_destination` (`POST /api/v1/conversion-setup/meta-check`, `conversions:write`)
-reads the dataset with the saved token and records the result. Open Events Manager →
+checks with Meta that the saved token can still send to the dataset (no event is sent)
+and records the result. Open Events Manager →
 the dataset → **Test events**, copy the test code, and pass it as `test_event_code`:
 VisiConvert sends one `Lead` test event there. Test events never count as conversions.
-VisiConvert repeats the read-only check by itself while events are waiting.
+VisiConvert repeats this check by itself while events are waiting.
 
 ## Which leads are sent
 

@@ -99,7 +99,7 @@ pub async fn connect_twilio(client: &Client, account_sid: &str, auth_token: &str
 }
 
 /// Save the Meta dataset (Pixel) ID and Conversions API access token at the current
-/// revision. VisiConvert reads the dataset with the token before saving it.
+/// revision. VisiConvert checks with Meta that the token can send to the dataset first.
 pub async fn connect_meta(client: &Client, dataset_id: &str, access_token: &str) -> Result<Value> {
     let dataset_id = dataset_id.trim();
     if dataset_id.is_empty()
